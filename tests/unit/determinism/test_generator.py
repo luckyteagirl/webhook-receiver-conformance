@@ -9,14 +9,19 @@ from pathlib import Path
 from typing import TypedDict
 
 import pytest
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
 from webhook_receiver_conformance.determinism.generator import (
     ALGORITHM_ID,
+    CHOICE_CONTEXT_ROOT,
     INITIAL_COUNTER,
     MESSAGE_DOMAIN_SEPARATOR,
     SEED_FINGERPRINT_DOMAIN_SEPARATOR,
+    ULID_ENTROPY_CONTEXT_ROOT,
+    ULID_ENTROPY_SIZE,
+    UUID_ENTROPY_CONTEXT_ROOT,
+    UUID_ENTROPY_SIZE,
     ContextGenerator,
     encode_context,
     normalize_text_seed,
@@ -29,8 +34,11 @@ DETERMINISTIC_SETTINGS = settings(
     max_examples=100,
     derandomize=True,
     database=None,
+    print_blob=True,
 )
 MULTIBLOCK_DRAW_LENGTH = 65
+EXPECTED_UUID_ENTROPY_SIZE = 16
+EXPECTED_ULID_ENTROPY_SIZE = 10
 
 
 class JitterArguments(TypedDict):
@@ -132,6 +140,7 @@ def test_draws_are_order_independent_and_context_isolated() -> None:
 
 
 @DETERMINISTIC_SETTINGS
+@example(lower=0, span=129, label="retained-rejection-boundary")
 @given(
     lower=st.integers(min_value=-(1 << 63), max_value=(1 << 63) - 1),
     span=st.integers(min_value=1, max_value=1 << 20),
@@ -146,6 +155,92 @@ def test_bounded_integer_property(lower: int, span: int, label: str) -> None:
         lower,
         lower + span,
     )
+
+
+@DETERMINISTIC_SETTINGS
+@example(options=[0], label="retained-single-option")
+@given(
+    options=st.lists(st.integers(), min_size=1, max_size=32),
+    label=st.text(min_size=1, max_size=24),
+)
+def test_choice_property(options: list[int], label: str) -> None:
+    generator = ContextGenerator.from_text_seed("choice property seed")
+    result = generator.choice(("mutation-choice", label), options)
+    assert result in options
+    assert result == generator.choice(("mutation-choice", label), options)
+
+
+def test_choices_are_domain_separated_and_task_order_independent() -> None:
+    generator = ContextGenerator.from_text_seed("seed")
+    context = ("mutation", "event_01", "invalid-json-v1", "catalog")
+    options = ("truncated-object", "bad-escape", "trailing-comma")
+    expected_index = generator.choice_index(context, len(options))
+    expected = generator.choice(context, options)
+
+    generator.choice(("mutation", "event_unrelated", "catalog"), tuple(range(100)))
+    generator.draw_bytes((CHOICE_CONTEXT_ROOT, *context), 32)
+
+    assert generator.choice_index(context, len(options)) == expected_index
+    assert generator.choice(context, options) == expected
+    assert expected == options[expected_index]
+
+
+@pytest.mark.parametrize(
+    ("option_count", "exception"),
+    [
+        (0, ValueError),
+        (-1, ValueError),
+        (True, TypeError),
+    ],
+)
+def test_choice_index_rejects_malformed_counts(
+    option_count: object,
+    exception: type[Exception],
+) -> None:
+    generator = ContextGenerator.from_text_seed("seed")
+    with pytest.raises(exception):
+        generator.choice_index(("choice",), option_count)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("options", [(), "abc", b"abc"])
+def test_choice_rejects_malformed_options(options: object) -> None:
+    generator = ContextGenerator.from_text_seed("seed")
+    with pytest.raises((TypeError, ValueError)):
+        generator.choice(("choice",), options)  # type: ignore[arg-type]
+
+
+def test_uuid_and_ulid_entropy_have_frozen_sizes_and_domains() -> None:
+    generator = ContextGenerator.from_text_seed("seed")
+    context = ("planned-entity", "scenario", "natural-key")
+
+    uuid_entropy = generator.uuid_entropy(context)
+    ulid_entropy = generator.ulid_entropy(context)
+
+    assert len(uuid_entropy) == UUID_ENTROPY_SIZE == EXPECTED_UUID_ENTROPY_SIZE
+    assert len(ulid_entropy) == ULID_ENTROPY_SIZE == EXPECTED_ULID_ENTROPY_SIZE
+    assert uuid_entropy == generator.draw_bytes(
+        (UUID_ENTROPY_CONTEXT_ROOT, *context),
+        UUID_ENTROPY_SIZE,
+    )
+    assert ulid_entropy == generator.draw_bytes(
+        (ULID_ENTROPY_CONTEXT_ROOT, *context),
+        ULID_ENTROPY_SIZE,
+    )
+    assert uuid_entropy[:ULID_ENTROPY_SIZE] != ulid_entropy
+
+
+def test_entropy_draws_are_insertion_and_task_order_independent() -> None:
+    generator = ContextGenerator.from_text_seed("stable identifier seed")
+    stable_context = ("scenario", "checkout")
+    uuid_expected = generator.uuid_entropy(stable_context)
+    ulid_expected = generator.ulid_entropy(stable_context)
+
+    for ordinal in reversed(range(100)):
+        generator.ulid_entropy(("unrelated-event", str(ordinal)))
+        generator.choice(("unrelated-mutation", str(ordinal)), ("a", "b", "c"))
+
+    assert generator.uuid_entropy(stable_context) == uuid_expected
+    assert generator.ulid_entropy(stable_context) == ulid_expected
 
 
 @pytest.mark.parametrize(
@@ -220,6 +315,7 @@ def test_jitter_is_task_order_independent() -> None:
         ({"attempt_ordinal": 1 << 64}, OverflowError),
         ({"magnitude_bound": -1}, ValueError),
         ({"magnitude_bound": True}, TypeError),
+        ({"magnitude_bound": 1 << 63}, OverflowError),
     ],
 )
 def test_jitter_rejects_malformed_inputs(
@@ -248,6 +344,15 @@ def test_golden_prng_v1_vectors() -> None:
     assert golden["initial_counter"] == INITIAL_COUNTER
     assert golden["counter_encoding"] == "uint64-big-endian"
     assert golden["context_encoding"] == "uint32-big-endian-length-plus-utf8"
+    assert golden["context_roots"] == {
+        "choice": CHOICE_CONTEXT_ROOT,
+        "uuid_entropy": UUID_ENTROPY_CONTEXT_ROOT,
+        "ulid_entropy": ULID_ENTROPY_CONTEXT_ROOT,
+    }
+    assert golden["entropy_sizes"] == {
+        "uuid_bytes": UUID_ENTROPY_SIZE,
+        "ulid_bytes": ULID_ENTROPY_SIZE,
+    }
     assert golden["normalized_seed_hash_hex"] == (generator.normalized_seed_hash.hex())
     assert golden["seed_fingerprint"] == generator.fingerprint
     assert golden["compatibility_review"]
@@ -257,6 +362,17 @@ def test_golden_prng_v1_vectors() -> None:
             generator.draw_bytes(tuple(vector["context"]), vector["length"]).hex()
             == vector["output_hex"]
         )
+
+    for vector in golden["entropy_draws"]:
+        context = tuple(vector["context"])
+        assert generator.uuid_entropy(context).hex() == vector["uuid_entropy_hex"]
+        assert generator.ulid_entropy(context).hex() == vector["ulid_entropy_hex"]
+
+    for vector in golden["choices"]:
+        context = tuple(vector["context"])
+        options = tuple(vector["options"])
+        assert generator.choice_index(context, len(options)) == vector["index"]
+        assert generator.choice(context, options) == vector["result"]
 
     bounded = golden["bounded_rejection"]
     raw_candidates = generator.draw_bytes(

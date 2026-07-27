@@ -11,17 +11,24 @@ import hashlib
 import hmac
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import cast
+from typing import TypeVar, cast
 
 ALGORITHM_ID = "hmac-sha256-context-v1"
 MESSAGE_DOMAIN_SEPARATOR = b"wrch-prng-v1\x00"
 SEED_FINGERPRINT_DOMAIN_SEPARATOR = b"seed-fingerprint-v1\x00"
 INITIAL_COUNTER = 0
+UUID_ENTROPY_CONTEXT_ROOT = "uuid-entropy-v1"
+ULID_ENTROPY_CONTEXT_ROOT = "ulid-entropy-v1"
+CHOICE_CONTEXT_ROOT = "choice-index-v1"
+UUID_ENTROPY_SIZE = 16
+ULID_ENTROPY_SIZE = 10
 
 _DIGEST_SIZE = hashlib.sha256().digest_size
 _NORMALIZED_SEED_SIZE = _DIGEST_SIZE
+_INT64_MAX = (1 << 63) - 1
 _UINT32_MAX = (1 << 32) - 1
 _UINT64_MAX = (1 << 64) - 1
+_Choice = TypeVar("_Choice")
 
 
 def normalize_text_seed(seed: str) -> bytes:
@@ -138,6 +145,53 @@ class ContextGenerator:
                 return lower_bound + (candidate % span)
             offset += width
 
+    def choice_index(self, context: Sequence[str], option_count: int) -> int:
+        """Select an unbiased index under a choice-specific context root."""
+        count = _validate_nonnegative_integer(option_count, name="option_count")
+        if count == 0:
+            message = "option_count must be greater than zero"
+            raise ValueError(message)
+        components = _validate_context(context)
+        return self.bounded_int(
+            (CHOICE_CONTEXT_ROOT, *components),
+            0,
+            count,
+        )
+
+    def choice(
+        self,
+        context: Sequence[str],
+        options: Sequence[_Choice],
+    ) -> _Choice:
+        """Choose one option deterministically without modulo bias."""
+        if isinstance(options, (str, bytes)):
+            message = "options must be a sequence"
+            raise TypeError(message)
+        if not options:
+            message = "options must not be empty"
+            raise ValueError(message)
+        return options[self.choice_index(context, len(options))]
+
+    def uuid_entropy(self, context: Sequence[str]) -> bytes:
+        """Return domain-separated 128-bit deterministic UUID entropy.
+
+        This entropy is for planned/generated deterministic fields. Execution
+        ``run_id`` values are independent UUIDv4 values and must not use it.
+        """
+        components = _validate_context(context)
+        return self.draw_bytes(
+            (UUID_ENTROPY_CONTEXT_ROOT, *components),
+            UUID_ENTROPY_SIZE,
+        )
+
+    def ulid_entropy(self, context: Sequence[str]) -> bytes:
+        """Return domain-separated 80-bit entropy for a stable planned ULID."""
+        components = _validate_context(context)
+        return self.draw_bytes(
+            (ULID_ENTROPY_CONTEXT_ROOT, *components),
+            ULID_ENTROPY_SIZE,
+        )
+
     def signed_retry_jitter(
         self,
         *,
@@ -168,6 +222,9 @@ class ContextGenerator:
             magnitude_bound,
             name="magnitude_bound",
         )
+        if bound > _INT64_MAX:
+            message = "magnitude_bound exceeds signed int64 nanoseconds"
+            raise OverflowError(message)
         return self.bounded_int(
             (
                 "retry-jitter",

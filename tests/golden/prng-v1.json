@@ -4,6 +4,15 @@
   "initial_counter": 0,
   "counter_encoding": "uint64-big-endian",
   "context_encoding": "uint32-big-endian-length-plus-utf8",
+  "context_roots": {
+    "choice": "choice-index-v1",
+    "uuid_entropy": "uuid-entropy-v1",
+    "ulid_entropy": "ulid-entropy-v1"
+  },
+  "entropy_sizes": {
+    "uuid_bytes": 16,
+    "ulid_bytes": 10
+  },
   "text_seed": "reproducible café seed",
   "normalized_seed_hash_hex": "66018d2afc139a44ea478dd11df81d5ffdd30c12475ba53916e5fa2f76a8c893",
   "seed_fingerprint": "7d409ff23d66bd81a8c92971ddc296ca3d2ed7986b832109bb2de3be79f6445a",
@@ -31,6 +40,58 @@
       ],
       "length": 65,
       "output_hex": "70b3c19b9637325c8f8c18a372adad2901d59ac1b9f93f6bb16d3665bb7f8838f38d6620fa5da212fea3fe02deb77fcd442e87d61e88f1a34ca9f4d8156ce5cc9f"
+    }
+  ],
+  "entropy_draws": [
+    {
+      "context": [
+        "planned-entity",
+        "scenario",
+        "checkout"
+      ],
+      "uuid_entropy_hex": "9f403ebf524e0bb1d64fab279e69d01d",
+      "ulid_entropy_hex": "022f90bbac06f25c9c99"
+    },
+    {
+      "context": [
+        "generated-field",
+        "event_01",
+        "correlation-id"
+      ],
+      "uuid_entropy_hex": "945744d689ff7317424e044083d3ecc5",
+      "ulid_entropy_hex": "4c15b9259bff958997e5"
+    }
+  ],
+  "choices": [
+    {
+      "context": [
+        "mutation",
+        "event_01",
+        "invalid-json-v1",
+        "catalog"
+      ],
+      "options": [
+        "truncated-object",
+        "bad-escape",
+        "trailing-comma"
+      ],
+      "index": 1,
+      "result": "bad-escape"
+    },
+    {
+      "context": [
+        "generated-field",
+        "event_02",
+        "status"
+      ],
+      "options": [
+        "pending",
+        "accepted",
+        "rejected",
+        "unknown"
+      ],
+      "index": 1,
+      "result": "accepted"
     }
   ],
   "bounded_rejection": {
@@ -74,5 +135,5 @@
       "result": 2560136260960580398
     }
   ],
-  "compatibility_review": "Reviewed for hmac-sha256-context-v1 initial counter 0, exact domain separators, context encoding, stream-based rejection sampling, and retry-jitter context ordering."
+  "compatibility_review": "Reviewed for hmac-sha256-context-v1 initial counter 0, exact domain separators, context encoding, stream-based rejection sampling, retry-jitter context ordering, choice-index-v1 selection, and UUID/ULID entropy context roots."
 }
