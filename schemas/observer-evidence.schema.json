@@ -17,6 +17,55 @@
         "object"
       ]
     },
+    "safe_integer": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "bounded_string": {
+      "type": "string",
+      "maxLength": 4096,
+      "pattern": "^[^\\u0000-\\u001F\\u007F]*$"
+    },
+    "bounded_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[^\\u0000-\\u001F\\u007F]*$"
+    },
+    "json_value": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "$ref": "#/$defs/safe_integer"
+        },
+        {
+          "$ref": "#/$defs/bounded_string"
+        },
+        {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "$ref": "#/$defs/json_value"
+          }
+        },
+        {
+          "type": "object",
+          "maxProperties": 1000,
+          "propertyNames": {
+            "$ref": "#/$defs/bounded_key"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/json_value"
+          }
+        }
+      ]
+    },
     "evidence": {
       "type": "object",
       "required": [
@@ -26,9 +75,7 @@
       ],
       "properties": {
         "key": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256
+          "$ref": "#/$defs/bounded_key"
         },
         "value_type": {
           "$ref": "#/$defs/evidence_type"
@@ -92,7 +139,7 @@
           "then": {
             "properties": {
               "value": {
-                "type": "integer"
+                "$ref": "#/$defs/safe_integer"
               }
             }
           }
@@ -112,6 +159,8 @@
             "properties": {
               "value": {
                 "type": "string",
+                "minLength": 1,
+                "maxLength": 256,
                 "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$"
               }
             }
@@ -131,7 +180,7 @@
           "then": {
             "properties": {
               "value": {
-                "type": "string"
+                "$ref": "#/$defs/bounded_string"
               }
             }
           }
@@ -161,13 +210,14 @@
                     "pattern": "^sha256:[0-9a-f]{64}$"
                   },
                   "byte_length": {
-                    "type": "integer",
+                    "$ref": "#/$defs/safe_integer",
                     "minimum": 0
                   },
                   "media_type": {
                     "type": "string",
                     "minLength": 1,
-                    "maxLength": 255
+                    "maxLength": 255,
+                    "pattern": "^[^\\u0000-\\u001F\\u007F]*$"
                   }
                 },
                 "additionalProperties": false
@@ -209,7 +259,11 @@
           "then": {
             "properties": {
               "value": {
-                "type": "array"
+                "type": "array",
+                "maxItems": 1000,
+                "items": {
+                  "$ref": "#/$defs/json_value"
+                }
               }
             }
           }
@@ -228,7 +282,14 @@
           "then": {
             "properties": {
               "value": {
-                "type": "object"
+                "type": "object",
+                "maxProperties": 1000,
+                "propertyNames": {
+                  "$ref": "#/$defs/bounded_key"
+                },
+                "additionalProperties": {
+                  "$ref": "#/$defs/json_value"
+                }
               }
             }
           }
