@@ -1,5 +1,5 @@
 """Atomic transition/projection operations over the sole journal writer."""
-# ruff: noqa: INP001, S608
+# ruff: noqa: C901, EM101, INP001, PLR2004, S608, TRY003
 
 from __future__ import annotations
 
@@ -34,6 +34,9 @@ from .transitions import (
     MAX_CONDITION_BYTES,
     MAX_REPLAY_TRANSITIONS,
     MAX_SAFE_INTEGER,
+    AttemptPhaseEvidence,
+    AttemptPhaseEvidenceCommand,
+    AttemptScheduleClaim,
     CausalReference,
     CommittedTransition,
     CrossRunReferenceError,
@@ -151,10 +154,18 @@ class TransitionMutationPhase(StrEnum):
     AFTER_DERIVED_SCHEDULE = "after_derived_schedule"
 
 
+class AttemptMutationPhase(StrEnum):
+    """Injectable boundaries specific to attempt schedule/evidence operations."""
+
+    AFTER_SCHEDULE_CONSUMED = "after_schedule_consumed"
+    AFTER_ATTEMPT_INSERT = "after_attempt_insert"
+    AFTER_PHASE_EVIDENCE = "after_phase_evidence"
+
+
 class TransitionCrashHook(Protocol):
     """Synchronous failpoint callback executed inside the writer transaction."""
 
-    def __call__(self, phase: TransitionMutationPhase) -> None:
+    def __call__(self, phase: TransitionMutationPhase | AttemptMutationPhase) -> None:
         """Observe or fail one exact transaction boundary."""
         ...
 
@@ -177,6 +188,7 @@ class _EntityProjection:
 class _ApplyTransitionOperation:
     command: TransitionCommand[LifecycleState]
     crash_hook: TransitionCrashHook | None
+    phase_evidence: AttemptPhaseEvidenceCommand | None = None
 
     def execute(self, transaction: JournalTransaction) -> CommittedTransition:
         _validate_payload_scope(self.command)
@@ -188,6 +200,12 @@ class _ApplyTransitionOperation:
         )
         if existing is not None:
             _verify_idempotent_replay(transaction, self.command, existing)
+            if self.phase_evidence is not None:
+                _verify_attempt_phase_evidence(
+                    transaction,
+                    command=self.command,
+                    evidence=self.phase_evidence,
+                )
             return CommittedTransition(record=existing, idempotent_replay=True)
         if _transition_id_exists(transaction, self.command.transition_id):
             message = "transition_id already names a different command"
@@ -215,6 +233,16 @@ class _ApplyTransitionOperation:
         if self.command.expected_state is not None:
             _update_projection(transaction, self.command, projection)
         _call_crash_hook(self.crash_hook, TransitionMutationPhase.AFTER_PROJECTION)
+        if self.phase_evidence is not None:
+            _persist_attempt_phase_evidence(
+                transaction,
+                command=self.command,
+                evidence=self.phase_evidence,
+            )
+            _call_crash_hook(
+                self.crash_hook,
+                AttemptMutationPhase.AFTER_PHASE_EVIDENCE,
+            )
 
         retry_schedule = (
             self.command.attempt_outcome.retry_schedule
@@ -232,6 +260,55 @@ class _ApplyTransitionOperation:
             TransitionMutationPhase.AFTER_DERIVED_SCHEDULE,
         )
         return CommittedTransition(record=record, idempotent_replay=False)
+
+
+@dataclass(frozen=True, slots=True)
+class _ClaimAttemptScheduleOperation:
+    claim: AttemptScheduleClaim
+    crash_hook: TransitionCrashHook | None
+
+    def execute(self, transaction: JournalTransaction) -> CommittedTransition:
+        command = cast("TransitionCommand[LifecycleState]", self.claim.claim_transition)
+        _require_current_owner(transaction, command)
+        schedule = _load_attempt_schedule(transaction, self.claim.schedule_entry_id)
+        if schedule is None:
+            raise IllegalTransitionError("attempt schedule does not exist")
+        _validate_attempt_schedule_claim(transaction, self.claim, schedule)
+        consumed_at = schedule[10]
+        consumed_epoch = schedule[11]
+        if consumed_at is None:
+            result = transaction.execute(
+                JournalStatement(
+                    """
+                    UPDATE schedule_entries
+                    SET consumed_at = ?, consumed_by_owner_epoch = ?
+                    WHERE schedule_entry_id = ? AND run_id = ?
+                      AND consumed_at IS NULL AND consumed_by_owner_epoch IS NULL
+                    """,
+                    (
+                        _format_wall_time(command.timestamp),
+                        command.owner_epoch,
+                        self.claim.schedule_entry_id,
+                        command.run_id,
+                    ),
+                )
+            )
+            if result.rowcount != 1:
+                raise ProjectionIntegrityError("attempt schedule consumption lost its guard")
+            _call_crash_hook(
+                self.crash_hook,
+                AttemptMutationPhase.AFTER_SCHEDULE_CONSUMED,
+            )
+            _insert_claimed_attempt(transaction, self.claim, schedule)
+            _call_crash_hook(
+                self.crash_hook,
+                AttemptMutationPhase.AFTER_ATTEMPT_INSERT,
+            )
+        else:
+            if consumed_epoch != command.owner_epoch:
+                raise IdempotencyConflictError("attempt schedule was consumed by another owner")
+            _verify_claimed_attempt(transaction, self.claim, schedule)
+        return _ApplyTransitionOperation(command, self.crash_hook).execute(transaction)
 
 
 @dataclass(frozen=True, slots=True)
@@ -313,6 +390,37 @@ class TransitionRepository:
             )
         )
 
+    async def apply_attempt[S: LifecycleState](
+        self,
+        command: TransitionCommand[S],
+        evidence: AttemptPhaseEvidenceCommand,
+    ) -> CommittedTransition:
+        """Atomically commit one attempt transition and privacy-safe phase evidence."""
+        if command.entity_type is not EntityType.ATTEMPT:
+            raise TypeError("command must be an attempt TransitionCommand")
+        if type(evidence) is not AttemptPhaseEvidenceCommand:
+            raise TypeError("evidence must be an AttemptPhaseEvidenceCommand")
+        _validate_phase_edge(
+            cast("TransitionCommand[LifecycleState]", command),
+            evidence,
+        )
+        return await self._service.execute(
+            _ApplyTransitionOperation(
+                command=cast("TransitionCommand[LifecycleState]", command),
+                crash_hook=self._crash_hook,
+                phase_evidence=evidence,
+            )
+        )
+
+    async def claim_attempt_schedule(
+        self,
+        claim: AttemptScheduleClaim,
+    ) -> CommittedTransition:
+        """Atomically consume one schedule, insert a fresh attempt, and claim it."""
+        if type(claim) is not AttemptScheduleClaim:
+            raise TypeError("claim must be an AttemptScheduleClaim")
+        return await self._service.execute(_ClaimAttemptScheduleOperation(claim, self._crash_hook))
+
     async def history(
         self,
         run_id: str,
@@ -347,6 +455,370 @@ class TransitionRepository:
         """Replay history and compare it with live lifecycle projections."""
         validate_run_id(run_id)
         return await self._service.execute(_ProjectionAuditOperation(run_id))
+
+
+def _load_attempt_schedule(
+    transaction: JournalTransaction,
+    schedule_entry_id: str,
+) -> tuple[object, ...] | None:
+    result = transaction.execute(
+        JournalStatement(
+            """
+            SELECT run_id, scenario_id, entity_type, entity_id,
+                   scenario_ordinal, step_ordinal, delivery_ordinal,
+                   attempt_ordinal, condition_json, logical_time_ns,
+                   consumed_at, consumed_by_owner_epoch
+            FROM schedule_entries
+            WHERE schedule_entry_id = ?
+            """,
+            (schedule_entry_id,),
+        )
+    )
+    return None if not result.rows else cast("tuple[object, ...]", result.rows[0])
+
+
+def _validate_attempt_schedule_claim(
+    transaction: JournalTransaction,
+    claim: AttemptScheduleClaim,
+    schedule: tuple[object, ...],
+) -> None:
+    command = claim.claim_transition
+    run_id = _text(schedule[0], name="schedule run_id")
+    scenario_id = _text(schedule[1], name="schedule scenario_id")
+    entity_type = _text(schedule[2], name="schedule entity_type")
+    attempt_plan_id = _text(schedule[3], name="schedule entity_id")
+    scenario_ordinal = _integer(schedule[4], name="schedule scenario ordinal")
+    step_ordinal = _integer(schedule[5], name="schedule step ordinal")
+    delivery_ordinal = _integer(schedule[6], name="schedule delivery ordinal")
+    attempt_ordinal = _integer(schedule[7], name="schedule attempt ordinal")
+    condition = schedule[8]
+    logical_time_ns = _integer(schedule[9], name="schedule logical time")
+    if run_id != command.run_id:
+        raise CrossRunReferenceError("attempt schedule is outside the claim scope")
+    if (
+        entity_type != "attempt"
+        or attempt_plan_id != claim.attempt_plan_id
+        or command.logical_time_ns != logical_time_ns
+        or condition != claim.condition_json
+    ):
+        raise IdempotencyConflictError("attempt schedule semantics differ from claim")
+    validate_planned_id(attempt_plan_id, expected_kind=PlannedIdKind.ATTEMPT_PLAN)
+    result = transaction.execute(
+        JournalStatement(
+            """
+            SELECT deliveries.scenario_id, deliveries.event_id,
+                   scenarios.ordinal, deliveries.step_ordinal, deliveries.ordinal
+            FROM deliveries
+            JOIN scenarios
+              ON scenarios.run_id = deliveries.run_id
+             AND scenarios.scenario_id = deliveries.scenario_id
+            WHERE deliveries.run_id = ? AND deliveries.delivery_id = ?
+            """,
+            (run_id, claim.delivery_id),
+        )
+    )
+    if not result.rows:
+        raise IllegalTransitionError("attempt schedule delivery does not exist")
+    row = result.rows[0]
+    if (
+        _text(row[0], name="delivery scenario_id") != scenario_id
+        or _text(row[1], name="delivery event_id") != claim.event_id
+        or _integer(row[2], name="scenario ordinal") != scenario_ordinal
+        or _integer(row[3], name="step ordinal") != step_ordinal
+        or _integer(row[4], name="delivery ordinal") != delivery_ordinal
+    ):
+        raise IllegalTransitionError("attempt schedule ordering or delivery identity differs")
+    if claim.predecessor_attempt_id is None:
+        if condition is not None or attempt_ordinal != 1:
+            raise IllegalTransitionError("only an initial attempt schedule may omit predecessor")
+        return
+    if condition is None or attempt_ordinal < 1:
+        raise IllegalTransitionError("retry schedule requires condition and next ordinal")
+    if claim.predecessor_attempt_id == claim.attempt_id:
+        raise IllegalTransitionError("physical retry attempt must be distinct")
+    _validate_retry_condition(
+        cast("bytes", condition),
+        predecessor_attempt_id=claim.predecessor_attempt_id,
+        next_attempt_ordinal=attempt_ordinal,
+    )
+    predecessor = transaction.execute(
+        JournalStatement(
+            """
+            SELECT run_id, scenario_id, event_id, delivery_id, ordinal, state,
+                   outcome_category, terminal_recorded_at
+            FROM attempts WHERE attempt_id = ?
+            """,
+            (claim.predecessor_attempt_id,),
+        )
+    )
+    if not predecessor.rows:
+        raise IllegalTransitionError("retry predecessor does not exist")
+    prior = predecessor.rows[0]
+    if (
+        _text(prior[0], name="predecessor run_id") != run_id
+        or _text(prior[1], name="predecessor scenario_id") != scenario_id
+        or _text(prior[2], name="predecessor event_id") != claim.event_id
+        or _text(prior[3], name="predecessor delivery_id") != claim.delivery_id
+        or _integer(prior[4], name="predecessor ordinal") + 1 != attempt_ordinal
+        or _text(prior[5], name="predecessor state")
+        not in {state.value for state in _RETRY_PREDECESSOR_STATES}
+        or prior[6] is None
+        or prior[7] is None
+    ):
+        raise IllegalTransitionError("retry predecessor identity or terminal outcome differs")
+
+
+def _validate_retry_condition(
+    value: bytes,
+    *,
+    predecessor_attempt_id: str,
+    next_attempt_ordinal: int,
+) -> None:
+    def unique_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, item in pairs:
+            if key in result:
+                raise ValueError("duplicate retry condition key")
+            result[key] = item
+        return result
+
+    try:
+        decoded = value.decode("ascii")
+        parsed = json.loads(
+            decoded,
+            object_pairs_hook=unique_pairs,
+            parse_int=lambda raw: (
+                int(raw)
+                if -MAX_SAFE_INTEGER <= int(raw) <= MAX_SAFE_INTEGER
+                else (_ for _ in ()).throw(ValueError())
+            ),
+            parse_float=lambda _value: (_ for _ in ()).throw(ValueError()),
+            parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()),
+        )
+    except (RecursionError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
+        raise IllegalTransitionError("retry condition must be canonical JSON") from None
+    condition = cast("dict[str, object]", parsed) if isinstance(parsed, dict) else None
+    if condition is not None:
+        pending: list[tuple[object, int]] = [(condition, 1)]
+        nodes = 0
+        while pending:
+            item, depth = pending.pop()
+            nodes += 1
+            if depth > 64 or nodes > 10_000:
+                raise IllegalTransitionError("retry condition exceeds structural bounds")
+            if isinstance(item, dict):
+                mapping = cast("dict[object, object]", item)
+                pending.extend((child, depth + 1) for child in mapping.values())
+            elif isinstance(item, list):
+                sequence = cast("list[object]", item)
+                pending.extend((child, depth + 1) for child in sequence)
+    if (
+        condition is None
+        or condition.get("predecessor_attempt_id") != predecessor_attempt_id
+        or condition.get("next_attempt_ordinal") != next_attempt_ordinal
+        or json.dumps(
+            condition,
+            ensure_ascii=True,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("ascii")
+        != value
+    ):
+        raise IllegalTransitionError("retry condition identity differs from claim")
+
+
+def _insert_claimed_attempt(
+    transaction: JournalTransaction,
+    claim: AttemptScheduleClaim,
+    schedule: tuple[object, ...],
+) -> None:
+    command = claim.claim_transition
+    result = transaction.execute(
+        JournalStatement(
+            """
+            INSERT INTO attempts (
+                attempt_id, run_id, scenario_id, event_id, delivery_id,
+                attempt_plan_id, ordinal, state, predecessor_attempt_id, owner_epoch
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, ?)
+            """,
+            (
+                claim.attempt_id,
+                command.run_id,
+                _text(schedule[1], name="schedule scenario_id"),
+                claim.event_id,
+                claim.delivery_id,
+                _text(schedule[3], name="schedule attempt_plan_id"),
+                _integer(schedule[7], name="schedule attempt ordinal"),
+                claim.predecessor_attempt_id,
+                command.owner_epoch,
+            ),
+        )
+    )
+    if result.rowcount != 1:
+        raise ProjectionIntegrityError("physical attempt insertion did not affect one row")
+
+
+def _verify_claimed_attempt(
+    transaction: JournalTransaction,
+    claim: AttemptScheduleClaim,
+    schedule: tuple[object, ...],
+) -> None:
+    result = transaction.execute(
+        JournalStatement(
+            """
+            SELECT run_id, scenario_id, event_id, delivery_id, attempt_plan_id,
+                   ordinal, predecessor_attempt_id, owner_epoch
+            FROM attempts WHERE attempt_id = ?
+            """,
+            (claim.attempt_id,),
+        )
+    )
+    expected = (
+        claim.claim_transition.run_id,
+        schedule[1],
+        claim.event_id,
+        claim.delivery_id,
+        schedule[3],
+        schedule[7],
+        claim.predecessor_attempt_id,
+        claim.claim_transition.owner_epoch,
+    )
+    if not result.rows or tuple(result.rows[0]) != expected:
+        raise IdempotencyConflictError("consumed schedule attempt differs from replay")
+
+
+_PHASE_EDGES: Mapping[
+    AttemptPhaseEvidence,
+    frozenset[tuple[AttemptState, AttemptState]],
+] = MappingProxyType(
+    {
+        AttemptPhaseEvidence.CONTROLLED_PRE_TRANSPORT: frozenset(
+            {
+                (AttemptState.CLAIMED, AttemptState.PRE_SEND_COMMITTED),
+                (AttemptState.CLAIMED, AttemptState.NOT_SENT),
+                (AttemptState.PRE_SEND_COMMITTED, AttemptState.NOT_SENT),
+            }
+        ),
+        AttemptPhaseEvidence.NO_CONNECTION_ESTABLISHED: frozenset(
+            {(AttemptState.CONNECTING, AttemptState.NOT_SENT)}
+        ),
+        AttemptPhaseEvidence.CONNECTION_ATTEMPT_STARTED: frozenset(
+            {
+                (AttemptState.PRE_SEND_COMMITTED, AttemptState.CONNECTING),
+                (AttemptState.CONNECTING, AttemptState.UNKNOWN_OUTCOME),
+            }
+        ),
+        AttemptPhaseEvidence.REQUEST_SEND_STARTED: frozenset(
+            {
+                (AttemptState.CONNECTING, AttemptState.SENDING),
+                (AttemptState.SENDING, AttemptState.UNKNOWN_OUTCOME),
+            }
+        ),
+        AttemptPhaseEvidence.AWAITING_RESPONSE: frozenset(
+            {
+                (AttemptState.SENDING, AttemptState.AWAITING_RESPONSE),
+                (AttemptState.AWAITING_RESPONSE, AttemptState.UNKNOWN_OUTCOME),
+            }
+        ),
+        AttemptPhaseEvidence.RESPONSE_OBSERVED: frozenset(
+            {
+                (AttemptState.AWAITING_RESPONSE, AttemptState.RESPONSE_OBSERVED),
+                (AttemptState.RESPONSE_OBSERVED, AttemptState.SUCCEEDED),
+                (AttemptState.RESPONSE_OBSERVED, AttemptState.REJECTED),
+                (AttemptState.RESPONSE_OBSERVED, AttemptState.TRANSPORT_FAILED),
+            }
+        ),
+    }
+)
+
+
+def _validate_phase_edge(
+    command: TransitionCommand[LifecycleState],
+    evidence: AttemptPhaseEvidenceCommand,
+) -> None:
+    if (
+        not isinstance(command.expected_state, AttemptState)
+        or not isinstance(command.new_state, AttemptState)
+        or (command.expected_state, command.new_state) not in _PHASE_EDGES[evidence.phase]
+    ):
+        raise IllegalTransitionError("phase evidence is incompatible with attempt edge")
+    if (
+        command.expected_state is AttemptState.CLAIMED
+        and command.new_state is AttemptState.PRE_SEND_COMMITTED
+        and (evidence.request_blob_hash is None or evidence.request_headers_hash is None)
+    ):
+        raise IllegalTransitionError("pre-send commit requires both request digests")
+
+
+def _persist_attempt_phase_evidence(
+    transaction: JournalTransaction,
+    *,
+    command: TransitionCommand[LifecycleState],
+    evidence: AttemptPhaseEvidenceCommand,
+) -> None:
+    _validate_phase_edge(command, evidence)
+    result = transaction.execute(
+        JournalStatement(
+            """
+            UPDATE attempts
+            SET phase = ?,
+                request_blob_hash = COALESCE(?, request_blob_hash),
+                request_headers_hash = COALESCE(?, request_headers_hash)
+            WHERE attempt_id = ? AND run_id = ? AND state = ?
+              AND (
+                phase IS NULL OR phase IN (
+                    'controlled_pre_transport', 'no_connection_established',
+                    'connection_attempt_started', 'request_send_started',
+                    'awaiting_response', 'response_observed'
+                )
+              )
+              AND (request_blob_hash IS NULL OR request_blob_hash = ? OR ? IS NULL)
+              AND (request_headers_hash IS NULL OR request_headers_hash = ? OR ? IS NULL)
+            """,
+            (
+                evidence.phase.value,
+                evidence.request_blob_hash,
+                evidence.request_headers_hash,
+                command.entity_id,
+                command.run_id,
+                command.new_state.value,
+                evidence.request_blob_hash,
+                evidence.request_blob_hash,
+                evidence.request_headers_hash,
+                evidence.request_headers_hash,
+            ),
+        )
+    )
+    if result.rowcount != 1:
+        raise IdempotencyConflictError("attempt phase evidence conflicts with durable evidence")
+
+
+def _verify_attempt_phase_evidence(
+    transaction: JournalTransaction,
+    *,
+    command: TransitionCommand[LifecycleState],
+    evidence: AttemptPhaseEvidenceCommand,
+) -> None:
+    result = transaction.execute(
+        JournalStatement(
+            """
+            SELECT state, phase, request_blob_hash, request_headers_hash
+            FROM attempts WHERE attempt_id = ? AND run_id = ?
+            """,
+            (command.entity_id, command.run_id),
+        )
+    )
+    if not result.rows:
+        raise IdempotencyConflictError("attempt phase evidence replay differs")
+    row = result.rows[0]
+    _validate_phase_edge(command, evidence)
+    if (
+        (row[0] == command.new_state.value and row[1] != evidence.phase.value)
+        or (evidence.request_blob_hash is not None and row[2] != evidence.request_blob_hash)
+        or (evidence.request_headers_hash is not None and row[3] != evidence.request_headers_hash)
+    ):
+        raise IdempotencyConflictError("attempt phase evidence replay differs")
 
 
 def _require_current_owner(
@@ -1440,7 +1912,7 @@ def _parse_wall_time(value: str) -> datetime:
 
 def _call_crash_hook(
     hook: TransitionCrashHook | None,
-    phase: TransitionMutationPhase,
+    phase: TransitionMutationPhase | AttemptMutationPhase,
 ) -> None:
     if hook is not None:
         hook(phase)

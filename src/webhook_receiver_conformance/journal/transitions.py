@@ -1,5 +1,5 @@
 """Executable lifecycle tables and typed journal transition contracts."""
-# ruff: noqa: INP001
+# ruff: noqa: D105, EM101, EM102, INP001, PLR2004, TRY003
 
 from __future__ import annotations
 
@@ -385,6 +385,86 @@ class AttemptTerminalOutcome:
         if self.retry_schedule is not None and type(self.retry_schedule) is not RetrySchedule:
             message = "retry_schedule must be a RetrySchedule"
             raise TypeError(message)
+
+
+class AttemptPhaseEvidence(StrEnum):
+    """Closed privacy-safe progress/proof vocabulary persisted for recovery."""
+
+    CONTROLLED_PRE_TRANSPORT = "controlled_pre_transport"
+    NO_CONNECTION_ESTABLISHED = "no_connection_established"
+    CONNECTION_ATTEMPT_STARTED = "connection_attempt_started"
+    REQUEST_SEND_STARTED = "request_send_started"
+    AWAITING_RESPONSE = "awaiting_response"
+    RESPONSE_OBSERVED = "response_observed"
+
+
+@dataclass(frozen=True, slots=True)
+class AttemptPhaseEvidenceCommand:
+    """Digest-only phase evidence committed with one attempt transition."""
+
+    phase: AttemptPhaseEvidence
+    request_blob_hash: str | None = None
+    request_headers_hash: str | None = None
+
+    def __post_init__(self) -> None:
+        if type(self.phase) is not AttemptPhaseEvidence:
+            raise TypeError("phase must be an AttemptPhaseEvidence")
+        for value, name in (
+            (self.request_blob_hash, "request body digest"),
+            (self.request_headers_hash, "request headers digest"),
+        ):
+            if value is not None and (
+                type(value) is not str
+                or len(value) != 71
+                or not value.startswith("sha256:")
+                or any(character not in "0123456789abcdef" for character in value[7:])
+            ):
+                raise ValueError(f"{name} must be a lowercase sha256 digest")
+
+
+@dataclass(frozen=True, slots=True)
+class AttemptScheduleClaim:
+    """Create and claim one physical attempt from one persisted schedule."""
+
+    schedule_entry_id: str
+    attempt_id: str
+    attempt_plan_id: str
+    event_id: str
+    delivery_id: str
+    predecessor_attempt_id: str | None
+    condition_json: bytes | None
+    claim_transition: TransitionCommand[AttemptState]
+
+    def __post_init__(self) -> None:
+        _bounded_token(self.schedule_entry_id, name="schedule entry ID", maximum=96)
+        validate_fresh_id(self.attempt_id, expected_kind=FreshIdKind.ATTEMPT)
+        validate_planned_id(
+            self.attempt_plan_id,
+            expected_kind=PlannedIdKind.ATTEMPT_PLAN,
+        )
+        validate_planned_id(self.event_id, expected_kind=PlannedIdKind.EVENT)
+        validate_planned_id(self.delivery_id, expected_kind=PlannedIdKind.DELIVERY)
+        if self.predecessor_attempt_id is not None:
+            validate_fresh_id(
+                self.predecessor_attempt_id,
+                expected_kind=FreshIdKind.ATTEMPT,
+            )
+        if self.condition_json is not None and (
+            type(self.condition_json) is not bytes or len(self.condition_json) > MAX_CONDITION_BYTES
+        ):
+            raise ValueError("condition_json must be bounded immutable bytes")
+        if type(self.claim_transition) is not TransitionCommand:
+            raise TypeError("claim_transition must be a TransitionCommand")
+        transition = self.claim_transition
+        if (
+            transition.entity_type is not EntityType.ATTEMPT
+            or transition.entity_id != self.attempt_id
+            or transition.expected_state is not AttemptState.SCHEDULED
+            or transition.new_state is not AttemptState.CLAIMED
+            or transition.causal_reference is not None
+            or transition.attempt_outcome is not None
+        ):
+            raise ValueError("claim transition must be scheduled-to-claimed for the new attempt")
 
 
 @dataclass(frozen=True, slots=True)

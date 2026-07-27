@@ -1,5 +1,5 @@
 """Executable lifecycle, guard, atomicity, and replay tests for TASK-0203."""
-# ruff: noqa: INP001, PLR0913, S608
+# ruff: noqa: INP001, ISC004, PLR0913, S608, SLF001
 
 from __future__ import annotations
 
@@ -22,11 +22,13 @@ from webhook_receiver_conformance.domain.enums import (
     RunState,
     ScenarioState,
 )
+from webhook_receiver_conformance.journal import repositories as repository_module
 from webhook_receiver_conformance.journal.connection import connect_writer_database
 from webhook_receiver_conformance.journal.repositories import (
     TRIGGER_ASSERTION_POLICY,
     TRIGGER_ATTEMPT_OUTCOME,
     TRIGGER_RETRY_ELIGIBLE,
+    AttemptMutationPhase,
     TransitionMutationPhase,
     TransitionRepository,
 )
@@ -39,6 +41,9 @@ from webhook_receiver_conformance.journal.service import (
     StatementOperation,
 )
 from webhook_receiver_conformance.journal.transitions import (
+    AttemptPhaseEvidence,
+    AttemptPhaseEvidenceCommand,
+    AttemptScheduleClaim,
     AttemptTerminalOutcome,
     CausalReference,
     CrossRunReferenceError,
@@ -96,6 +101,7 @@ OBSERVATION_ID = _planned("observation_", 1)
 ASSERTION_ID = _planned("assertion_", 1)
 OTHER_ASSERTION_ID = _planned("assertion_", 2)
 ATTEMPT_PLAN_ID = _planned("attempt_plan_", 1)
+CREATED_ATTEMPT_ID = _planned("attempt_", 4)
 
 settings.register_profile(
     "task_0203_deterministic_ci",
@@ -138,9 +144,9 @@ class _InjectedCrashError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class _CrashAt:
-    target: TransitionMutationPhase
+    target: TransitionMutationPhase | AttemptMutationPhase
 
-    def __call__(self, phase: TransitionMutationPhase) -> None:
+    def __call__(self, phase: TransitionMutationPhase | AttemptMutationPhase) -> None:
         if phase is self.target:
             raise _InjectedCrashError(phase.value)
 
@@ -309,6 +315,27 @@ async def _execute(
     await service.execute(StatementOperation(JournalStatement(sql, parameters)))
 
 
+async def _seed_attempt_schedule(service: JournalService) -> None:
+    await _execute(
+        service,
+        """
+        INSERT INTO schedule_entries (
+            schedule_entry_id, run_id, scenario_id, entity_type, entity_id,
+            logical_time_ns, scenario_ordinal, step_ordinal, delivery_ordinal,
+            attempt_ordinal, deterministic_tie_key, idempotency_key
+        ) VALUES ('schedule.initial', ?, ?, 'attempt', ?, 0, 0, 0, 0, 1,
+                  'attempt.initial', 'schedule.initial.idempotency')
+        """,
+        (RUN_ID, SCENARIO_ID, ATTEMPT_PLAN_ID),
+    )
+
+
+def _test_database(tmp_path: Path, name: str) -> Path:
+    directory = tmp_path / name
+    directory.mkdir()
+    return directory
+
+
 def _command(
     entity_type: EntityType,
     entity_id: str,
@@ -340,6 +367,55 @@ def _command(
         delivery_satisfaction=satisfaction,
         attempt_outcome=outcome,
     )
+
+
+def _schedule_claim() -> AttemptScheduleClaim:
+    return AttemptScheduleClaim(
+        schedule_entry_id="schedule.initial",
+        attempt_id=CREATED_ATTEMPT_ID,
+        attempt_plan_id=ATTEMPT_PLAN_ID,
+        event_id=EVENT_ID,
+        delivery_id=DELIVERY_ID,
+        predecessor_attempt_id=None,
+        condition_json=None,
+        claim_transition=cast(
+            "TransitionCommand[AttemptState]",
+            _command(
+                EntityType.ATTEMPT,
+                CREATED_ATTEMPT_ID,
+                AttemptState.SCHEDULED,
+                AttemptState.CLAIMED,
+                tag="claim_created",
+                logical_time_ns=0,
+            ),
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "condition",
+    [
+        b'{"next_attempt_ordinal":2,"next_attempt_ordinal":2,'
+        b'"predecessor_attempt_id":"attempt_00000000000000000000000001"}',
+        b'{"next_attempt_ordinal":999999999999999999999999999999999,'
+        b'"predecessor_attempt_id":"attempt_00000000000000000000000001"}',
+        (
+            b'{"next_attempt_ordinal":2,"predecessor_attempt_id":'
+            b'"attempt_00000000000000000000000001","nested":'
+            + (b"[" * 70)
+            + b"0"
+            + (b"]" * 70)
+            + b"}"
+        ),
+    ],
+)
+def test_retry_condition_parser_rejects_hostile_structures(condition: bytes) -> None:
+    with pytest.raises(IllegalTransitionError):
+        repository_module._validate_retry_condition(  # pyright: ignore[reportPrivateUsage]
+            condition,
+            predecessor_attempt_id=ATTEMPT_ID,
+            next_attempt_ordinal=2,
+        )
 
 
 async def _append_initial_history(repository: TransitionRepository) -> None:
@@ -407,6 +483,260 @@ def _retry_schedule(*, suffix: str = "one") -> RetrySchedule:
         predecessor_attempt_id=ATTEMPT_ID,
         condition_json=b'{"cause":"receiver_rejected"}',
     )
+
+
+@pytest.mark.anyio
+async def test_claim_attempt_schedule_is_atomic_and_idempotent(tmp_path: Path) -> None:
+    database = create_run_database(_test_database(tmp_path, "claim"), run_id=RUN_ID).database_path
+    async with JournalService.open(database) as service:
+        await _seed(service)
+        await _execute(service, "DELETE FROM attempts WHERE attempt_id = ?", (SECOND_ATTEMPT_ID,))
+        await _seed_attempt_schedule(service)
+        repository = TransitionRepository(service)
+        first = await repository.claim_attempt_schedule(_schedule_claim())
+        replay = await repository.claim_attempt_schedule(_schedule_claim())
+        assert not first.idempotent_replay
+        assert replay.idempotent_replay
+        assert await _rows(
+            service,
+            """
+            SELECT state, attempt_plan_id, ordinal, predecessor_attempt_id, owner_epoch
+            FROM attempts WHERE attempt_id = ?
+            """,
+            (CREATED_ATTEMPT_ID,),
+        ) == (("claimed", ATTEMPT_PLAN_ID, 1, None, OWNER_EPOCH),)
+        assert await _rows(
+            service,
+            "SELECT consumed_by_owner_epoch FROM schedule_entries WHERE schedule_entry_id = ?",
+            ("schedule.initial",),
+        ) == ((OWNER_EPOCH,),)
+        assert (
+            len(
+                await repository.history(
+                    RUN_ID,
+                    entity_type=EntityType.ATTEMPT,
+                    entity_id=CREATED_ATTEMPT_ID,
+                )
+            )
+            == 1
+        )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "phase",
+    [
+        AttemptMutationPhase.AFTER_SCHEDULE_CONSUMED,
+        AttemptMutationPhase.AFTER_ATTEMPT_INSERT,
+        TransitionMutationPhase.AFTER_APPEND,
+        TransitionMutationPhase.AFTER_PROJECTION,
+    ],
+)
+async def test_claim_attempt_schedule_crash_rolls_back_every_mutation(
+    tmp_path: Path,
+    phase: TransitionMutationPhase | AttemptMutationPhase,
+) -> None:
+    database = create_run_database(
+        _test_database(tmp_path, f"claim-{phase.value}"), run_id=RUN_ID
+    ).database_path
+    async with JournalService.open(database) as service:
+        await _seed(service)
+        await _execute(service, "DELETE FROM attempts WHERE attempt_id = ?", (SECOND_ATTEMPT_ID,))
+        await _seed_attempt_schedule(service)
+        repository = TransitionRepository(service, crash_hook=_CrashAt(phase))
+        with pytest.raises(_InjectedCrashError):
+            await repository.claim_attempt_schedule(_schedule_claim())
+        assert await _rows(
+            service,
+            "SELECT consumed_at FROM schedule_entries WHERE schedule_entry_id = ?",
+            ("schedule.initial",),
+        ) == ((None,),)
+        assert await _rows(
+            service,
+            "SELECT count(*) FROM attempts WHERE attempt_id = ?",
+            (CREATED_ATTEMPT_ID,),
+        ) == ((0,),)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("conflict", ["plan", "logical_time", "condition", "owner"])
+async def test_claim_attempt_schedule_mismatch_fails_before_consumption(
+    tmp_path: Path,
+    conflict: str,
+) -> None:
+    database = create_run_database(
+        _test_database(tmp_path, f"claim-conflict-{conflict}"), run_id=RUN_ID
+    ).database_path
+    async with JournalService.open(database) as service:
+        await _seed(service)
+        await _execute(service, "DELETE FROM attempts WHERE attempt_id = ?", (SECOND_ATTEMPT_ID,))
+        await _seed_attempt_schedule(service)
+        claim = _schedule_claim()
+        if conflict == "plan":
+            claim = replace(
+                claim,
+                attempt_plan_id=_planned("attempt_plan_", 2),
+            )
+        elif conflict == "logical_time":
+            claim = replace(
+                claim,
+                claim_transition=replace(claim.claim_transition, logical_time_ns=1),
+            )
+        elif conflict == "condition":
+            claim = replace(claim, condition_json=b"{}")
+        else:
+            claim = replace(
+                claim,
+                claim_transition=replace(
+                    claim.claim_transition,
+                    owner_epoch=OWNER_EPOCH + 1,
+                ),
+            )
+        repository = TransitionRepository(service)
+        with pytest.raises(
+            (
+                CrossRunReferenceError,
+                IdempotencyConflictError,
+                IllegalTransitionError,
+                StaleOwnerEpochError,
+            )
+        ):
+            await repository.claim_attempt_schedule(claim)
+        assert await _rows(
+            service,
+            "SELECT consumed_at FROM schedule_entries WHERE schedule_entry_id = ?",
+            ("schedule.initial",),
+        ) == ((None,),)
+        assert await _rows(
+            service,
+            "SELECT count(*) FROM attempts WHERE attempt_id = ?",
+            (CREATED_ATTEMPT_ID,),
+        ) == ((0,),)
+
+
+@pytest.mark.anyio
+async def test_attempt_transition_persists_only_closed_digest_evidence(
+    tmp_path: Path,
+) -> None:
+    database = create_run_database(_test_database(tmp_path, "phase"), run_id=RUN_ID).database_path
+    async with JournalService.open(database) as service:
+        await _seed(service)
+        repository = TransitionRepository(service)
+        await repository.apply(
+            _command(
+                EntityType.ATTEMPT,
+                ATTEMPT_ID,
+                AttemptState.SCHEDULED,
+                AttemptState.CLAIMED,
+                tag="phase_claim",
+            )
+        )
+        digest = f"sha256:{'c' * 64}"
+        command = _command(
+            EntityType.ATTEMPT,
+            ATTEMPT_ID,
+            AttemptState.CLAIMED,
+            AttemptState.PRE_SEND_COMMITTED,
+            tag="phase_pre_send",
+        )
+        evidence = AttemptPhaseEvidenceCommand(
+            AttemptPhaseEvidence.CONTROLLED_PRE_TRANSPORT,
+            request_blob_hash=digest,
+            request_headers_hash=FIXTURE_HASH,
+        )
+        committed = await repository.apply_attempt(command, evidence)
+        replay = await repository.apply_attempt(command, evidence)
+        assert not committed.idempotent_replay
+        assert replay.idempotent_replay
+        assert await _rows(
+            service,
+            """
+            SELECT state, phase, request_blob_hash, request_headers_hash
+            FROM attempts WHERE attempt_id = ?
+            """,
+            (ATTEMPT_ID,),
+        ) == (("pre_send_committed", "controlled_pre_transport", digest, FIXTURE_HASH),)
+        await repository.apply_attempt(
+            _command(
+                EntityType.ATTEMPT,
+                ATTEMPT_ID,
+                AttemptState.PRE_SEND_COMMITTED,
+                AttemptState.CONNECTING,
+                tag="phase_connecting",
+            ),
+            AttemptPhaseEvidenceCommand(AttemptPhaseEvidence.CONNECTION_ATTEMPT_STARTED),
+        )
+        old_replay = await repository.apply_attempt(command, evidence)
+        assert old_replay.idempotent_replay
+        with pytest.raises(IdempotencyConflictError):
+            await repository.apply_attempt(
+                command,
+                replace(evidence, request_blob_hash=f"sha256:{'d' * 64}"),
+            )
+    assert b"secret-canary-value" not in database.read_bytes()
+
+
+@pytest.mark.anyio
+async def test_attempt_phase_crash_and_conflicting_replay_fail_closed(
+    tmp_path: Path,
+) -> None:
+    database = create_run_database(
+        _test_database(tmp_path, "phase-crash"), run_id=RUN_ID
+    ).database_path
+    async with JournalService.open(database) as service:
+        await _seed(service)
+        repository = TransitionRepository(service)
+        await repository.apply(
+            _command(
+                EntityType.ATTEMPT,
+                ATTEMPT_ID,
+                AttemptState.SCHEDULED,
+                AttemptState.CLAIMED,
+                tag="phase_crash_claim",
+            )
+        )
+        command = _command(
+            EntityType.ATTEMPT,
+            ATTEMPT_ID,
+            AttemptState.CLAIMED,
+            AttemptState.PRE_SEND_COMMITTED,
+            tag="phase_crash_pre_send",
+        )
+        crashing = TransitionRepository(
+            service,
+            crash_hook=_CrashAt(AttemptMutationPhase.AFTER_PHASE_EVIDENCE),
+        )
+        with pytest.raises(_InjectedCrashError):
+            await crashing.apply_attempt(
+                command,
+                AttemptPhaseEvidenceCommand(
+                    AttemptPhaseEvidence.CONTROLLED_PRE_TRANSPORT,
+                    request_blob_hash=FIXTURE_HASH,
+                    request_headers_hash=FIXTURE_HASH,
+                ),
+            )
+        assert await _rows(
+            service,
+            "SELECT state, phase FROM attempts WHERE attempt_id = ?",
+            (ATTEMPT_ID,),
+        ) == (("claimed", None),)
+        await repository.apply_attempt(
+            command,
+            AttemptPhaseEvidenceCommand(
+                AttemptPhaseEvidence.CONTROLLED_PRE_TRANSPORT,
+                request_blob_hash=FIXTURE_HASH,
+                request_headers_hash=FIXTURE_HASH,
+            ),
+        )
+        with pytest.raises(IllegalTransitionError):
+            await repository.apply_attempt(
+                command,
+                AttemptPhaseEvidenceCommand(
+                    AttemptPhaseEvidence.NO_CONNECTION_ESTABLISHED,
+                    request_blob_hash=FIXTURE_HASH,
+                    request_headers_hash=FIXTURE_HASH,
+                ),
+            )
 
 
 def _terminal_outcome(
