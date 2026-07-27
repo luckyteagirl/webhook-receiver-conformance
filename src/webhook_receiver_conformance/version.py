@@ -75,5 +75,5 @@ VERSION_METADATA = VersionMetadata(
     report_schema="1.0",
     task_index_schema="1.0",
     generator_algorithm="hmac-sha256-context-v1",
-    sqlite_user_version=1,
+    sqlite_user_version=2,
 )

@@ -97,20 +97,21 @@ def crash(point: MigrationCrashPoint) -> None:
         os._exit(91)
 
 if target.migration_id == 1:
-    create_journal_database(database, crash_hook=crash, clock=lambda: fixed_clock)
-else:
-    second = Migration(
-        2,
-        "two_statement_probe",
-        (
-            "CREATE TABLE probe_one (id INTEGER PRIMARY KEY) STRICT",
-            "CREATE TABLE probe_two (id INTEGER PRIMARY KEY) STRICT",
-        ),
+    create_journal_database(
+        database,
+        migrations=(MIGRATIONS[0],),
+        crash_hook=crash,
+        clock=lambda: fixed_clock,
     )
-    connection = open_journal_database(database)
+else:
+    connection = create_journal_database(
+        database,
+        migrations=(MIGRATIONS[0],),
+        clock=lambda: fixed_clock,
+    )
     apply_migrations(
         connection,
-        migrations=(*MIGRATIONS, second),
+        migrations=MIGRATIONS,
         crash_hook=crash,
         clock=lambda: fixed_clock,
         no_backup=True,
@@ -148,6 +149,40 @@ SAMPLE_ID = _fresh("sample")
 EVALUATION_ID = _fresh("evaluation")
 OBSERVATION_RECORD_ID = _fresh("record")
 ASSERTION_RECORD_ID = _fresh("record", 1)
+ATTEMPT_RECORD_ID = _fresh("record", 2)
+
+_ATTEMPT_RECORD_INSERT = """
+    INSERT INTO attempt_records (
+        record_id,
+        schema_version,
+        run_id,
+        scenario_id,
+        event_id,
+        delivery_id,
+        attempt_id,
+        sequence,
+        recorded_at,
+        logical_time_ns,
+        monotonic_elapsed_ns,
+        state,
+        classification,
+        request_method,
+        request_url_redacted,
+        request_body_sha256,
+        request_byte_length,
+        request_header_names_json,
+        response_status,
+        response_body_sha256,
+        response_captured_bytes,
+        response_truncated,
+        error_category,
+        error_message_redacted,
+        error_phase
+    ) VALUES (
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?, ?
+    )
+"""
 
 
 @contextmanager
@@ -280,6 +315,79 @@ def _insert_attempt(
             ordinal,
             state,
         ),
+    )
+
+
+def _attempt_record_values(**overrides: object) -> tuple[object, ...]:
+    names = (
+        "record_id",
+        "schema_version",
+        "run_id",
+        "scenario_id",
+        "event_id",
+        "delivery_id",
+        "attempt_id",
+        "sequence",
+        "recorded_at",
+        "logical_time_ns",
+        "monotonic_elapsed_ns",
+        "state",
+        "classification",
+        "request_method",
+        "request_url_redacted",
+        "request_body_sha256",
+        "request_byte_length",
+        "request_header_names_json",
+        "response_status",
+        "response_body_sha256",
+        "response_captured_bytes",
+        "response_truncated",
+        "error_category",
+        "error_message_redacted",
+        "error_phase",
+    )
+    values: dict[str, object] = {
+        "record_id": ATTEMPT_RECORD_ID,
+        "schema_version": "1.0",
+        "run_id": RUN_ID,
+        "scenario_id": SCENARIO_ID,
+        "event_id": EVENT_ID,
+        "delivery_id": DELIVERY_ID,
+        "attempt_id": ATTEMPT_ID,
+        "sequence": 1,
+        "recorded_at": TIMESTAMP,
+        "logical_time_ns": 0,
+        "monotonic_elapsed_ns": 123,
+        "state": "acknowledged",
+        "classification": "receiver_accepted",
+        "request_method": "POST",
+        "request_url_redacted": "http://127.0.0.1/webhook",
+        "request_body_sha256": DIGEST,
+        "request_byte_length": 17,
+        "request_header_names_json": b'["content-type","x-request-id"]',
+        "response_status": 200,
+        "response_body_sha256": DIGEST,
+        "response_captured_bytes": 2,
+        "response_truncated": 0,
+        "error_category": None,
+        "error_message_redacted": None,
+        "error_phase": None,
+    }
+    unknown = set(overrides) - set(values)
+    if unknown:
+        message = f"unknown attempt-record fields: {sorted(unknown)}"
+        raise AssertionError(message)
+    values.update(overrides)
+    return tuple(values[name] for name in names)
+
+
+def _insert_attempt_record(
+    connection: sqlite3.Connection,
+    **overrides: object,
+) -> None:
+    connection.execute(
+        _ATTEMPT_RECORD_INSERT,
+        _attempt_record_values(**overrides),
     )
 
 
@@ -459,7 +567,7 @@ def _install_path_replacement_race(
     return state
 
 
-def test_golden_empty_database_migrates_to_frozen_v1(tmp_path: Path) -> None:
+def test_golden_empty_database_migrates_through_frozen_v1_to_v2(tmp_path: Path) -> None:
     database = tmp_path / JOURNAL_FILENAME
     assert len(GOLDEN_V0_IMAGE) == 4096
     assert hashlib.sha256(GOLDEN_V0_IMAGE).hexdigest() == GOLDEN_V0_SHA256
@@ -479,9 +587,15 @@ def test_golden_empty_database_migrates_to_frozen_v1(tmp_path: Path) -> None:
                 checksum=INITIAL_CHECKSUM,
                 applied_at=TIMESTAMP,
             ),
+            AppliedMigration(
+                migration_id=2,
+                name="add_attempt_records",
+                checksum=MIGRATIONS[1].checksum,
+                applied_at=TIMESTAMP,
+            ),
         )
         assert MIGRATIONS[0].checksum == INITIAL_CHECKSUM
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
         assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:
@@ -521,6 +635,7 @@ def test_required_tables_and_foreign_keys_are_immediate(
         "event_dependencies",
         "deliveries",
         "attempts",
+        "attempt_records",
         "schedule_entries",
         "observer_series",
         "observation_samples",
@@ -543,6 +658,87 @@ def test_required_tables_and_foreign_keys_are_immediate(
             for table in expected
         )
         >= 20
+    )
+
+
+def test_attempt_record_boundary_is_normalized_bounded_and_identity_exact(
+    journal: sqlite3.Connection,
+) -> None:
+    _seed_graph(journal)
+    columns = {
+        str(row[1]): str(row[2])
+        for row in journal.execute("PRAGMA table_info(attempt_records)").fetchall()
+    }
+    assert columns["request_header_names_json"] == "BLOB"
+    assert {
+        "request_body",
+        "request_headers",
+        "response_body",
+        "authorization",
+    }.isdisjoint(columns)
+
+    hostile_values = (
+        {"record_id": "record_invalid"},
+        {"schema_version": "2.0"},
+        {"sequence": 0},
+        {"sequence": 9_007_199_254_740_992},
+        {"state": "scheduled", "classification": "planned"},
+        {"classification": "harness_failure"},
+        {"request_url_redacted": None},
+        {"request_header_names_json": '["content-type"]'},
+        {"request_header_names_json": b"x" * 16_385},
+        {"response_status": None},
+        {
+            "error_category": "unsafe",
+            "error_message_redacted": "must not accompany acknowledgement",
+        },
+        {
+            "state": "connection_failed",
+            "classification": "environment_failure",
+            "response_status": None,
+            "response_body_sha256": None,
+            "response_captured_bytes": None,
+            "response_truncated": None,
+        },
+        {
+            "state": "cancelled",
+            "classification": "cancelled",
+        },
+        {"scenario_id": _planned("scenario", 99)},
+    )
+    for overrides in hostile_values:
+        _reject(
+            journal,
+            _ATTEMPT_RECORD_INSERT,
+            _attempt_record_values(**overrides),
+        )
+
+    with _write(journal):
+        _insert_attempt_record(journal)
+    persisted = journal.execute(
+        """
+        SELECT
+            typeof(request_header_names_json),
+            request_header_names_json,
+            state,
+            classification
+        FROM attempt_records
+        """
+    ).fetchone()
+    assert persisted is not None
+    assert tuple(persisted) == (
+        "blob",
+        b'["content-type","x-request-id"]',
+        "acknowledged",
+        "receiver_accepted",
+    )
+    _reject(
+        journal,
+        _ATTEMPT_RECORD_INSERT,
+        _attempt_record_values(
+            record_id=_fresh("record", 3),
+            sequence=2,
+        ),
     )
 
 
@@ -898,6 +1094,7 @@ def test_append_only_ledger_and_evidence_tables_reject_rewrites(
             """,
             (RUN_ID, ATTEMPT_ID, TIMESTAMP),
         )
+        _insert_attempt_record(journal)
     immutable_operations = (
         ("UPDATE schema_migrations SET migration_name = 'changed'", ()),
         ("DELETE FROM schema_migrations", ()),
@@ -915,6 +1112,8 @@ def test_append_only_ledger_and_evidence_tables_reject_rewrites(
         ("DELETE FROM recovery_decision_evidence", ()),
         ("UPDATE redaction_events SET replacement_type = 'removed'", ()),
         ("DELETE FROM redaction_events", ()),
+        ("UPDATE attempt_records SET sequence = 2", ()),
+        ("DELETE FROM attempt_records", ()),
     )
     for sql, parameters in immutable_operations:
         _reject(journal, sql, parameters)
@@ -1074,45 +1273,37 @@ def test_changed_applied_migration_checksum_aborts_before_side_effect(
         journal.execute("SELECT migration_id, checksum FROM schema_migrations").fetchall()
     )
     with pytest.raises(MigrationChecksumError):
-        apply_migrations(journal, migrations=(changed,))
+        apply_migrations(journal, migrations=(changed, MIGRATIONS[1]))
     after = tuple(
         journal.execute("SELECT migration_id, checksum FROM schema_migrations").fetchall()
     )
     assert after == before
-    assert journal.execute("PRAGMA user_version").fetchone()[0] == 1
+    assert journal.execute("PRAGMA user_version").fetchone()[0] == 2
 
 
 def test_new_migration_applies_once_and_records_checksum(
-    journal: sqlite3.Connection,
+    tmp_path: Path,
 ) -> None:
-    second = Migration(
-        migration_id=2,
-        name="add_migration_probe",
-        statements=(
-            """
-            CREATE TABLE migration_probe (
-                probe_id INTEGER PRIMARY KEY,
-                value TEXT NOT NULL CHECK (length(value) BETWEEN 1 AND 64)
-            ) STRICT
-            """,
-        ),
+    database_path = tmp_path / JOURNAL_FILENAME
+    journal = create_journal_database(
+        database_path,
+        migrations=(MIGRATIONS[0],),
+        clock=lambda: FIXED_CLOCK,
     )
-    catalog = (*MIGRATIONS, second)
     trace: list[str] = []
     journal.set_trace_callback(trace.append)
-    first = apply_migrations(journal, migrations=catalog, clock=lambda: FIXED_CLOCK)
+    first = apply_migrations(journal, migrations=MIGRATIONS, clock=lambda: FIXED_CLOCK)
     second_open = apply_migrations(
         journal,
-        migrations=catalog,
+        migrations=MIGRATIONS,
         clock=lambda: FIXED_CLOCK,
     )
     journal.set_trace_callback(None)
     assert first == second_open
     assert [record.migration_id for record in first] == [1, 2]
-    assert first[-1].checksum == second.checksum
+    assert first[-1].checksum == MIGRATIONS[1].checksum
     assert journal.execute("PRAGMA user_version").fetchone()[0] == 2
-    assert sum("CREATE TABLE migration_probe" in statement for statement in trace) == 1
-    database_path = Path(str(journal.execute("PRAGMA database_list").fetchone()[2]))
+    assert sum("CREATE TABLE attempt_records" in statement for statement in trace) == 1
     backups = list(database_path.parent.glob(f"{database_path.name}.pre-v1-to-v2.*.bak"))
     assert len(backups) == 1
     backup = sqlite3.connect(backups[0])
@@ -1122,7 +1313,7 @@ def test_new_migration_applies_once_and_records_checksum(
             backup.execute(
                 """
                 SELECT 1 FROM sqlite_schema
-                WHERE type = 'table' AND name = 'migration_probe'
+                WHERE type = 'table' AND name = 'attempt_records'
                 """
             ).fetchone()
             is None
@@ -1130,6 +1321,7 @@ def test_new_migration_applies_once_and_records_checksum(
         assert backup.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     finally:
         backup.close()
+        journal.close()
 
 
 def test_upgrade_backup_binds_created_file_across_replacement_race(
@@ -1137,13 +1329,11 @@ def test_upgrade_backup_binds_created_file_across_replacement_race(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     database = tmp_path / JOURNAL_FILENAME
-    connection = create_journal_database(database, clock=lambda: FIXED_CLOCK)
-    second = Migration(
-        migration_id=2,
-        name="backup_race_probe",
-        statements=("CREATE TABLE backup_race_probe (probe_id INTEGER PRIMARY KEY) STRICT",),
+    connection = create_journal_database(
+        database,
+        migrations=(MIGRATIONS[0],),
+        clock=lambda: FIXED_CLOCK,
     )
-    catalog = (*MIGRATIONS, second)
     victim = tmp_path / "backup-victim.sqlite3"
     victim_bytes = b"backup-victim-must-not-change"
     victim.write_bytes(victim_bytes)
@@ -1172,7 +1362,7 @@ def test_upgrade_backup_binds_created_file_across_replacement_race(
     if os.name == "nt":
         apply_migrations(
             connection,
-            migrations=catalog,
+            migrations=MIGRATIONS,
             clock=lambda: FIXED_CLOCK,
         )
         assert state == {"attempted": True, "blocked": True}
@@ -1183,7 +1373,7 @@ def test_upgrade_backup_binds_created_file_across_replacement_race(
         with pytest.raises(MigrationExecutionError):
             apply_migrations(
                 connection,
-                migrations=catalog,
+                migrations=MIGRATIONS,
                 clock=lambda: FIXED_CLOCK,
             )
         assert state == {"attempted": True, "blocked": False}
@@ -1195,21 +1385,22 @@ def test_upgrade_backup_binds_created_file_across_replacement_race(
 
 
 def test_explicit_disposable_upgrade_can_skip_backup(
-    journal: sqlite3.Connection,
+    tmp_path: Path,
 ) -> None:
-    second = Migration(
-        migration_id=2,
-        name="disposable_probe",
-        statements=("CREATE TABLE disposable_probe (probe_id INTEGER PRIMARY KEY) STRICT",),
+    database_path = tmp_path / JOURNAL_FILENAME
+    journal = create_journal_database(
+        database_path,
+        migrations=(MIGRATIONS[0],),
+        clock=lambda: FIXED_CLOCK,
     )
-    database_path = Path(str(journal.execute("PRAGMA database_list").fetchone()[2]))
     apply_migrations(
         journal,
-        migrations=(*MIGRATIONS, second),
+        migrations=MIGRATIONS,
         no_backup=True,
         clock=lambda: FIXED_CLOCK,
     )
     assert list(database_path.parent.glob(f"{database_path.name}.pre-v1-to-v2.*.bak")) == []
+    journal.close()
 
 
 def test_catalog_rejects_gaps_transaction_escape_and_resource_overflow() -> None:
@@ -1273,7 +1464,7 @@ def test_unmanaged_and_future_databases_are_rejected_without_schema_changes(
     future_path.parent.mkdir()
     future = sqlite3.connect(future_path, isolation_level=None)
     configure_connection(future)
-    future.execute("PRAGMA user_version = 2")
+    future.execute("PRAGMA user_version = 3")
     with pytest.raises(UnsupportedDatabaseVersionError):
         apply_migrations(future)
     assert future.execute("SELECT name FROM sqlite_schema").fetchall() == []
@@ -1329,9 +1520,13 @@ def test_every_v1_statement_crash_boundary_preserves_v0_or_committed_v1(
             assert (user_version, has_ledger) == (1, True), target
         else:
             assert (user_version, has_ledger) == (0, False), target
-        reopened = open_journal_database(database, clock=lambda: FIXED_CLOCK)
+        reopened = open_journal_database(
+            database,
+            migrations=(MIGRATIONS[0],),
+            clock=lambda: FIXED_CLOCK,
+        )
         try:
-            validate_migration_output(reopened)
+            validate_migration_output(reopened, migrations=(MIGRATIONS[0],))
             assert reopened.execute("PRAGMA user_version").fetchone()[0] == 1
         finally:
             reopened.close()
@@ -1341,22 +1536,13 @@ def test_every_v1_statement_crash_boundary_preserves_v0_or_committed_v1(
 def test_later_migration_crash_preserves_complete_prior_version(
     tmp_path: Path,
 ) -> None:
-    second = Migration(
-        2,
-        "two_statement_probe",
-        (
-            "CREATE TABLE probe_one (id INTEGER PRIMARY KEY) STRICT",
-            "CREATE TABLE probe_two (id INTEGER PRIMARY KEY) STRICT",
-        ),
-    )
-    catalog = (*MIGRATIONS, second)
+    second = MIGRATIONS[1]
+    catalog = MIGRATIONS
     observed_hot_journal = False
     for index, target in enumerate(migration_crash_points(second)):
         run_directory = tmp_path / f"later-{index:02d}"
         run_directory.mkdir()
         database = run_directory / JOURNAL_FILENAME
-        connection = create_journal_database(database, clock=lambda: FIXED_CLOCK)
-        connection.close()
         _run_crash_process(database, target)
         rollback_journal = Path(f"{database}-journal")
         observed_hot_journal |= rollback_journal.exists() and rollback_journal.stat().st_size > 0
@@ -1378,9 +1564,9 @@ def test_later_migration_crash_preserves_complete_prior_version(
                 ).fetchall()
             }
             if expected_version == 1:
-                assert {"probe_one", "probe_two"}.isdisjoint(present)
+                assert "attempt_records" not in present
             else:
-                assert {"probe_one", "probe_two"} <= present
+                assert "attempt_records" in present
             assert raw.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
         finally:
             raw.close()
@@ -1624,18 +1810,19 @@ def test_unc_artifact_directory_is_rejected_before_access() -> None:
 def test_new_run_directories_and_database_request_owner_only_modes(
     tmp_path: Path,
 ) -> None:
-    created = create_run_database(tmp_path / "runs")
+    created = create_run_database(
+        tmp_path / "runs",
+        migrations=(MIGRATIONS[0],),
+    )
     directory_mode = stat.S_IMODE(created.run_directory.stat().st_mode)
     database_mode = stat.S_IMODE(created.database_path.stat().st_mode)
     assert directory_mode == 0o700
     assert database_mode == 0o600
-    connection = open_journal_database(created.database_path)
-    second = Migration(
-        2,
-        "permission_probe",
-        ("CREATE TABLE permission_probe (id INTEGER PRIMARY KEY) STRICT",),
+    connection = open_journal_database(
+        created.database_path,
+        migrations=(MIGRATIONS[0],),
     )
-    apply_migrations(connection, migrations=(*MIGRATIONS, second))
+    apply_migrations(connection, migrations=MIGRATIONS)
     connection.close()
     backups = list(created.run_directory.glob(f"{created.database_path.name}.pre-v1-to-v2.*.bak"))
     assert len(backups) == 1

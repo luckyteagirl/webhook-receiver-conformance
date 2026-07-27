@@ -16,11 +16,17 @@ from hypothesis import strategies as st
 from webhook_receiver_conformance.domain.enums import (
     AssertionState,
     AttemptClassification,
+    AttemptEvidenceState,
     AttemptState,
     DeliveryState,
     ObservationState,
     RunState,
     ScenarioState,
+)
+from webhook_receiver_conformance.domain.models import (
+    RequestMetadata,
+    ResponseMetadata,
+    TransportError,
 )
 from webhook_receiver_conformance.journal import repositories as repository_module
 from webhook_receiver_conformance.journal.connection import connect_writer_database
@@ -45,6 +51,7 @@ from webhook_receiver_conformance.journal.transitions import (
     AttemptPhaseEvidenceCommand,
     AttemptScheduleClaim,
     AttemptTerminalOutcome,
+    AttemptTransportEvidenceCommand,
     CausalReference,
     CrossRunReferenceError,
     DeliverySatisfactionEvidence,
@@ -753,6 +760,137 @@ def _terminal_outcome(
         AttemptState.CANCELLED: AttemptClassification.CANCELLED,
     }[state]
     return AttemptTerminalOutcome(classification, schedule)
+
+
+def _transport_evidence(
+    state: AttemptState,
+    *,
+    attempt_id: str = ATTEMPT_ID,
+    record_id: str | None = None,
+) -> AttemptTransportEvidenceCommand:
+    evidence_state = {
+        AttemptState.NOT_SENT: AttemptEvidenceState.CONNECTION_FAILED,
+        AttemptState.SUCCEEDED: AttemptEvidenceState.ACKNOWLEDGED,
+        AttemptState.REJECTED: AttemptEvidenceState.REJECTED,
+        AttemptState.TRANSPORT_FAILED: AttemptEvidenceState.CONNECTION_FAILED,
+        AttemptState.UNKNOWN_OUTCOME: AttemptEvidenceState.UNKNOWN_OUTCOME,
+        AttemptState.CANCELLED: AttemptEvidenceState.CANCELLED,
+    }[state]
+    classification = _terminal_outcome(state).classification
+    response = (
+        ResponseMetadata(
+            status=200 if state is AttemptState.SUCCEEDED else 409,
+            body_sha256=FIXTURE_HASH,
+            captured_bytes=2,
+            truncated=False,
+        )
+        if state in {AttemptState.SUCCEEDED, AttemptState.REJECTED}
+        else None
+    )
+    error = (
+        TransportError(
+            category="transport_error",
+            message_redacted="sensitive transport detail redacted",
+            phase="connect",
+        )
+        if state
+        in {
+            AttemptState.NOT_SENT,
+            AttemptState.TRANSPORT_FAILED,
+            AttemptState.UNKNOWN_OUTCOME,
+        }
+        else None
+    )
+    is_other = attempt_id == OTHER_ATTEMPT_ID
+    return AttemptTransportEvidenceCommand(
+        record_id=record_id or f"record_{attempt_id.removeprefix('attempt_')}",
+        run_id=RUN_ID,
+        scenario_id=OTHER_SCENARIO_ID if is_other else SCENARIO_ID,
+        event_id=OTHER_EVENT_ID if is_other else EVENT_ID,
+        delivery_id=OTHER_DELIVERY_ID if is_other else DELIVERY_ID,
+        attempt_id=attempt_id,
+        state=evidence_state,
+        classification=classification,
+        request=RequestMetadata(
+            url_redacted="http://127.0.0.1/webhook",
+            body_sha256=FIXTURE_HASH,
+            byte_length=17,
+            header_names=("content-type", "x-request-id"),
+        ),
+        response=response,
+        error=error,
+    )
+
+
+def test_transport_evidence_command_is_strict_bounded_and_canonical() -> None:
+    acknowledged = _transport_evidence(AttemptState.SUCCEEDED)
+    assert acknowledged.request_header_names_json == b'["content-type","x-request-id"]'
+
+    bad_requests = (
+        RequestMetadata(
+            url_redacted="http://127.0.0.1/webhook",
+            body_sha256=FIXTURE_HASH,
+            byte_length=17,
+            header_names=("x-request-id", "content-type"),
+        ),
+        RequestMetadata(
+            url_redacted="http://127.0.0.1/webhook",
+            body_sha256=FIXTURE_HASH,
+            byte_length=17,
+            header_names=("authorization: bearer secret-canary-value",),
+        ),
+        RequestMetadata(
+            url_redacted="http://127.0.0.1/webhook\nsecret-canary-value",
+            body_sha256=FIXTURE_HASH,
+            byte_length=17,
+        ),
+        RequestMetadata(
+            url_redacted="http://127.0.0.1/webhook",
+            body_sha256=FIXTURE_HASH,
+            byte_length=17,
+            header_names=tuple(f"x-{ordinal:03d}" for ordinal in range(257)),
+        ),
+    )
+    for request in bad_requests:
+        with pytest.raises(ValueError, match="request"):
+            replace(acknowledged, request=request)
+
+    with pytest.raises(ValueError, match="state and classification"):
+        replace(
+            acknowledged,
+            classification=AttemptClassification.HARNESS_FAILURE,
+        )
+    with pytest.raises(ValueError, match="requires response metadata"):
+        replace(acknowledged, response=None)
+    with pytest.raises(ValueError, match="requires response metadata"):
+        replace(
+            acknowledged,
+            error=TransportError(
+                category="transport_error",
+                message_redacted="redacted",
+            ),
+        )
+    with pytest.raises(ValueError, match="requires a redacted transport error"):
+        replace(
+            _transport_evidence(AttemptState.TRANSPORT_FAILED),
+            error=None,
+        )
+    with pytest.raises(ValueError, match="cancelled evidence cannot contain response"):
+        replace(
+            _transport_evidence(AttemptState.CANCELLED),
+            response=ResponseMetadata(
+                status=200,
+                captured_bytes=0,
+            ),
+        )
+    with pytest.raises(ValueError, match="redacted transport error message"):
+        replace(
+            _transport_evidence(AttemptState.TRANSPORT_FAILED),
+            error=TransportError(
+                category="transport_error",
+                message_redacted="redacted\nsecret-canary-value",
+            ),
+        )
 
 
 def test_executable_tables_match_all_six_normative_diagrams() -> None:
@@ -1545,6 +1683,65 @@ async def test_retry_eligibility_names_the_same_delivery_predecessor_outcome(
 
 
 @pytest.mark.anyio
+async def test_terminal_attempt_requires_one_exact_transport_record(
+    tmp_path: Path,
+) -> None:
+    run = create_run_database(tmp_path, run_id=RUN_ID)
+    async with JournalService.open(run.database_path) as service:
+        await _seed(service)
+        await _execute(
+            service,
+            "UPDATE attempts SET state = 'response_observed' WHERE attempt_id = ?",
+            (ATTEMPT_ID,),
+        )
+        repository = TransitionRepository(service)
+        command = _command(
+            EntityType.ATTEMPT,
+            ATTEMPT_ID,
+            AttemptState.RESPONSE_OBSERVED,
+            AttemptState.SUCCEEDED,
+            tag="record_required",
+            outcome=_terminal_outcome(AttemptState.SUCCEEDED),
+        )
+        with pytest.raises(IllegalTransitionError):
+            await repository.apply(command)
+        assert await _rows(service, "SELECT count(*) FROM transitions") == ((0,),)
+        assert await _rows(service, "SELECT count(*) FROM attempt_records") == ((0,),)
+
+        with pytest.raises(IllegalTransitionError):
+            await repository.apply_attempt(
+                _command(
+                    EntityType.ATTEMPT,
+                    OTHER_ATTEMPT_ID,
+                    AttemptState.SCHEDULED,
+                    AttemptState.CLAIMED,
+                    tag="record_forbidden",
+                ),
+                transport_evidence=_transport_evidence(
+                    AttemptState.CANCELLED,
+                    attempt_id=OTHER_ATTEMPT_ID,
+                ),
+            )
+
+        wrong_identity = replace(
+            _transport_evidence(AttemptState.SUCCEEDED),
+            scenario_id=OTHER_SCENARIO_ID,
+            event_id=OTHER_EVENT_ID,
+            delivery_id=OTHER_DELIVERY_ID,
+        )
+        with pytest.raises(CrossRunReferenceError):
+            await repository.apply_attempt(
+                command,
+                transport_evidence=wrong_identity,
+            )
+        assert await _rows(
+            service,
+            "SELECT state FROM attempts WHERE attempt_id = ?",
+            (ATTEMPT_ID,),
+        ) == (("response_observed",),)
+
+
+@pytest.mark.anyio
 async def test_attempt_state_set_matches_sql_check_and_terminal_outcome_mapping(
     tmp_path: Path,
 ) -> None:
@@ -1589,7 +1786,7 @@ async def test_attempt_state_set_matches_sql_check_and_terminal_outcome_mapping(
                 "UPDATE attempts SET state = ? WHERE attempt_id = ?",
                 (source.value, attempt_id),
             )
-            committed = await repository.apply(
+            committed = await repository.apply_attempt(
                 _command(
                     EntityType.ATTEMPT,
                     attempt_id,
@@ -1597,9 +1794,25 @@ async def test_attempt_state_set_matches_sql_check_and_terminal_outcome_mapping(
                     target,
                     tag=f"attempt_{target.value}",
                     outcome=_terminal_outcome(target),
-                )
+                ),
+                transport_evidence=_transport_evidence(
+                    target,
+                    attempt_id=attempt_id,
+                ),
             )
             assert committed.record.to_state is target
+        assert await _rows(
+            service,
+            """
+            SELECT attempt_id, sequence
+            FROM attempt_records
+            ORDER BY sequence
+            """,
+        ) == (
+            (ATTEMPT_ID, 1),
+            (SECOND_ATTEMPT_ID, 2),
+            (OTHER_ATTEMPT_ID, 3),
+        )
 
 
 @pytest.mark.anyio
@@ -1628,7 +1841,7 @@ async def test_every_terminal_attempt_state_persists_compatible_outcome(
             "UPDATE attempts SET state = ? WHERE attempt_id = ?",
             (source.value, ATTEMPT_ID),
         )
-        committed = await TransitionRepository(service).apply(
+        committed = await TransitionRepository(service).apply_attempt(
             _command(
                 EntityType.ATTEMPT,
                 ATTEMPT_ID,
@@ -1637,7 +1850,8 @@ async def test_every_terminal_attempt_state_persists_compatible_outcome(
                 tag=f"terminal_case_{target.value}",
                 trigger=TRIGGER_ATTEMPT_OUTCOME,
                 outcome=_terminal_outcome(target, schedule=schedule),
-            )
+            ),
+            transport_evidence=_transport_evidence(target),
         )
         assert committed.record.to_state is target
         assert await _rows(
@@ -1649,6 +1863,21 @@ async def test_every_terminal_attempt_state_persists_compatible_outcome(
             """,
             (ATTEMPT_ID,),
         ) == ((target.value, _terminal_outcome(target).classification.value, TIMESTAMP),)
+        assert await _rows(
+            service,
+            """
+            SELECT state, classification, sequence
+            FROM attempt_records
+            WHERE attempt_id = ?
+            """,
+            (ATTEMPT_ID,),
+        ) == (
+            (
+                _transport_evidence(target).state.value,
+                _terminal_outcome(target).classification.value,
+                1,
+            ),
+        )
         assert await _rows(
             service,
             "SELECT count(*) FROM schedule_entries",
@@ -1681,7 +1910,8 @@ async def test_unknown_outcome_replay_ignores_later_explicit_redelivery_schedule
             (ATTEMPT_ID,),
         )
         repository = TransitionRepository(service)
-        await repository.apply(command)
+        evidence = _transport_evidence(AttemptState.UNKNOWN_OUTCOME)
+        await repository.apply_attempt(command, transport_evidence=evidence)
         await _execute(
             service,
             """
@@ -1717,17 +1947,18 @@ async def test_unknown_outcome_replay_ignores_later_explicit_redelivery_schedule
                 later.idempotency_key,
             ),
         )
-        replay = await repository.apply(command)
+        replay = await repository.apply_attempt(command, transport_evidence=evidence)
         assert replay.idempotent_replay
         with pytest.raises(IllegalTransitionError):
-            await repository.apply(
+            await repository.apply_attempt(
                 replace(
                     command,
                     attempt_outcome=AttemptTerminalOutcome(
                         AttemptClassification.AMBIGUOUS,
                         later,
                     ),
-                )
+                ),
+                transport_evidence=evidence,
             )
 
 
@@ -1798,21 +2029,31 @@ async def test_terminal_attempt_and_derived_retry_schedule_are_one_operation(
             ),
         )
         repository = TransitionRepository(service)
-        first = await repository.apply(command)
-        replay = await repository.apply(command)
+        evidence = _transport_evidence(AttemptState.REJECTED)
+        first = await repository.apply_attempt(command, transport_evidence=evidence)
+        replay = await repository.apply_attempt(command, transport_evidence=evidence)
         assert not first.idempotent_replay
         assert replay.idempotent_replay
         with pytest.raises(IdempotencyConflictError):
-            await repository.apply(
+            await repository.apply_attempt(
+                command,
+                transport_evidence=replace(
+                    evidence,
+                    record_id=_planned("record_", 9),
+                ),
+            )
+        with pytest.raises(IdempotencyConflictError):
+            await repository.apply_attempt(
                 replace(
                     command,
                     attempt_outcome=AttemptTerminalOutcome(
                         AttemptClassification.RECEIVER_REJECTED,
                     ),
-                )
+                ),
+                transport_evidence=evidence,
             )
         with pytest.raises(IllegalTransitionError):
-            await repository.apply(
+            await repository.apply_attempt(
                 replace(
                     command,
                     attempt_outcome=AttemptTerminalOutcome(
@@ -1822,17 +2063,19 @@ async def test_terminal_attempt_and_derived_retry_schedule_are_one_operation(
                             predecessor_attempt_id=SECOND_ATTEMPT_ID,
                         ),
                     ),
-                )
+                ),
+                transport_evidence=evidence,
             )
         with pytest.raises(IllegalTransitionError):
-            await repository.apply(
+            await repository.apply_attempt(
                 replace(
                     command,
                     attempt_outcome=AttemptTerminalOutcome(
                         AttemptClassification.RECEIVER_REJECTED,
                         replace(schedule, attempt_ordinal=2),
                     ),
-                )
+                ),
+                transport_evidence=evidence,
             )
         assert await _rows(
             service,
@@ -1849,6 +2092,49 @@ async def test_terminal_attempt_and_derived_retry_schedule_are_one_operation(
             (RUN_ID,),
         ) == ((1,),)
         assert await _rows(service, "SELECT count(*) FROM transitions") == ((1,),)
+        assert await _rows(
+            service,
+            """
+            SELECT
+                record_id,
+                sequence,
+                recorded_at,
+                logical_time_ns,
+                monotonic_elapsed_ns,
+                state,
+                classification,
+                request_url_redacted,
+                request_body_sha256,
+                request_byte_length,
+                request_header_names_json,
+                response_status,
+                response_body_sha256,
+                response_captured_bytes,
+                response_truncated,
+                error_category
+            FROM attempt_records
+            """,
+        ) == (
+            (
+                evidence.record_id,
+                1,
+                TIMESTAMP,
+                None,
+                LIVE_TIMESTAMP.monotonic_elapsed_ns,
+                "rejected",
+                "receiver_rejected",
+                "http://127.0.0.1/webhook",
+                FIXTURE_HASH,
+                17,
+                b'["content-type","x-request-id"]',
+                409,
+                FIXTURE_HASH,
+                2,
+                0,
+                None,
+            ),
+        )
+    assert b"secret-canary-value" not in run.database_path.read_bytes()
 
 
 @pytest.mark.anyio
@@ -1870,19 +2156,22 @@ async def test_completed_attempt_history_reconstructs_its_current_state(
         repository = TransitionRepository(service)
         await _append_initial_history(repository)
         for ordinal, (source, target) in enumerate(path, start=1):
-            await repository.apply(
-                _command(
-                    EntityType.ATTEMPT,
-                    ATTEMPT_ID,
-                    source,
-                    target,
-                    tag=f"completed_attempt_{ordinal}",
-                    trigger=TRIGGER_ATTEMPT_OUTCOME,
-                    outcome=(
-                        _terminal_outcome(target) if target is AttemptState.SUCCEEDED else None
-                    ),
-                )
+            command = _command(
+                EntityType.ATTEMPT,
+                ATTEMPT_ID,
+                source,
+                target,
+                tag=f"completed_attempt_{ordinal}",
+                trigger=TRIGGER_ATTEMPT_OUTCOME,
+                outcome=(_terminal_outcome(target) if target is AttemptState.SUCCEEDED else None),
             )
+            if target is AttemptState.SUCCEEDED:
+                await repository.apply_attempt(
+                    command,
+                    transport_evidence=_transport_evidence(target),
+                )
+            else:
+                await repository.apply(command)
         history = await repository.history(
             RUN_ID,
             entity_type=EntityType.ATTEMPT,
@@ -1899,10 +2188,13 @@ async def test_completed_attempt_history_reconstructs_its_current_state(
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("phase", tuple(TransitionMutationPhase))
+@pytest.mark.parametrize(
+    "phase",
+    [*TransitionMutationPhase, AttemptMutationPhase.AFTER_ATTEMPT_RECORD],
+)
 async def test_crash_at_each_atomic_boundary_rolls_back_every_write(
     tmp_path: Path,
-    phase: TransitionMutationPhase,
+    phase: TransitionMutationPhase | AttemptMutationPhase,
 ) -> None:
     run = create_run_database(tmp_path, run_id=RUN_ID)
     async with JournalService.open(run.database_path) as service:
@@ -1914,7 +2206,7 @@ async def test_crash_at_each_atomic_boundary_rolls_back_every_write(
         )
         repository = TransitionRepository(service, crash_hook=_CrashAt(phase))
         with pytest.raises(_InjectedCrashError):
-            await repository.apply(
+            await repository.apply_attempt(
                 _command(
                     EntityType.ATTEMPT,
                     ATTEMPT_ID,
@@ -1926,7 +2218,8 @@ async def test_crash_at_each_atomic_boundary_rolls_back_every_write(
                         AttemptClassification.RECEIVER_REJECTED,
                         _retry_schedule(suffix=phase.value),
                     ),
-                )
+                ),
+                transport_evidence=_transport_evidence(AttemptState.REJECTED),
             )
         assert await _rows(
             service,
@@ -1938,6 +2231,7 @@ async def test_crash_at_each_atomic_boundary_rolls_back_every_write(
             (ATTEMPT_ID,),
         ) == (("response_observed", None, None),)
         assert await _rows(service, "SELECT count(*) FROM transitions") == ((0,),)
+        assert await _rows(service, "SELECT count(*) FROM attempt_records") == ((0,),)
         assert await _rows(service, "SELECT count(*) FROM schedule_entries") == ((0,),)
 
 

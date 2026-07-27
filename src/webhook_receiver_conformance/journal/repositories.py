@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Protocol, cast
 from webhook_receiver_conformance.domain.enums import (
     AssertionState,
     AttemptClassification,
+    AttemptEvidenceState,
     AttemptState,
     DeliveryState,
     RunState,
@@ -23,12 +24,14 @@ from webhook_receiver_conformance.domain.identifiers import (
     validate_planned_id,
     validate_run_id,
 )
+from webhook_receiver_conformance.domain.models import AttemptEvidence
 from webhook_receiver_conformance.scheduler.clocks import TransitionTimestamp
 
 from .service import (
     JournalService,
     JournalStatement,
     JournalTransaction,
+    SqlValue,
 )
 from .transitions import (
     MAX_CONDITION_BYTES,
@@ -37,6 +40,7 @@ from .transitions import (
     AttemptPhaseEvidence,
     AttemptPhaseEvidenceCommand,
     AttemptScheduleClaim,
+    AttemptTransportEvidenceCommand,
     CausalReference,
     CommittedTransition,
     CrossRunReferenceError,
@@ -53,6 +57,7 @@ from .transitions import (
     StaleOwnerEpochError,
     TransitionCommand,
     TransitionRecord,
+    canonical_request_header_names_json,
     compare_projection_inventories,
     parse_state,
     replay_transition_records,
@@ -70,6 +75,7 @@ _ENTITY_PROJECTION_COLUMN_COUNT = 10
 _ASSERTION_GUARD_COLUMN_COUNT = 3
 _TRANSITION_COLUMN_COUNT = 15
 _PROJECTION_COLUMN_COUNT = 2
+_ATTEMPT_RECORD_COLUMN_COUNT = 25
 
 TRIGGER_ATTEMPT_OUTCOME = "attempt_outcome"
 TRIGGER_ASSERTION_POLICY = "assertion_policy"
@@ -123,6 +129,30 @@ _CLASSIFICATIONS_BY_TERMINAL_STATE: Mapping[
         AttemptState.CANCELLED: frozenset({AttemptClassification.CANCELLED}),
     }
 )
+_EVIDENCE_STATES_BY_TERMINAL_STATE: Mapping[
+    AttemptState,
+    frozenset[AttemptEvidenceState],
+] = MappingProxyType(
+    {
+        AttemptState.NOT_SENT: frozenset(
+            {
+                AttemptEvidenceState.CONNECTION_FAILED,
+                AttemptEvidenceState.PROTOCOL_FAILED,
+            }
+        ),
+        AttemptState.SUCCEEDED: frozenset({AttemptEvidenceState.ACKNOWLEDGED}),
+        AttemptState.REJECTED: frozenset({AttemptEvidenceState.REJECTED}),
+        AttemptState.TRANSPORT_FAILED: frozenset(
+            {
+                AttemptEvidenceState.TIMED_OUT,
+                AttemptEvidenceState.CONNECTION_FAILED,
+                AttemptEvidenceState.PROTOCOL_FAILED,
+            }
+        ),
+        AttemptState.UNKNOWN_OUTCOME: frozenset({AttemptEvidenceState.UNKNOWN_OUTCOME}),
+        AttemptState.CANCELLED: frozenset({AttemptEvidenceState.CANCELLED}),
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +190,7 @@ class AttemptMutationPhase(StrEnum):
     AFTER_SCHEDULE_CONSUMED = "after_schedule_consumed"
     AFTER_ATTEMPT_INSERT = "after_attempt_insert"
     AFTER_PHASE_EVIDENCE = "after_phase_evidence"
+    AFTER_ATTEMPT_RECORD = "after_attempt_record"
 
 
 class TransitionCrashHook(Protocol):
@@ -189,9 +220,14 @@ class _ApplyTransitionOperation:
     command: TransitionCommand[LifecycleState]
     crash_hook: TransitionCrashHook | None
     phase_evidence: AttemptPhaseEvidenceCommand | None = None
+    transport_evidence: AttemptTransportEvidenceCommand | None = None
 
     def execute(self, transaction: JournalTransaction) -> CommittedTransition:
         _validate_payload_scope(self.command)
+        _validate_transport_evidence_presence(
+            self.command,
+            self.transport_evidence,
+        )
         _require_current_owner(transaction, self.command)
         existing = _transition_by_idempotency_key(
             transaction,
@@ -205,6 +241,13 @@ class _ApplyTransitionOperation:
                     transaction,
                     command=self.command,
                     evidence=self.phase_evidence,
+                )
+            if self.transport_evidence is not None:
+                _verify_existing_attempt_record(
+                    transaction,
+                    command=self.command,
+                    transition=existing,
+                    evidence=self.transport_evidence,
                 )
             return CommittedTransition(record=existing, idempotent_replay=True)
         if _transition_id_exists(transaction, self.command.transition_id):
@@ -224,6 +267,12 @@ class _ApplyTransitionOperation:
             raise CrossRunReferenceError(message)
         _validate_projection_and_edge(transaction, self.command, projection)
         _validate_transition_guards(transaction, self.command, projection)
+        if self.transport_evidence is not None:
+            _validate_transport_evidence_identity(
+                transaction,
+                command=self.command,
+                evidence=self.transport_evidence,
+            )
 
         sequence = _next_transition_sequence(transaction, self.command.run_id)
         record = _record_from_command(self.command, sequence=sequence)
@@ -242,6 +291,21 @@ class _ApplyTransitionOperation:
             _call_crash_hook(
                 self.crash_hook,
                 AttemptMutationPhase.AFTER_PHASE_EVIDENCE,
+            )
+        if self.transport_evidence is not None:
+            evidence_sequence = _next_attempt_record_sequence(
+                transaction,
+                self.command.run_id,
+            )
+            attempt_record = _attempt_record_from_command(
+                self.command,
+                evidence=self.transport_evidence,
+                sequence=evidence_sequence,
+            )
+            _insert_attempt_record(transaction, attempt_record)
+            _call_crash_hook(
+                self.crash_hook,
+                AttemptMutationPhase.AFTER_ATTEMPT_RECORD,
             )
 
         retry_schedule = (
@@ -393,22 +457,40 @@ class TransitionRepository:
     async def apply_attempt[S: LifecycleState](
         self,
         command: TransitionCommand[S],
-        evidence: AttemptPhaseEvidenceCommand,
+        evidence: AttemptPhaseEvidenceCommand | None = None,
+        *,
+        transport_evidence: AttemptTransportEvidenceCommand | None = None,
     ) -> CommittedTransition:
-        """Atomically commit one attempt transition and privacy-safe phase evidence."""
+        """Commit one attempt edge with its exact phase/final sanitized evidence."""
+        if not isinstance(  # pyright: ignore[reportUnnecessaryIsInstance]
+            command,
+            TransitionCommand,
+        ):
+            raise TypeError("command must be a TransitionCommand")
         if command.entity_type is not EntityType.ATTEMPT:
             raise TypeError("command must be an attempt TransitionCommand")
-        if type(evidence) is not AttemptPhaseEvidenceCommand:
-            raise TypeError("evidence must be an AttemptPhaseEvidenceCommand")
-        _validate_phase_edge(
+        if evidence is not None:
+            if type(evidence) is not AttemptPhaseEvidenceCommand:
+                raise TypeError("evidence must be an AttemptPhaseEvidenceCommand or None")
+            _validate_phase_edge(
+                cast("TransitionCommand[LifecycleState]", command),
+                evidence,
+            )
+        if (
+            transport_evidence is not None
+            and type(transport_evidence) is not AttemptTransportEvidenceCommand
+        ):
+            raise TypeError("transport_evidence must be an AttemptTransportEvidenceCommand or None")
+        _validate_transport_evidence_presence(
             cast("TransitionCommand[LifecycleState]", command),
-            evidence,
+            transport_evidence,
         )
         return await self._service.execute(
             _ApplyTransitionOperation(
                 command=cast("TransitionCommand[LifecycleState]", command),
                 crash_hook=self._crash_hook,
                 phase_evidence=evidence,
+                transport_evidence=transport_evidence,
             )
         )
 
@@ -1066,6 +1148,93 @@ def _validate_payload_scope(command: TransitionCommand[LifecycleState]) -> None:
         raise IllegalTransitionError(message)
 
 
+def _validate_transport_evidence_presence(
+    command: TransitionCommand[LifecycleState],
+    evidence: AttemptTransportEvidenceCommand | None,
+) -> None:
+    is_terminal_attempt = (
+        command.entity_type is EntityType.ATTEMPT
+        and isinstance(command.new_state, AttemptState)
+        and command.new_state in _TERMINAL_ATTEMPT_STATES
+    )
+    if is_terminal_attempt != (evidence is not None):
+        raise IllegalTransitionError(
+            "terminal attempt transitions require exactly one sanitized transport record"
+        )
+    if evidence is None:
+        return
+    outcome = command.attempt_outcome
+    terminal_state = cast("AttemptState", command.new_state)
+    if outcome is None:
+        raise IllegalTransitionError("terminal transport evidence requires an attempt outcome")
+    if evidence.run_id != command.run_id:
+        raise CrossRunReferenceError("transport evidence belongs to a different run")
+    if evidence.attempt_id != command.entity_id:
+        raise IllegalTransitionError("transport evidence belongs to a different attempt")
+    if evidence.classification is not outcome.classification:
+        raise IllegalTransitionError(
+            "transport evidence classification differs from the terminal outcome"
+        )
+    if evidence.state not in _EVIDENCE_STATES_BY_TERMINAL_STATE[terminal_state]:
+        raise IllegalTransitionError(
+            "serialized evidence state is incompatible with terminal attempt state"
+        )
+
+
+def _validate_transport_evidence_identity(
+    transaction: JournalTransaction,
+    *,
+    command: TransitionCommand[LifecycleState],
+    evidence: AttemptTransportEvidenceCommand,
+) -> None:
+    result = transaction.execute(
+        JournalStatement(
+            """
+            SELECT run_id, scenario_id, event_id, delivery_id
+            FROM attempts
+            WHERE attempt_id = ?
+            """,
+            (command.entity_id,),
+        )
+    )
+    if not result.rows:
+        raise IllegalTransitionError("transport evidence attempt does not exist")
+    expected = (
+        evidence.run_id,
+        evidence.scenario_id,
+        evidence.event_id,
+        evidence.delivery_id,
+    )
+    if tuple(result.rows[0]) != expected:
+        raise CrossRunReferenceError(
+            "transport evidence identity differs from the physical attempt"
+        )
+    existing_attempt = transaction.execute(
+        JournalStatement(
+            """
+            SELECT record_id
+            FROM attempt_records
+            WHERE run_id = ? AND attempt_id = ?
+            """,
+            (command.run_id, command.entity_id),
+        )
+    )
+    if existing_attempt.rows:
+        raise ProjectionIntegrityError(
+            "physical attempt already has a final record without this transition"
+        )
+    existing_record = transaction.execute(
+        JournalStatement(
+            "SELECT run_id, attempt_id FROM attempt_records WHERE record_id = ?",
+            (evidence.record_id,),
+        )
+    )
+    if existing_record.rows:
+        raise IdempotencyConflictError(
+            "transport record_id already names another final attempt record"
+        )
+
+
 def _guard_run_completion(
     transaction: JournalTransaction,
     run_id: str,
@@ -1440,6 +1609,129 @@ def _insert_transition(
         raise ProjectionIntegrityError(message)
 
 
+def _next_attempt_record_sequence(
+    transaction: JournalTransaction,
+    run_id: str,
+) -> int:
+    result = transaction.execute(
+        JournalStatement(
+            """
+            SELECT COALESCE(MAX(sequence), 0) + 1
+            FROM attempt_records
+            WHERE run_id = ?
+            """,
+            (run_id,),
+        )
+    )
+    sequence = _integer(result.rows[0][0], name="attempt record sequence")
+    if not 1 <= sequence <= MAX_SAFE_INTEGER:
+        raise ProjectionIntegrityError("attempt record sequence exceeds the journal boundary")
+    return sequence
+
+
+def _attempt_record_from_command(
+    command: TransitionCommand[LifecycleState],
+    *,
+    evidence: AttemptTransportEvidenceCommand,
+    sequence: int,
+) -> AttemptEvidence:
+    return AttemptEvidence(
+        record_id=evidence.record_id,
+        run_id=evidence.run_id,
+        scenario_id=evidence.scenario_id,
+        event_id=evidence.event_id,
+        delivery_id=evidence.delivery_id,
+        attempt_id=evidence.attempt_id,
+        sequence=sequence,
+        recorded_at=command.timestamp.wall_time,
+        logical_time_ns=command.logical_time_ns,
+        monotonic_elapsed_ns=command.timestamp.monotonic_elapsed_ns,
+        state=evidence.state,
+        classification=evidence.classification,
+        request=evidence.request,
+        response=evidence.response,
+        error=evidence.error,
+    )
+
+
+def _insert_attempt_record(
+    transaction: JournalTransaction,
+    record: AttemptEvidence,
+) -> None:
+    result = transaction.execute(
+        JournalStatement(
+            """
+            INSERT INTO attempt_records (
+                record_id,
+                schema_version,
+                run_id,
+                scenario_id,
+                event_id,
+                delivery_id,
+                attempt_id,
+                sequence,
+                recorded_at,
+                logical_time_ns,
+                monotonic_elapsed_ns,
+                state,
+                classification,
+                request_method,
+                request_url_redacted,
+                request_body_sha256,
+                request_byte_length,
+                request_header_names_json,
+                response_status,
+                response_body_sha256,
+                response_captured_bytes,
+                response_truncated,
+                error_category,
+                error_message_redacted,
+                error_phase
+            ) VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?
+            )
+            """,
+            _attempt_record_values(record),
+        )
+    )
+    if result.rowcount != 1:
+        raise ProjectionIntegrityError("attempt evidence append did not insert exactly one record")
+
+
+def _attempt_record_values(record: AttemptEvidence) -> tuple[SqlValue, ...]:
+    request = record.request
+    response = record.response
+    error = record.error
+    return (
+        record.record_id,
+        record.schema_version,
+        record.run_id,
+        record.scenario_id,
+        record.event_id,
+        record.delivery_id,
+        record.attempt_id,
+        record.sequence,
+        _format_utc_datetime(record.recorded_at),
+        record.logical_time_ns,
+        record.monotonic_elapsed_ns,
+        record.state.value,
+        record.classification.value,
+        request.method if request is not None else None,
+        request.url_redacted if request is not None else None,
+        request.body_sha256 if request is not None else None,
+        request.byte_length if request is not None else None,
+        canonical_request_header_names_json(request),
+        response.status if response is not None else None,
+        response.body_sha256 if response is not None else None,
+        response.captured_bytes if response is not None else None,
+        int(response.truncated) if response is not None else None,
+        error.category if error is not None else None,
+        error.message_redacted if error is not None else None,
+        error.phase if error is not None else None,
+    )
+
+
 def _insert_retry_schedule(
     transaction: JournalTransaction,
     *,
@@ -1589,6 +1881,52 @@ def _verify_existing_attempt_outcome(
     )
 
 
+def _verify_existing_attempt_record(
+    transaction: JournalTransaction,
+    *,
+    command: TransitionCommand[LifecycleState],
+    transition: TransitionRecord,
+    evidence: AttemptTransportEvidenceCommand,
+) -> None:
+    result = transaction.execute(
+        JournalStatement(
+            f"""
+            SELECT {_ATTEMPT_RECORD_COLUMNS}
+            FROM attempt_records
+            WHERE run_id = ? AND attempt_id = ?
+            """,
+            (command.run_id, command.entity_id),
+        )
+    )
+    if len(result.rows) != 1:
+        raise ProjectionIntegrityError(
+            "idempotent terminal transition is missing its unique attempt record"
+        )
+    row = result.rows[0]
+    if len(row) != _ATTEMPT_RECORD_COLUMN_COUNT:
+        raise ProjectionIntegrityError("attempt record replay query returned an invalid shape")
+    sequence = _integer(row[7], name="attempt record sequence")
+    expected = AttemptEvidence(
+        record_id=evidence.record_id,
+        run_id=evidence.run_id,
+        scenario_id=evidence.scenario_id,
+        event_id=evidence.event_id,
+        delivery_id=evidence.delivery_id,
+        attempt_id=evidence.attempt_id,
+        sequence=sequence,
+        recorded_at=transition.timestamp.wall_time,
+        logical_time_ns=transition.logical_time_ns,
+        monotonic_elapsed_ns=transition.timestamp.monotonic_elapsed_ns,
+        state=evidence.state,
+        classification=evidence.classification,
+        request=evidence.request,
+        response=evidence.response,
+        error=evidence.error,
+    )
+    if tuple(row) != _attempt_record_values(expected):
+        raise IdempotencyConflictError("idempotent terminal transition transport evidence differs")
+
+
 def _derived_next_attempt_schedule_exists(
     transaction: JournalTransaction,
     *,
@@ -1674,6 +2012,35 @@ def _verify_existing_retry_schedule(
     if not result.rows or tuple(result.rows[0]) != expected:
         message = "idempotent terminal outcome retry schedule is missing or different"
         raise ProjectionIntegrityError(message)
+
+
+_ATTEMPT_RECORD_COLUMNS = """
+    record_id,
+    schema_version,
+    run_id,
+    scenario_id,
+    event_id,
+    delivery_id,
+    attempt_id,
+    sequence,
+    recorded_at,
+    logical_time_ns,
+    monotonic_elapsed_ns,
+    state,
+    classification,
+    request_method,
+    request_url_redacted,
+    request_body_sha256,
+    request_byte_length,
+    request_header_names_json,
+    response_status,
+    response_body_sha256,
+    response_captured_bytes,
+    response_truncated,
+    error_category,
+    error_message_redacted,
+    error_phase
+"""
 
 
 _TRANSITION_COLUMNS = """
@@ -1891,11 +2258,11 @@ def _require_bounded_json_depth(value: object) -> None:
 
 
 def _format_wall_time(timestamp: TransitionTimestamp) -> str:
-    return (
-        timestamp.wall_time.astimezone(UTC)
-        .isoformat(timespec="microseconds")
-        .replace("+00:00", "Z")
-    )
+    return _format_utc_datetime(timestamp.wall_time)
+
+
+def _format_utc_datetime(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
 def _parse_wall_time(value: str) -> datetime:

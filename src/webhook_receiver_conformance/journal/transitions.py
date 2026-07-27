@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from enum import StrEnum
@@ -12,6 +13,7 @@ from typing import TYPE_CHECKING, cast
 from webhook_receiver_conformance.domain.enums import (
     AssertionState,
     AttemptClassification,
+    AttemptEvidenceState,
     AttemptState,
     DeliveryState,
     ObservationState,
@@ -25,6 +27,11 @@ from webhook_receiver_conformance.domain.identifiers import (
     validate_planned_id,
     validate_run_id,
 )
+from webhook_receiver_conformance.domain.models import (
+    RequestMetadata,
+    ResponseMetadata,
+    TransportError,
+)
 from webhook_receiver_conformance.errors import ErrorCategory
 from webhook_receiver_conformance.scheduler.clocks import TransitionTimestamp
 from webhook_receiver_conformance.types import DiagnosticCode
@@ -36,9 +43,13 @@ MAX_SAFE_INTEGER = 9_007_199_254_740_991
 MAX_OWNER_EPOCH = 9_223_372_036_854_775_807
 MAX_CONDITION_BYTES = 1_048_576
 MAX_REPLAY_TRANSITIONS = 100_000
+MAX_REQUEST_HEADER_NAMES = 256
+MAX_REQUEST_HEADER_NAME_BYTES = 256
+MAX_REQUEST_HEADER_NAMES_JSON_BYTES = 16_384
 
 _BOUNDARY_ID = re.compile(r"[A-Za-z0-9_.:-]+")
 _LOWER_IDENTIFIER = re.compile(r"[a-z][a-z0-9_]*")
+_LOWER_HEADER_NAME = re.compile(r"[!#$%&'*+\-.^_`|~0-9a-z]+")
 
 type LifecycleState = (
     RunState | ScenarioState | DeliveryState | AttemptState | ObservationState | AssertionState
@@ -423,6 +434,51 @@ class AttemptPhaseEvidenceCommand:
 
 
 @dataclass(frozen=True, slots=True)
+class AttemptTransportEvidenceCommand:
+    """Sanitized final attempt evidence whose ordering/times are journal-owned."""
+
+    record_id: str
+    run_id: str
+    scenario_id: str
+    event_id: str
+    delivery_id: str
+    attempt_id: str
+    state: AttemptEvidenceState
+    classification: AttemptClassification
+    request: RequestMetadata | None = None
+    response: ResponseMetadata | None = None
+    error: TransportError | None = None
+
+    def __post_init__(self) -> None:
+        validate_fresh_id(self.record_id, expected_kind=FreshIdKind.RECORD)
+        validate_run_id(self.run_id)
+        validate_planned_id(self.scenario_id, expected_kind=PlannedIdKind.SCENARIO)
+        validate_planned_id(self.event_id, expected_kind=PlannedIdKind.EVENT)
+        validate_planned_id(self.delivery_id, expected_kind=PlannedIdKind.DELIVERY)
+        validate_fresh_id(self.attempt_id, expected_kind=FreshIdKind.ATTEMPT)
+        if type(self.state) is not AttemptEvidenceState:
+            raise TypeError("transport evidence state must be an AttemptEvidenceState")
+        if type(self.classification) is not AttemptClassification:
+            raise TypeError("transport evidence classification must be an AttemptClassification")
+        if self.request is not None:
+            if type(self.request) is not RequestMetadata:
+                raise TypeError("transport request evidence must be RequestMetadata or None")
+            _validate_request_metadata(self.request)
+        if self.response is not None and type(self.response) is not ResponseMetadata:
+            raise TypeError("transport response evidence must be ResponseMetadata or None")
+        if self.error is not None:
+            if type(self.error) is not TransportError:
+                raise TypeError("transport error evidence must be TransportError or None")
+            _validate_transport_error(self.error)
+        _validate_transport_evidence_shape(self)
+
+    @property
+    def request_header_names_json(self) -> bytes | None:
+        """Return the canonical bounded JSON BLOB persisted for header names."""
+        return canonical_request_header_names_json(self.request)
+
+
+@dataclass(frozen=True, slots=True)
 class AttemptScheduleClaim:
     """Create and claim one physical attempt from one persisted schedule."""
 
@@ -793,6 +849,127 @@ def _projection_map(
             raise ProjectionIntegrityError(message)
         result[identity] = projection.state
     return result
+
+
+def _validate_request_metadata(request: RequestMetadata) -> None:
+    _control_free_text(
+        request.url_redacted,
+        name="redacted request URL",
+        maximum=2_048,
+    )
+    names = request.header_names
+    if type(names) is not tuple or len(names) > MAX_REQUEST_HEADER_NAMES:
+        raise ValueError("request header names must be a bounded canonical tuple")
+    for name in names:
+        if (
+            type(name) is not str
+            or not 1 <= len(name.encode("ascii", errors="ignore")) <= MAX_REQUEST_HEADER_NAME_BYTES
+            or _LOWER_HEADER_NAME.fullmatch(name) is None
+        ):
+            raise ValueError("request header names must be bounded lowercase HTTP tokens")
+    if names != tuple(sorted(set(names))):
+        raise ValueError("request header names must be unique and canonically sorted")
+    canonical_request_header_names_json(request)
+
+
+def canonical_request_header_names_json(
+    request: RequestMetadata | None,
+) -> bytes | None:
+    """Serialize sanitized request header names in their sole persisted form."""
+    if request is None:
+        return None
+    encoded = json.dumps(
+        request.header_names,
+        ensure_ascii=True,
+        allow_nan=False,
+        separators=(",", ":"),
+    ).encode("ascii")
+    if len(encoded) > MAX_REQUEST_HEADER_NAMES_JSON_BYTES:
+        raise ValueError("canonical request header-name JSON exceeds its byte limit")
+    return encoded
+
+
+def _validate_transport_error(error: TransportError) -> None:
+    _control_free_text(
+        error.category,
+        name="transport error category",
+        maximum=128,
+    )
+    _control_free_text(
+        error.message_redacted,
+        name="redacted transport error message",
+        maximum=4_096,
+    )
+    if error.phase is not None:
+        _control_free_text(
+            error.phase,
+            name="transport error phase",
+            maximum=64,
+        )
+
+
+def _validate_transport_evidence_shape(
+    evidence: AttemptTransportEvidenceCommand,
+) -> None:
+    failure_states = {
+        AttemptEvidenceState.TIMED_OUT,
+        AttemptEvidenceState.CONNECTION_FAILED,
+        AttemptEvidenceState.PROTOCOL_FAILED,
+    }
+    expected_classifications = {
+        AttemptEvidenceState.ACKNOWLEDGED: frozenset({AttemptClassification.RECEIVER_ACCEPTED}),
+        AttemptEvidenceState.REJECTED: frozenset({AttemptClassification.RECEIVER_REJECTED}),
+        AttemptEvidenceState.TIMED_OUT: frozenset(
+            {
+                AttemptClassification.ENVIRONMENT_FAILURE,
+                AttemptClassification.HARNESS_FAILURE,
+            }
+        ),
+        AttemptEvidenceState.CONNECTION_FAILED: frozenset(
+            {
+                AttemptClassification.ENVIRONMENT_FAILURE,
+                AttemptClassification.HARNESS_FAILURE,
+            }
+        ),
+        AttemptEvidenceState.PROTOCOL_FAILED: frozenset(
+            {
+                AttemptClassification.ENVIRONMENT_FAILURE,
+                AttemptClassification.HARNESS_FAILURE,
+            }
+        ),
+        AttemptEvidenceState.CANCELLED: frozenset({AttemptClassification.CANCELLED}),
+        AttemptEvidenceState.UNKNOWN_OUTCOME: frozenset({AttemptClassification.AMBIGUOUS}),
+    }
+    allowed = expected_classifications.get(evidence.state)
+    if allowed is None or evidence.classification not in allowed:
+        raise ValueError("transport evidence state and classification disagree")
+    if evidence.state in {
+        AttemptEvidenceState.ACKNOWLEDGED,
+        AttemptEvidenceState.REJECTED,
+    }:
+        if evidence.response is None or evidence.error is not None:
+            raise ValueError(
+                "accepted or rejected evidence requires response metadata and no error"
+            )
+    elif evidence.state in failure_states | {AttemptEvidenceState.UNKNOWN_OUTCOME}:
+        if evidence.error is None:
+            raise ValueError("failure or unknown evidence requires a redacted transport error")
+    elif evidence.response is not None:
+        raise ValueError("cancelled evidence cannot contain response metadata")
+
+
+def _control_free_text(value: str, *, name: str, maximum: int) -> str:
+    if (
+        type(value) is not str
+        or not 1 <= len(value) <= maximum
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
+        raise ValueError(f"{name} must be bounded control-free text")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise ValueError(f"{name} must contain Unicode scalar values") from error
+    return value
 
 
 def validate_entity_id(

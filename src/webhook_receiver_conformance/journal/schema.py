@@ -32,6 +32,15 @@ from .migrations.v0001_initial import (
 from .migrations.v0001_initial import (
     STATEMENTS as INITIAL_MIGRATION_STATEMENTS,
 )
+from .migrations.v0002_attempt_records import (
+    MIGRATION_ID as ATTEMPT_RECORDS_MIGRATION_ID,
+)
+from .migrations.v0002_attempt_records import (
+    MIGRATION_NAME as ATTEMPT_RECORDS_MIGRATION_NAME,
+)
+from .migrations.v0002_attempt_records import (
+    STATEMENTS as ATTEMPT_RECORDS_MIGRATION_STATEMENTS,
+)
 
 JOURNAL_FILENAME: Final = "journal.sqlite3"
 DEFAULT_BUSY_TIMEOUT_MS: Final = 5_000
@@ -427,6 +436,11 @@ MIGRATIONS: Final = (
         migration_id=INITIAL_MIGRATION_ID,
         name=INITIAL_MIGRATION_NAME,
         statements=INITIAL_MIGRATION_STATEMENTS,
+    ),
+    Migration(
+        migration_id=ATTEMPT_RECORDS_MIGRATION_ID,
+        name=ATTEMPT_RECORDS_MIGRATION_NAME,
+        statements=ATTEMPT_RECORDS_MIGRATION_STATEMENTS,
     ),
 )
 
