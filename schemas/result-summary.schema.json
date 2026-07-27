@@ -18,10 +18,10 @@
       "const": "1.0"
     },
     "run_id": {
-      "$ref": "#/$defs/id"
+      "$ref": "#/$defs/uuid_v4"
     },
     "manifest_id": {
-      "$ref": "#/$defs/id"
+      "$ref": "#/$defs/manifest_hash"
     },
     "generated_at": {
       "$ref": "#/$defs/utc"
@@ -31,9 +31,9 @@
         "pass",
         "receiver_failure",
         "invalid_input",
-        "environment_failure",
+        "environment_error",
         "ambiguous",
-        "harness_failure",
+        "harness_error",
         "unsupported",
         "cancelled"
       ]
@@ -122,6 +122,14 @@
       "type": "string",
       "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_[0-9A-HJKMNP-TV-Z]{26}$",
       "maxLength": 96
+    },
+    "manifest_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "uuid_v4": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
     },
     "sha256": {
       "type": "string",

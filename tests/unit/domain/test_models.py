@@ -75,6 +75,7 @@ def _observation(*, run_id: EntityId | None = None) -> ObservationSample:
         run_id=_id("run") if run_id is None else run_id,
         scenario_id=_id("scenario"),
         observation_id=_id("observation"),
+        sample_id=_id("sample"),
         observer_id="receiver-state",
         sample_sequence=1,
         recorded_at=NOW,
@@ -290,4 +291,15 @@ def test_state_vocabularies_follow_normative_machine_requirements() -> None:
         "transport_failed",
         "unknown_outcome",
         "cancelled",
+    }
+    assert {value.value for value in EvidenceValueType} == {
+        "null",
+        "boolean",
+        "integer",
+        "decimal-string",
+        "string",
+        "bytes-digest",
+        "timestamp",
+        "array",
+        "object",
     }

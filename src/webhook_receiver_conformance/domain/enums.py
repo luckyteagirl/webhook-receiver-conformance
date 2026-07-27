@@ -135,12 +135,14 @@ class AssertionResult(StrEnum):
 
 
 class EvidenceValueType(StrEnum):
-    """JSON value-kind annotations used by receiver evidence."""
+    """Exact OBS-014 value-kind annotations used by receiver evidence."""
 
     NULL = "null"
     BOOLEAN = "boolean"
     INTEGER = "integer"
-    NUMBER = "number"
+    DECIMAL_STRING = "decimal-string"
     STRING = "string"
+    BYTES_DIGEST = "bytes-digest"
+    TIMESTAMP = "timestamp"
     ARRAY = "array"
     OBJECT = "object"

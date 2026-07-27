@@ -15,17 +15,19 @@
     "request_id": {
       "$ref": "#/$defs/id"
     },
+    "sample_id": {
+      "$ref": "#/$defs/id"
+    },
     "operation": {
       "enum": [
         "capabilities",
-        "observe",
-        "health"
+        "observe"
       ]
     },
     "run_id": {
       "oneOf": [
         {
-          "$ref": "#/$defs/id"
+          "$ref": "#/$defs/uuid_v4"
         },
         {
           "type": "null"
@@ -58,6 +60,14 @@
         "null"
       ]
     },
+    "prior_snapshot_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "maxLength": 512
+    },
     "queries": {
       "type": "array",
       "maxItems": 64,
@@ -82,12 +92,45 @@
       }
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "observe"
+          }
+        },
+        "required": [
+          "operation"
+        ]
+      },
+      "then": {
+        "required": [
+          "sample_id",
+          "run_id",
+          "queries"
+        ],
+        "properties": {
+          "run_id": {
+            "$ref": "#/$defs/uuid_v4"
+          },
+          "queries": {
+            "minItems": 1
+          }
+        }
+      }
+    }
+  ],
   "additionalProperties": false,
   "$defs": {
     "id": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_[0-9A-HJKMNP-TV-Z]{26}$",
       "maxLength": 96
+    },
+    "uuid_v4": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
     },
     "sha256": {
       "type": "string",

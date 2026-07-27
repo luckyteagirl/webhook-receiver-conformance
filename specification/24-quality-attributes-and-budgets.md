@@ -11,7 +11,7 @@ Correctness and evidence integrity > security/privacy > recovery honesty > deter
 | Startup | <= 750 ms p95 | `webhook-conformance version` on supported CI baseline after warm filesystem cache | PERF-001 |
 | Minimal validation | <= 1.5 s p95 | One 4 KiB fixture, no network | PERF-002 |
 | Plan 1,000 events / 5,000 attempts | <= 10 s p95 | Reference workstation, blobs already local | PERF-003 |
-| Execution overhead | <= 5 ms p50 / 20 ms p95 per attempt excluding network/wait | Loopback no-op receiver, concurrency 8 | PERF-004 |
+| Execution overhead | <= 5 ms p50 / 20 ms p95 per attempt excluding network/wait | Loopback no-op receiver, default concurrency 10 | PERF-004 |
 | Memory | <= 256 MiB RSS at max supported planning corpus | 1,000 events, 5,000 attempts, 1 MiB average not all resident | PERF-005 |
 | Disk metadata | <= 4 KiB journal growth per ordinary attempt excluding retained bodies | One response metadata/evidence set | PERF-006 |
 | Report generation | <= 5 s for 5,000 attempts and <= 128 MiB RSS incremental | Static report, no raw bodies | PERF-007 |

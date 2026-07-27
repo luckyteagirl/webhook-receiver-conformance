@@ -1,19 +1,30 @@
 stateDiagram-v2
   [*] --> scheduled
-  scheduled --> leased: durable claim
-  leased --> sending: sending intent committed
-  sending --> acknowledged: response accepted
-  sending --> rejected: response rejected
-  sending --> timed_out: phase-aware timeout
-  sending --> connection_failed: proven transport failure
-  sending --> protocol_failed: malformed or oversized response
-  sending --> cancelled: no bytes could leave
-  sending --> unknown_outcome: bytes may have left; no terminal evidence
-  leased --> cancelled: cancel before send
-  acknowledged --> [*]
+  scheduled --> claimed: durable claim
+  scheduled --> cancelled: cancelled before claim
+  claimed --> pre_send_committed: send intent transaction committed
+  claimed --> not_sent: pre-send failure proven
+  claimed --> cancelled: cancelled before intent
+  pre_send_committed --> connecting: connection establishment begins
+  pre_send_committed --> not_sent: no connection established
+  pre_send_committed --> cancelled: cancelled before connection
+  connecting --> sending: request transmission begins
+  connecting --> not_sent: no socket connection established
+  connecting --> transport_failed: decisive connect or TLS failure
+  connecting --> unknown_outcome: recovery lacks phase proof
+  connecting --> cancelled: cancelled with no possible send
+  sending --> awaiting_response: request transmission completes
+  sending --> transport_failed: decisive transport failure
+  sending --> unknown_outcome: send may have occurred
+  awaiting_response --> response_observed: bounded response committed
+  awaiting_response --> transport_failed: decisive response transport failure
+  awaiting_response --> unknown_outcome: response absent or lost
+  response_observed --> succeeded: qualifying response
+  response_observed --> rejected: receiver rejection
+  response_observed --> transport_failed: malformed or oversized response
+  not_sent --> [*]
+  succeeded --> [*]
   rejected --> [*]
-  timed_out --> [*]
-  connection_failed --> [*]
-  protocol_failed --> [*]
-  cancelled --> [*]
+  transport_failed --> [*]
   unknown_outcome --> [*]
+  cancelled --> [*]

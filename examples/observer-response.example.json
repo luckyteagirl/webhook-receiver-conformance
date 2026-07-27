@@ -2,10 +2,28 @@
   "protocol_version": "1.0",
   "request_id": "request_01J00000000000000000000000",
   "status": "ok",
-  "capabilities": [
-    "processing_count",
-    "resource"
-  ],
+  "capabilities": {
+    "evidence_types": [
+      "null",
+      "boolean",
+      "integer",
+      "decimal-string",
+      "string",
+      "bytes-digest",
+      "timestamp",
+      "array",
+      "object"
+    ],
+    "evidence_keys": [
+      "processing_count",
+      "resource"
+    ],
+    "read_only": true,
+    "idempotent": true,
+    "max_queries": 64,
+    "supports_pending": true,
+    "stable_snapshot_ids": true
+  },
   "snapshot_id": "snapshot-1",
   "evidence": [
     {

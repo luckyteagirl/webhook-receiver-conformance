@@ -33,6 +33,7 @@ from .enums import (
     ScenarioState,
 )
 
+_MIN_SIGNED_64 = -(2**63)
 _MAX_SIGNED_64 = 2**63 - 1
 _SHA256 = re.compile(r"sha256:[0-9a-f]{64}")
 
@@ -136,7 +137,7 @@ class PlannedDelivery(DomainModel):
     event_id: EntityId
     delivery_id: EntityId
     ordinal: int = Field(ge=0, le=_MAX_SIGNED_64)
-    logical_time_ns: int = Field(ge=0, le=_MAX_SIGNED_64)
+    logical_time_ns: int = Field(ge=_MIN_SIGNED_64, le=_MAX_SIGNED_64)
     state: DeliveryState
     attempt_ids: tuple[EntityId, ...] = ()
 
@@ -187,7 +188,11 @@ class AttemptEvidence(DomainModel):
     attempt_id: EntityId
     sequence: int = Field(ge=1, le=_MAX_SIGNED_64)
     recorded_at: _UtcDateTime
-    logical_time_ns: int | None = Field(default=None, ge=0, le=_MAX_SIGNED_64)
+    logical_time_ns: int | None = Field(
+        default=None,
+        ge=_MIN_SIGNED_64,
+        le=_MAX_SIGNED_64,
+    )
     monotonic_elapsed_ns: int | None = Field(default=None, ge=0, le=_MAX_SIGNED_64)
     state: AttemptEvidenceState
     classification: AttemptClassification
@@ -213,6 +218,7 @@ class ObservationSample(DomainModel):
     run_id: EntityId
     scenario_id: EntityId
     observation_id: EntityId
+    sample_id: EntityId
     observer_id: str = Field(min_length=1, max_length=256)
     sample_sequence: int = Field(ge=1, le=_MAX_SIGNED_64)
     recorded_at: _UtcDateTime

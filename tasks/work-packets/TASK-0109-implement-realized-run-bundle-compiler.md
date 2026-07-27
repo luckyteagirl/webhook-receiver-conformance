@@ -12,11 +12,11 @@
 | Parallel group | None |
 | Requirements | CFG-013, CLI-003, COMPAT-008, DATA-002, DATA-003, DATA-004, DATA-005, DX-004, FR-012, MUT-002, REPORT-001, SCHED-011, SCHED-017, SIG-005, TEST-005, TEST-014 |
 | Tests | VT-CFG-013, VT-CLI-003, VT-COMPAT-008, VT-DATA-002, VT-DATA-003, VT-DATA-004, VT-DATA-005, VT-DX-004, VT-FR-012, VT-MUT-002, VT-REPORT-001, VT-SCHED-011, VT-SCHED-017, VT-SIG-005, VT-TEST-005, VT-TEST-014 |
-| ADRs | ADR-004, ADR-007, ADR-012, ADR-022, ADR-025 |
+| ADRs | ADR-004, ADR-012, ADR-022, ADR-025 |
 
 ## Objective
 
-Freeze configuration, fixture blobs, IDs, mutations, conditional attempts, versions, and logical schedules into an immutable bundle.
+Freeze configuration, fixture blobs, planned IDs, mutations, conditional attempts, versions, and logical schedules into an immutable run-agnostic bundle; bind a fresh run ID only in execution artifacts.
 
 ## Rationale
 
@@ -63,7 +63,7 @@ Implements CFG-013, CLI-003, COMPAT-008, DATA-002, DATA-003, DATA-004, DATA-005,
 
 ## Implementation scope
 
-Freeze configuration, fixture blobs, IDs, mutations, conditional attempts, versions, and logical schedules into an immutable bundle.
+Freeze configuration, fixture blobs, planned IDs, mutations, conditional attempts, versions, and logical schedules into an immutable run-agnostic bundle; bind a fresh `run_id` only in execution artifacts.
 
 ## Explicit non-goals
 
@@ -83,6 +83,8 @@ Preserve all project security invariants.
 - The snapshot contains resolved non-secret defaults and secret fingerprints but no secret values.
 - `webhook-conformance plan --help` exits 0 and the command contract test demonstrates its stated job.
 - Replay creates a new run_id while preserving the same manifest_id.
+- The manifest contains no `run_id` and hashing its canonical form omits only `manifest_id`.
+- Planning rejects every floating-point manifest value and integer outside the inclusive I-JSON-safe range `-(2^53-1)` through `2^53-1`.
 - Changing one byte changes the blob digest and causes bundle verification to fail until re-planned.
 - The loader rejects a manifest whose canonical content no longer matches manifest_id.
 - Cross-language golden vectors produce the documented digest.

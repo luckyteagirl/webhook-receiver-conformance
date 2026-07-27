@@ -9,8 +9,8 @@
 | ADR-003 | Use AnyIO with the asyncio backend in v0.1 | accepted | SCHED-012, STATE-007, OBS-011 |
 | ADR-004 | Use a single-writer SQLite rollback journal | accepted | DATA-001, DATA-002, DATA-003, REL-001, REL-004 |
 | ADR-005 | Use HMAC-SHA256 counter generation and RFC 8785 manifests | accepted | SCHED-001, SCHED-004, SCHED-005 |
-| ADR-006 | Use integer microsecond logical time with real and scaled modes | accepted | SCHED-006, SCHED-007, SCHED-008, SCHED-009 |
-| ADR-007 | Use SQLite WAL, synchronous FULL, and one writer | accepted | DATA-001, DATA-002, DATA-003, REL-010 |
+| ADR-006 | Use integer microsecond logical time with real and scaled modes | superseded by ADR-023 | SCHED-006, SCHED-007, SCHED-008, SCHED-009 |
+| ADR-007 | Use SQLite WAL, synchronous FULL, and one writer | superseded by ADR-004 | DATA-001, DATA-002, DATA-003, REL-010 |
 | ADR-008 | Separate manifest, run, event, delivery, attempt, observation, and assertion identities | accepted | FR-004, DATA-006, DATA-007, REL-007 |
 | ADR-009 | Preserve unknown network outcomes | accepted | STATE-008, REL-002, REL-003, REL-006 |
 | ADR-010 | Use command and HTTP observers as v0.1 extension boundaries | accepted | OBS-001, OBS-002, OBS-004, ASSERT-009 |
@@ -210,7 +210,7 @@ Use AnyIO task groups, cancellation scopes, subprocess APIs, and synchronization
 | Risks | RISK-006, RISK-007 |
 | Criteria | correctness, testability, security, local-first operation, solo-maintainer complexity, cross-platform behavior |
 | Sources | SRC-084, SRC-085, SRC-086, SRC-087, SRC-088 |
-| Related/superseded |  |
+| Related/superseded | supersedes ADR-007 |
 
 **Context and forces**
 
@@ -323,15 +323,17 @@ Define wrch-hmac-drbg-v1 for deterministic choices and RFC 8785 canonical JSON f
 - Interoperability vectors fail across runtimes.
 ## ADR-006 — Use integer microsecond logical time with real and scaled modes
 
+This historical decision is superseded by ADR-023. Current implementations use signed integer logical nanoseconds.
+
 | Field | Value |
 | --- | --- |
-| Status / date | accepted / 2026-07-26 |
+| Status / date | superseded / 2026-07-26 |
 | Owners | principal architect, future maintainer |
 | Requirements | SCHED-006, SCHED-007, SCHED-008, SCHED-009 |
 | Risks | RISK-006 |
 | Criteria | correctness, testability, security, local-first operation, solo-maintainer complexity, cross-platform behavior |
 | Sources | SRC-032, SRC-033, SRC-019 |
-| Related/superseded |  |
+| Related/superseded | ADR-023 |
 
 **Context and forces**
 
@@ -380,15 +382,17 @@ Represent logical time as integer microseconds; use monotonic real deadlines; su
 - A validated use case requires coordinated receiver test clocks.
 ## ADR-007 — Use SQLite WAL, synchronous FULL, and one writer
 
+This historical decision is superseded by ADR-004. Current implementations use rollback-journal `DELETE` with `synchronous=EXTRA`.
+
 | Field | Value |
 | --- | --- |
-| Status / date | accepted / 2026-07-26 |
+| Status / date | superseded / 2026-07-26 |
 | Owners | principal architect, future maintainer |
 | Requirements | DATA-001, DATA-002, DATA-003, REL-010 |
 | Risks | RISK-007 |
 | Criteria | correctness, testability, security, local-first operation, solo-maintainer complexity, cross-platform behavior |
 | Sources | SRC-026, SRC-027, SRC-028, SRC-029 |
-| Related/superseded |  |
+| Related/superseded | ADR-004 |
 
 **Context and forces**
 
@@ -1260,7 +1264,7 @@ Keep typed internal protocols and built-in registries in v0.1. Publish only the 
 | Risks | RISK-008 |
 | Criteria | honest claims, CI duration, deterministic ordering, external compatibility |
 | Sources | SRC-001, SRC-022, SRC-032 |
-| Related/superseded |  |
+| Related/superseded | supersedes ADR-006 |
 
 **Context and forces**
 

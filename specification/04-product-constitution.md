@@ -96,7 +96,7 @@ The v0.1 public compatibility surfaces are CLI command/exit semantics, configura
 
 - One process per run.
 - One local database per run bundle.
-- At most 1,000 logical events, 5,000 attempts, 128 configured concurrency, and 16 MiB hard request bytes.
+- At most 1,000 logical events, 5,000 attempts, 50 configured concurrency, and 16 MiB hard request bytes.
 - No mandatory daemon, external database, message broker, or cloud service.
 - A component remains only if a P0 requirement fails when it is removed.
 

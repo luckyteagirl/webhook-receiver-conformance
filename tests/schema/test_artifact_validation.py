@@ -1,33 +1,66 @@
 """Focused regression tests for the artifact validator's local rules."""
 # ruff: noqa: INP001
-# pyright: reportMissingImports=false, reportUnknownVariableType=false
+# pyright: reportMissingImports=false
+# pyright: reportUnknownArgumentType=false, reportUnknownMemberType=false
+# pyright: reportUnknownVariableType=false
 
 from __future__ import annotations
 
+import hashlib
+import json
 import sys
+from copy import deepcopy
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+if TYPE_CHECKING:
+    from referencing import Registry
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "helpers"))
 import schema_validation as schema_validation_module
 from schema_validation import (
+    build_schema_registry,
     compare_state_transitions,
     load_json,
+    load_yaml,
+    parse_state_transition_tables,
     parse_state_transitions,
     validate_instance,
 )
 
+from webhook_receiver_conformance.domain.enums import (
+    AssertionState,
+    AttemptState,
+    DeliveryState,
+    EvidenceValueType,
+    ObservationState,
+    RunState,
+    ScenarioState,
+)
+from webhook_receiver_conformance.domain.models import AggregateRunOutcome
+from webhook_receiver_conformance.errors import ResultCategory
+
 ROOT = Path(__file__).resolve().parents[2]
+RUN_ID = "123e4567-e89b-42d3-a456-426614174000"
+MANIFEST_ID = "126b2cb058cc7702127f7f95a89e3fee4a1a7d835361d6f7d04be36a31ccda34"
+DEFAULT_CONCURRENCY = 10
+MAX_CONCURRENCY = 50
+
+
+def _schema_registry() -> Registry[Any]:
+    schemas = [load_json(path) for path in sorted((ROOT / "schemas").glob("*.schema.json"))]
+    return build_schema_registry(schemas)
 
 
 def test_persisted_record_requires_schema_version() -> None:
     schema = load_json(ROOT / "schemas" / "delivery-record.schema.json")
     record = {
         "record_id": "record_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        "run_id": "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "run_id": RUN_ID,
         "scenario_id": "scenario_01ARZ3NDEKTSV4RRFFQ69G5FAV",
         "event_id": "event_01ARZ3NDEKTSV4RRFFQ69G5FAV",
         "delivery_id": "delivery_01ARZ3NDEKTSV4RRFFQ69G5FAV",
@@ -107,3 +140,219 @@ def test_artifact_size_limit_is_enforced(
     path.write_text('{"x":"too-large"}', encoding="utf-8")
     with pytest.raises(ValueError, match="artifact exceeds 8 byte limit"):
         load_json(path)
+
+
+def test_project_config_contract_uses_numeric_v1_and_10_of_50_concurrency() -> None:
+    schema = load_json(ROOT / "schemas" / "project-config.schema.json")
+    version = schema["properties"]["schema_version"]
+    concurrency = schema["properties"]["limits"]["properties"]["max_concurrency"]
+    assert version == {"type": "integer", "const": 1}
+    assert concurrency["default"] == DEFAULT_CONCURRENCY
+    assert concurrency["maximum"] == MAX_CONCURRENCY
+
+    complete = load_yaml(ROOT / "examples" / "project-config.complete.yaml")
+    assert validate_instance(complete, schema) == []
+    wrong_version = deepcopy(complete)
+    wrong_version["schema_version"] = "1.0"
+    assert validate_instance(wrong_version, schema)
+    excessive = deepcopy(complete)
+    excessive["limits"]["max_concurrency"] = 51
+    assert validate_instance(excessive, schema)
+
+
+def test_run_and_manifest_identifiers_use_dedicated_encodings() -> None:
+    registry = _schema_registry()
+    manifest_schema = load_json(ROOT / "schemas" / "run-manifest.schema.json")
+    summary_schema = load_json(ROOT / "schemas" / "result-summary.schema.json")
+    manifest = load_json(ROOT / "examples" / "run-manifest.example.json")
+    summary = load_json(ROOT / "examples" / "result-summary.example.json")
+
+    assert "run_id" not in manifest
+    assert manifest["manifest_id"] == MANIFEST_ID
+    assert validate_instance(manifest, manifest_schema, registry=registry) == []
+    assert validate_instance(summary, summary_schema, registry=registry) == []
+
+    canonical_projection = deepcopy(manifest)
+    del canonical_projection["manifest_id"]
+    canonical_bytes = json.dumps(
+        canonical_projection,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    assert hashlib.sha256(canonical_bytes).hexdigest() == MANIFEST_ID
+
+    execution_bound_manifest = deepcopy(manifest)
+    execution_bound_manifest["run_id"] = RUN_ID
+    assert validate_instance(
+        execution_bound_manifest,
+        manifest_schema,
+        registry=registry,
+    )
+    old_run = deepcopy(summary)
+    old_run["run_id"] = "run_01J00000000000000000000000"
+    assert validate_instance(old_run, summary_schema, registry=registry)
+    prefixed_manifest = deepcopy(manifest)
+    prefixed_manifest["manifest_id"] = f"sha256:{MANIFEST_ID}"
+    assert validate_instance(prefixed_manifest, manifest_schema, registry=registry)
+
+
+def test_manifest_numeric_profile_is_integer_only_and_i_json_safe() -> None:
+    registry = _schema_registry()
+    schema = load_json(ROOT / "schemas" / "run-manifest.schema.json")
+    manifest = load_json(ROOT / "examples" / "run-manifest.example.json")
+    safe_limit = (1 << 53) - 1
+
+    safe = deepcopy(manifest)
+    delivery = safe["scenarios"][0]["deliveries"][0]
+    delivery["logical_time_ns"] = -safe_limit
+    delivery["attempt_plan"][0]["not_before_logical_ns"] = safe_limit
+    safe["scenarios"][0]["assertions"] = [
+        {
+            "assertion_id": "assertion_01J00000000000000000000000",
+            "type": "numeric-profile",
+            "parameters": {"nested": [None, True, -safe_limit, safe_limit]},
+        }
+    ]
+    assert validate_instance(safe, schema, registry=registry) == []
+
+    overflowing = deepcopy(manifest)
+    overflowing["scenarios"][0]["deliveries"][0]["logical_time_ns"] = 1 << 53
+    assert validate_instance(overflowing, schema, registry=registry)
+
+    fractional = deepcopy(manifest)
+    fractional["scenarios"][0]["assertions"][0]["parameters"]["expected"] = 1.5
+    assert validate_instance(fractional, schema, registry=registry)
+
+
+def test_result_summary_verdicts_match_fr006_and_aggregate_model() -> None:
+    schema = load_json(ROOT / "schemas" / "result-summary.schema.json")
+    schema_values = set(schema["properties"]["verdict"]["enum"])
+    assert schema_values == {category.value for category in ResultCategory}
+    assert AggregateRunOutcome.model_fields["verdict"].annotation is ResultCategory
+    assert "environment_failure" not in schema_values
+    assert "harness_failure" not in schema_values
+
+
+def test_observer_contract_requires_sample_identity_and_exact_evidence_types() -> None:
+    registry = _schema_registry()
+    request_schema = load_json(ROOT / "schemas" / "observer-request.schema.json")
+    response_schema = load_json(ROOT / "schemas" / "observer-response.schema.json")
+    evidence_schema = load_json(ROOT / "schemas" / "observer-evidence.schema.json")
+    request = load_json(ROOT / "examples" / "observer-request.example.json")
+    response = load_json(ROOT / "examples" / "observer-response.example.json")
+
+    assert validate_instance(request, request_schema, registry=registry) == []
+    assert validate_instance(response, response_schema, registry=registry) == []
+    missing_sample = deepcopy(request)
+    del missing_sample["sample_id"]
+    assert validate_instance(missing_sample, request_schema, registry=registry)
+
+    capability_types = set(response["capabilities"]["evidence_types"])
+    assert capability_types == {value.value for value in EvidenceValueType}
+    assert response["capabilities"]["read_only"] is True
+    assert response["capabilities"]["idempotent"] is True
+
+    empty_snapshot = deepcopy(response)
+    empty_snapshot["snapshot_id"] = ""
+    assert validate_instance(empty_snapshot, response_schema, registry=registry)
+    assert (
+        validate_instance(
+            {"key": "amount", "value_type": "decimal-string", "value": "12.50"},
+            evidence_schema,
+            registry=registry,
+        )
+        == []
+    )
+    assert validate_instance(
+        {"key": "amount", "value_type": "number", "value": 12.5},
+        evidence_schema,
+        registry=registry,
+    )
+    assert (
+        validate_instance(
+            {
+                "key": "body",
+                "value_type": "bytes-digest",
+                "value": {"sha256": f"sha256:{MANIFEST_ID}", "byte_length": 4},
+            },
+            evidence_schema,
+            registry=registry,
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize(
+    ("diagram_name", "state_enum"),
+    [
+        ("run", RunState),
+        ("scenario", ScenarioState),
+        ("delivery", DeliveryState),
+        ("attempt", AttemptState),
+        ("observation", ObservationState),
+        ("assertion", AssertionState),
+    ],
+)
+def test_state_diagram_vocabularies_match_state_001_through_006(
+    diagram_name: str,
+    state_enum: type[
+        RunState | ScenarioState | DeliveryState | AttemptState | ObservationState | AssertionState
+    ],
+) -> None:
+    transitions = parse_state_transitions(
+        (ROOT / "diagrams" / f"state-{diagram_name}.mmd").read_text(encoding="utf-8")
+    )
+    documented = {state for transition in transitions for state in transition}
+    assert documented == {state.value for state in state_enum}
+
+
+def test_state_diagram_edges_match_normative_transition_tables() -> None:
+    tables = parse_state_transition_tables(
+        (ROOT / "specification" / "09-state-machines.md").read_text(encoding="utf-8")
+    )
+    assert set(tables) == {
+        "run",
+        "scenario",
+        "delivery",
+        "attempt",
+        "observation",
+        "assertion",
+    }
+    for name, table in tables.items():
+        diagram = parse_state_transitions(
+            (ROOT / "diagrams" / f"state-{name}.mmd").read_text(encoding="utf-8")
+        )
+        assert (
+            compare_state_transitions(
+                machine_name=name,
+                documented=diagram,
+                executable=table,
+            )
+            == []
+        )
+
+
+def test_superseded_decisions_and_corrected_task_packets_are_machine_visible() -> None:
+    decisions = {
+        decision["id"]: decision
+        for decision in load_yaml(ROOT / "machine" / "decisions.yaml")["decisions"]
+    }
+    assert decisions["ADR-007"]["status"] == "superseded"
+    assert decisions["ADR-007"]["related_or_superseded_adrs"] == ["ADR-004"]
+    assert decisions["ADR-006"]["status"] == "superseded"
+    assert decisions["ADR-006"]["related_or_superseded_adrs"] == ["ADR-023"]
+
+    tasks = {
+        task["task_id"]: task for task in load_yaml(ROOT / "machine" / "task-index.yaml")["tasks"]
+    }
+    assert tasks["TASK-0003"]["commands_to_run"][0] == (
+        "uv run pytest -q tests/schema tests/helpers/schema_validation.py"
+    )
+    assert tasks["TASK-0103"]["commands_to_run"][0] == (
+        "uv run pytest -q tests/unit/determinism/test_generator.py"
+    )
+    assert "SCHED-019" not in tasks["TASK-0301"]["requirement_ids"]
+    assert "VT-SCHED-019" not in tasks["TASK-0301"]["test_ids"]
+    assert "ADR-006" not in tasks["TASK-0301"]["adr_ids"]
+    assert "schemas/observer-evidence.schema.json" in tasks["TASK-0501"]["exclusive_file_ownership"]

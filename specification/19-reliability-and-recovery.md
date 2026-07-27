@@ -8,16 +8,16 @@ The tool guarantees durable accounting of planned work and explicit uncertainty.
 
 | Crash/cancel point | Persisted state | Possible external effect | Resume behavior | Ambiguity |
 | --- | --- | --- | --- | --- |
-| Before owner/lease acquisition | No claimed work | No network side effect | Acquire normally | None |
-| After lease, before `sending` commit | Claim/lease only | Executor contract forbids send | Expire/reclaim lease | None |
-| After `sending` commit, before transport call | `sending`, phase=`intent_committed` | No bytes by construction if injected at exact test point | Crash test may mark safe-to-retry only with durable phase proof | None in controlled point; production scanner remains conservative |
-| During DNS/connect/TLS before application bytes | `sending`, transport phase journal may lag | Transport may prove no application bytes | Known pre-send environment failure or ambiguity if phase proof absent | Phase-dependent |
-| After headers/body bytes may leave, before response | `sending` | Receiver may process | Mark `unknown_outcome`; default stop/reconcile | Yes |
-| After response received, before terminal commit | `sending` | Receiver processed/answered, response lost to journal | Mark `unknown_outcome`; observer may reconcile | Yes |
+| Before owner/claim acquisition | `scheduled` | No network side effect | Claim normally | None |
+| After claim, before pre-send commit | `claimed` | Executor contract forbids connection establishment | Expire/reclaim claim | None |
+| After pre-send commit, before transport call | `pre_send_committed` | No bytes by construction if injected at the exact test point | Crash test may prove `not_sent`; production recovery remains conservative without durable phase proof | None at the controlled point; otherwise phase-dependent |
+| During DNS/connect/TLS before application bytes | `connecting` | Transport may prove that no application bytes left | `not_sent` or `transport_failed` with decisive proof; otherwise `unknown_outcome` | Phase-dependent |
+| After headers/body bytes may leave, before response | `sending` or `awaiting_response` | Receiver may process | Mark `unknown_outcome`; default stop/reconcile | Yes |
+| After a bounded response is durable, before terminal classification | `response_observed` | Receiver processed/answered | Rebuild the deterministic terminal classification from durable response evidence | No |
 | After terminal attempt commit, before retry schedule commit | Terminal attempt, no retry entry | Known outcome | Atomic transaction requirement prevents split; integrity error if detected | No if implementation conforms |
 | After retry schedule commit | Terminal + schedule entry | Known outcome | Resume claims schedule once | No |
-| During observer invocation | Observation requested/running | Delivery state unchanged | Append timeout/error or rerun observer by policy | Observer evidence only |
-| After observation, before sample commit | No sample | Receiver state may have changed | Re-query; snapshots are new evidence | Not a network-send ambiguity |
+| During observer invocation | Observation `scheduled` or `running` | Delivery state unchanged | Append `timed_out`, `error`, or `cancelled`; retry only when capabilities permit | Observer evidence only |
+| After observer response, before sample commit | No terminal sample | Receiver state may have changed | Re-query with the same logical request ID and a fresh sample ID | Not a network-send ambiguity |
 | After sample commit, before assertion commit | Sample durable, assertion pending | Evidence known | Reevaluate idempotently | No |
 | During report generation | Run truth durable; temporary projection | No receiver effect | Delete temp and regenerate | No |
 

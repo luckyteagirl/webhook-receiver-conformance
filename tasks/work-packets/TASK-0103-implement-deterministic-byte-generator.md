@@ -12,7 +12,7 @@
 | Parallel group | PG-01A |
 | Requirements | DATA-006, SCHED-008, SCHED-009, SCHED-010, SCHED-012, SCHED-013, TEST-003, TEST-005 |
 | Tests | VT-DATA-006, VT-SCHED-008, VT-SCHED-009, VT-SCHED-010, VT-SCHED-012, VT-SCHED-013, VT-TEST-003, VT-TEST-005 |
-| ADRs | ADR-003, ADR-006, ADR-008, ADR-023 |
+| ADRs | ADR-003, ADR-008, ADR-023 |
 
 ## Objective
 
@@ -89,7 +89,7 @@ Do not reuse signing secrets as generator seeds; use constant, versioned domain 
 ## Commands to run
 
 ```bash
-uv run pytest -q tests/unit/determinism/test_generator.py tests/golden/prng-v1.json
+uv run pytest -q tests/unit/determinism/test_generator.py
 uv run python scripts/validate_artifacts.py
 uv run ruff check .
 uv run pyright

@@ -6,11 +6,11 @@ The observer wire protocol is the only v0.1 extension compatibility promise. It 
 
 ### Capability negotiation
 
-Before the first required observation, the harness sends `operation=capabilities`. The response names protocol version, supported evidence keys/query types, maximum query count, whether snapshot IDs are stable, whether `pending` is supported, and any authentication requirements already satisfied by the transport. A required assertion whose capability is absent fails as `unsupported` unless the assertion explicitly allows skip.
+Before the first required observation, the harness sends `operation=capabilities`. The response names protocol version, supported evidence keys, the exact supported evidence types, maximum query count, whether snapshot IDs are stable, whether `pending` is supported, and the mandatory `read_only` and `idempotent` capability declarations. A required assertion whose capability is absent fails as `unsupported` unless the assertion explicitly allows skip. Automatic polling or recovery reconciliation is permitted only when both declarations are true.
 
 ### Observe request
 
-A request contains request/run/scenario/event IDs, checkpoint, ordered typed queries, and an optional prior snapshot ID. It contains no signing secret or raw fixture by default. Query parameters are bounded JSON values.
+An observe request contains a stable logical `request_id`, a fresh `sample_id` for this invocation, the UUIDv4 `run_id`, scenario/event scope, checkpoint, ordered typed queries, and an optional prior snapshot ID. Retrying the same logical observation preserves `request_id` and generates a different `sample_id`. It contains no signing secret or raw fixture by default. Query parameters are bounded JSON values.
 
 ### Response
 
@@ -19,7 +19,7 @@ A request contains request/run/scenario/event IDs, checkpoint, ordered typed que
 - `unsupported`: named capability is unavailable.
 - `error`: observer executed but could not produce evidence; includes stable error category and retryable flag.
 
-Evidence values are tagged as null, boolean, integer, number, string, array, or object. No implicit string-to-number conversion occurs. `sensitive=true` forces redaction from ordinary reports; assertions may compare an in-memory value before redaction and persist only a keyed digest where configured.
+Evidence values use exactly these tags: `null`, `boolean`, `integer`, `decimal-string`, `string`, `bytes-digest`, `timestamp`, `array`, or `object`. `decimal-string` carries an exact JSON-number lexical value without binary floating-point conversion. `bytes-digest` carries a `sha256:` digest plus byte length and optional media type; arbitrary bytes are never embedded. `timestamp` is a UTC RFC 3339 string with a trailing `Z`. No implicit string-to-number conversion occurs. Every `ok` response includes a nonempty snapshot ID. `sensitive=true` forces redaction from ordinary reports; assertions may compare an in-memory value before redaction and persist only a keyed digest where configured.
 
 ## Command observer
 
@@ -34,7 +34,7 @@ Evidence values are tagged as null, boolean, integer, number, string, array, or 
 
 ## HTTP probe observer
 
-- Endpoints: `GET /.well-known/webhook-conformance/capabilities`, `POST /v1/observe`, optional `GET /health`.
+- Endpoints relative to the configured base URL: `POST /capabilities` and `POST /observe`.
 - Bearer test token through a secret reference; token never appears in URL/log/report.
 - The URL passes the same destination policy and pinned transport as the receiver.
 - No redirects or proxy environment.
@@ -70,7 +70,7 @@ The poller applies no hidden exponential backoff; intervals are manifest/config 
 ## Comparison rules
 
 - Equality is type-strict. JSON integer 1 is not string `"1"`; booleans are not integers.
-- Numbers use exact integer comparison or Decimal created from JSON lexical form. Binary floating-point tolerances are not implicit.
+- Numeric evidence uses exact integer comparison or `Decimal` created from a `decimal-string` lexical value. Binary floating-point values and implicit tolerances are not protocol types.
 - String comparison is Unicode code-point exact unless a named normalization comparator is selected.
 - Arrays preserve order by default; set semantics require an explicit comparator and canonical element key.
 - Objects compare declared pointers or deep exact values after deterministic key ordering; undeclared extra fields do not affect pointer assertions.

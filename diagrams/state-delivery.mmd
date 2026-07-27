@@ -1,17 +1,18 @@
 stateDiagram-v2
-  [*] --> planned
-  planned --> ready
-  ready --> in_progress
-  in_progress --> retry_wait: retry-eligible terminal attempt
-  retry_wait --> in_progress: conditional next attempt
-  in_progress --> succeeded
-  in_progress --> rejected
-  in_progress --> failed
-  in_progress --> ambiguous
-  in_progress --> cancelled
-  ambiguous --> reconciled: observer/operator evidence
-  succeeded --> [*]
-  rejected --> [*]
-  failed --> [*]
-  reconciled --> [*]
+  [*] --> pending
+  pending --> eligible: dependencies and due time satisfied
+  pending --> skipped: condition or policy skip
+  pending --> cancelled: cancelled
+  eligible --> active: physical attempt claimed
+  eligible --> skipped: condition or policy skip
+  eligible --> cancelled: cancelled
+  active --> eligible: retry schedule becomes eligible
+  active --> satisfied: qualifying outcome or assertion policy
+  active --> exhausted: no eligible attempt remains
+  active --> ambiguous: unresolved possible send
+  active --> cancelled: cancelled
+  satisfied --> [*]
+  exhausted --> [*]
+  ambiguous --> [*]
   cancelled --> [*]
+  skipped --> [*]

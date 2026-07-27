@@ -1,15 +1,14 @@
 stateDiagram-v2
   [*] --> pending
-  pending --> polling: eventual assertion
-  polling --> polling: contrary valid evidence and deadline remains
-  pending --> pass
-  pending --> fail
-  pending --> error
-  pending --> skipped
-  polling --> pass
-  polling --> fail: deadline reached
-  polling --> error
-  pass --> [*]
-  fail --> [*]
+  pending --> running: evidence selected
+  pending --> cancelled: cancelled before evaluation
+  running --> passed: invariant satisfied
+  running --> failed: comparable invariant violation
+  running --> error: evidence or evaluator error
+  running --> unsupported: capability or evaluator unavailable
+  running --> cancelled: cancelled
+  passed --> [*]
+  failed --> [*]
   error --> [*]
-  skipped --> [*]
+  unsupported --> [*]
+  cancelled --> [*]

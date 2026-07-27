@@ -4,7 +4,7 @@
 
 | Term | Definition |
 | --- | --- |
-| Run | One invocation bound to one immutable manifest and one durable journal. A resumed process continues the same run ID. |
+| Run | One execution bound by its journal to one immutable manifest. A resumed process continues the same run ID; replay starts a new run ID against the same manifest ID. |
 | Scenario | A named set of logical events, dependencies, planned deliveries, lifecycle actions, observations, assertions, and terminal policy. |
 | Logical event | The semantic provider event whose identity is stable across duplicates, retries, and replays intended to test idempotency. |
 | Event type | A provider or user-defined semantic label such as `payment.succeeded`; it is not an identity. |
@@ -32,16 +32,26 @@
 
 | Identifier | Serialization | Uniqueness scope | Correlation / ordering |
 | --- | --- | --- | --- |
-| run_id | run_<ULID> | Workspace | One immutable manifest/journal relationship |
+| manifest_id | 64 lowercase hexadecimal SHA-256 characters | Content address | RFC 8785 canonical manifest with `manifest_id` omitted; the manifest contains no `run_id` |
+| run_id | lowercase hyphenated UUIDv4 | Workspace | Execution/journal/result identity; replay creates a new value |
 | scenario_id | scenario_<ULID> | Run | Manifest order key then ID |
 | event_id | event_<ULID> | Scenario | Stable across intended duplicate/retry deliveries |
 | delivery_id | delivery_<ULID> | Scenario | One plan entry; stable on replay |
-| attempt_id | attempt_<ULID> | Delivery | New for every physical transmission |
-| observation_id | observation_<ULID> | Scenario/checkpoint | One observer polling series |
+| attempt_plan_id | attempt_plan_<ULID> | Delivery | Stable conditional attempt template |
+| observation_id | observation_<ULID> | Scenario/checkpoint | Stable observation plan / polling series |
 | assertion_id | assertion_<ULID> | Scenario | One declared invariant |
+| attempt_id | attempt_<ULID> | Delivery | Fresh for every physical transmission; not replay-stable |
+| sample_id | sample_<ULID> | Observation | Fresh for every observer invocation, including retries |
+| evaluation_id | evaluation_<ULID> | Assertion | Fresh for every evaluation |
 | record_id | record_<ULID> | Run journal | One append-oriented evidence record |
 
-Identifiers are lowercase type-prefixed ULIDs generated from manifest-fixed logical timestamps and context-derived deterministic entropy. The prefix prevents accidental interchange. A collision in the relevant scope is a harness error; IDs are never silently regenerated during replay.
+Only planned/domain identifiers (`scenario_id`, `event_id`, `delivery_id`, `attempt_plan_id`, `observation_id`, and `assertion_id`) use the versioned type-prefixed deterministic identifier algorithm and remain stable on replay. The type prefix prevents accidental interchange. Physical attempt, observer sample, evaluation, and evidence-record IDs are generated separately and are never treated as replay-stable. `run_id` and `manifest_id` use their dedicated encodings above. The manifest is execution-agnostic: the run journal and result artifacts bind a fresh `run_id` to its `manifest_id`, so replay cannot change the manifest hash. A collision in the relevant scope is a harness error; an existing planned ID is never silently regenerated during replay.
+
+## Canonical manifest numeric profile
+
+The manifest uses RFC 8785 canonicalization with a deliberately narrower interoperable numeric profile. Every JSON number in a manifest, including values nested in assertion parameters, must be an integer from `-9007199254740991` through `9007199254740991` (`±(2^53-1)`). Floating-point values, non-finite values, and integers outside that range are rejected during planning rather than rounded or normalized.
+
+Logical schedule values remain signed 64-bit integer nanoseconds at internal clock, scheduler, and persistence boundaries. The manifest compiler applies the narrower canonical profile before serialization; therefore an otherwise valid signed 64-bit planning value outside the interoperable range is invalid manifest input.
 
 ## Core invariants
 
@@ -63,7 +73,7 @@ The reference receiver defines its idempotency key as `(provider_profile, receiv
 ## Relationship model
 
 ```text
-Run 1 ── 1 Manifest
+Manifest 1 ── * Run
 Run 1 ── * Scenario
 Scenario 1 ── * LogicalEvent
 LogicalEvent 1 ── * PlannedDelivery

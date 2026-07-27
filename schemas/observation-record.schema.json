@@ -9,6 +9,7 @@
     "run_id",
     "scenario_id",
     "observation_id",
+    "sample_id",
     "observer_id",
     "sample_sequence",
     "recorded_at",
@@ -22,7 +23,7 @@
       "$ref": "#/$defs/id"
     },
     "run_id": {
-      "$ref": "#/$defs/id"
+      "$ref": "#/$defs/uuid_v4"
     },
     "scenario_id": {
       "$ref": "#/$defs/id"
@@ -38,6 +39,9 @@
       ]
     },
     "observation_id": {
+      "$ref": "#/$defs/id"
+    },
+    "sample_id": {
       "$ref": "#/$defs/id"
     },
     "observer_id": {
@@ -68,34 +72,7 @@
     "evidence": {
       "type": "array",
       "items": {
-        "type": "object",
-        "required": [
-          "key",
-          "value_type",
-          "value"
-        ],
-        "properties": {
-          "key": {
-            "type": "string"
-          },
-          "value_type": {
-            "enum": [
-              "null",
-              "boolean",
-              "integer",
-              "number",
-              "string",
-              "array",
-              "object"
-            ]
-          },
-          "value": {},
-          "sensitive": {
-            "type": "boolean",
-            "default": false
-          }
-        },
-        "additionalProperties": false
+        "$ref": "https://schemas.example.invalid/webhook-receiver-conformance/v1/observer-evidence.schema.json"
       }
     },
     "error": {
@@ -120,6 +97,10 @@
       "type": "string",
       "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_[0-9A-HJKMNP-TV-Z]{26}$",
       "maxLength": 96
+    },
+    "uuid_v4": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
     },
     "sha256": {
       "type": "string",

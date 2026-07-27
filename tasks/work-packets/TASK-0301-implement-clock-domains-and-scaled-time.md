@@ -10,9 +10,9 @@
 | Dependencies | TASK-0102 |
 | Blocks | TASK-0302, TASK-0308 |
 | Parallel group | PG-03A |
-| Requirements | SCHED-001, SCHED-002, SCHED-003, SCHED-004, SCHED-005, SCHED-006, SCHED-007, SCHED-019, STATE-009 |
-| Tests | VT-SCHED-001, VT-SCHED-002, VT-SCHED-003, VT-SCHED-004, VT-SCHED-005, VT-SCHED-006, VT-SCHED-007, VT-SCHED-019, VT-STATE-009 |
-| ADRs | ADR-005, ADR-006, ADR-021, ADR-023 |
+| Requirements | SCHED-001, SCHED-002, SCHED-003, SCHED-004, SCHED-005, SCHED-006, SCHED-007, STATE-009 |
+| Tests | VT-SCHED-001, VT-SCHED-002, VT-SCHED-003, VT-SCHED-004, VT-SCHED-005, VT-SCHED-006, VT-SCHED-007, VT-STATE-009 |
+| ADRs | ADR-005, ADR-021, ADR-023 |
 
 ## Objective
 
@@ -20,7 +20,7 @@ Implement UTC wall timestamps, monotonic durations, logical nanoseconds, and rea
 
 ## Rationale
 
-Implements SCHED-001, SCHED-002, SCHED-003, SCHED-004, SCHED-005, SCHED-006, SCHED-007, SCHED-019 and related requirements at the earliest dependency-safe point.
+Implements SCHED-001, SCHED-002, SCHED-003, SCHED-004, SCHED-005, SCHED-006, SCHED-007 and related requirements at the earliest dependency-safe point.
 
 ## Preconditions
 
@@ -79,12 +79,11 @@ Preserve all project security invariants.
 - Live transitions contain both fields while imported historical records explicitly mark unavailable monotonic values.
 - Scheduler ordering remains unchanged when the system wall clock jumps.
 - A simulated wall-clock jump does not change a timeout result.
-- Schema validation rejects overflow and fractional logical durations.
+- Clock/domain validation rejects signed-64 overflow and fractional logical durations; manifest compilation separately enforces the narrower integer-only I-JSON-safe range.
 - A 100-millisecond logical wait completes within the documented test tolerance in real mode.
 - A scale outside the range fails validation and a scale of 0.01 maps 10 logical seconds to 100 physical milliseconds.
 - Virtual mode is available only to unit-test clock implementations and is rejected in project configuration.
 - Changing the schedule scale does not change a configured 2-second HTTP timeout.
-- A clock-injection test records the discontinuity while monotonic scheduling continues.
 
 ## Commands to run
 
@@ -109,7 +108,6 @@ uv run pyright
 - Passing evidence for VT-SCHED-005
 - Passing evidence for VT-SCHED-006
 - Passing evidence for VT-SCHED-007
-- Passing evidence for VT-SCHED-019
 - Passing evidence for VT-STATE-009
 
 ## Rollback or recovery

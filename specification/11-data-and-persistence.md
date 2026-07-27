@@ -35,7 +35,7 @@ Writes use explicit `BEGIN IMMEDIATE`. The journal service is the only writer. L
 | Table | Primary key | Essential fields / constraints |
 |---|---|---|
 | `schema_migrations` | `migration_id` | checksum, applied_at; applied migrations immutable |
-| `runs` | `run_id` | manifest_id UNIQUE, state, owner_epoch, created_at, terminal_category |
+| `runs` | `run_id` | manifest_id indexed but not unique, state, owner_epoch, created_at, terminal_category |
 | `scenarios` | `scenario_id` | run_id FK, ordinal UNIQUE per run, state |
 | `events` | `event_id` | scenario_id FK, event_type, fixture_blob_hash |
 | `event_dependencies` | `(event_id, dependency_event_id)` | same scenario; no self-edge; DAG validated before insert |

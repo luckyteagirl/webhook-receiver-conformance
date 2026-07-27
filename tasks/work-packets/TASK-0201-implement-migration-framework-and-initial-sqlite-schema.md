@@ -12,7 +12,7 @@
 | Parallel group | PG-02A |
 | Requirements | DATA-001, DATA-009, DATA-017, REL-015, SEC-015, STATE-001, TEST-015 |
 | Tests | VT-DATA-001, VT-DATA-009, VT-DATA-017, VT-REL-015, VT-SEC-015, VT-STATE-001, VT-TEST-015 |
-| ADRs | ADR-004, ADR-007 |
+| ADRs | ADR-004 |
 
 ## Objective
 

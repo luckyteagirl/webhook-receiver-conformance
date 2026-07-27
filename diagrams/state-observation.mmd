@@ -1,13 +1,16 @@
 stateDiagram-v2
-  [*] --> requested
-  requested --> running
-  running --> ok
-  running --> pending
-  pending --> running: next poll
-  running --> unsupported
-  running --> error
-  running --> timeout
+  [*] --> scheduled
+  scheduled --> running: observer invocation begins
+  scheduled --> cancelled: cancelled before invocation
+  running --> ok: complete typed evidence
+  running --> pending: evidence not ready
+  running --> unsupported: capability unavailable
+  running --> error: observer or protocol error
+  running --> timed_out: physical deadline reached
+  running --> cancelled: cancelled
   ok --> [*]
+  pending --> [*]
   unsupported --> [*]
   error --> [*]
-  timeout --> [*]
+  timed_out --> [*]
+  cancelled --> [*]

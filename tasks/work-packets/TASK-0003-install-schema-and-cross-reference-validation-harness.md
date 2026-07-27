@@ -88,7 +88,7 @@ Preserve all project security invariants.
 ## Commands to run
 
 ```bash
-uv run pytest -q tests/schema/** tests/helpers/schema_validation.py
+uv run pytest -q tests/schema tests/helpers/schema_validation.py
 uv run python scripts/validate_artifacts.py
 uv run ruff check .
 uv run pyright

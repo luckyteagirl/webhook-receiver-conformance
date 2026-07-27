@@ -26,49 +26,63 @@
       ]
     },
     "capabilities": {
-      "type": "array",
-      "uniqueItems": true,
-      "items": {
-        "type": "string"
-      }
+      "type": "object",
+      "required": [
+        "evidence_types",
+        "evidence_keys",
+        "read_only",
+        "idempotent"
+      ],
+      "properties": {
+        "evidence_types": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "https://schemas.example.invalid/webhook-receiver-conformance/v1/observer-evidence.schema.json#/$defs/evidence_type"
+          }
+        },
+        "evidence_keys": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "read_only": {
+          "type": "boolean"
+        },
+        "idempotent": {
+          "type": "boolean"
+        },
+        "max_queries": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "supports_pending": {
+          "type": "boolean"
+        },
+        "stable_snapshot_ids": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
     },
     "snapshot_id": {
       "type": [
         "string",
         "null"
-      ]
+      ],
+      "minLength": 1,
+      "maxLength": 512
     },
     "evidence": {
       "type": "array",
       "items": {
-        "type": "object",
-        "required": [
-          "key",
-          "value_type",
-          "value"
-        ],
-        "properties": {
-          "key": {
-            "type": "string"
-          },
-          "value_type": {
-            "enum": [
-              "null",
-              "boolean",
-              "integer",
-              "number",
-              "string",
-              "array",
-              "object"
-            ]
-          },
-          "value": {},
-          "sensitive": {
-            "type": "boolean",
-            "default": false
-          }
-        },
-        "additionalProperties": false
+        "$ref": "https://schemas.example.invalid/webhook-receiver-conformance/v1/observer-evidence.schema.json"
       }
     },
     "error": {
@@ -90,6 +104,32 @@
       "additionalProperties": false
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "ok"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "required": [
+          "snapshot_id"
+        ],
+        "properties": {
+          "snapshot_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          }
+        }
+      }
+    }
+  ],
   "additionalProperties": false,
   "$defs": {
     "id": {

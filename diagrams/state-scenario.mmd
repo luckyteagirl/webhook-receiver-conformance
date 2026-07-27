@@ -1,18 +1,22 @@
 stateDiagram-v2
-  [*] --> planned
-  planned --> ready: dependencies and preconditions met
-  ready --> running: first action claimed
+  [*] --> pending
+  pending --> eligible: dependencies and preconditions met
+  pending --> skipped: policy skip
+  pending --> error: precondition error
+  pending --> cancelled: cancelled
+  eligible --> running: first action claimed
+  eligible --> skipped: policy skip
+  eligible --> error: startup error
+  eligible --> cancelled: cancelled
   running --> passed: required assertions pass
-  running --> receiver_failed: comparable assertion fails
-  running --> environment_failed: required environment unavailable
+  running --> failed: comparable assertion fails
+  running --> error: environment or harness error
+  running --> skipped: explicit skip policy
   running --> ambiguous: unresolved possible send
-  running --> unsupported: required capability absent
   running --> cancelled: cancelled
-  running --> harness_failed: internal invariant fails
   passed --> [*]
-  receiver_failed --> [*]
-  environment_failed --> [*]
+  failed --> [*]
+  error --> [*]
+  skipped --> [*]
   ambiguous --> [*]
-  unsupported --> [*]
   cancelled --> [*]
-  harness_failed --> [*]

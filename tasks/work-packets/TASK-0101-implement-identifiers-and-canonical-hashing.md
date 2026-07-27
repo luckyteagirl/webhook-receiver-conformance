@@ -12,11 +12,11 @@
 | Parallel group | PG-01A |
 | Requirements | DATA-002, DATA-005, DATA-006 |
 | Tests | VT-DATA-002, VT-DATA-005, VT-DATA-006 |
-| ADRs | ADR-004, ADR-007, ADR-008 |
+| ADRs | ADR-004, ADR-008 |
 
 ## Objective
 
-Implement prefixed identifiers, SHA-256 blob hashes, canonical JSON hashing, and collision checks.
+Implement execution-only UUIDv4 run IDs, raw run-agnostic canonical-manifest hashes, type-prefixed planned-entity IDs, prefixed blob hashes, and collision checks.
 
 ## Rationale
 
@@ -62,7 +62,7 @@ Implements DATA-002, DATA-005, DATA-006 at the earliest dependency-safe point.
 
 ## Implementation scope
 
-Implement prefixed identifiers, SHA-256 blob hashes, canonical JSON hashing, and collision checks.
+Implement UUIDv4 run IDs outside the manifest, raw canonical-manifest hashes that omit only `manifest_id`, the integer-only I-JSON-safe canonical profile, type-prefixed planned-entity IDs, prefixed blob hashes, and collision checks.
 
 ## Explicit non-goals
 
@@ -79,6 +79,8 @@ Preserve all project security invariants.
 ## Acceptance criteria
 
 - Replay creates a new run_id while preserving the same manifest_id.
+- The immutable manifest contains no `run_id` and its hash projection omits only `manifest_id`.
+- Canonicalization rejects floating-point values and integers outside `-(2^53-1)` through `2^53-1`.
 - Cross-language golden vectors produce the documented digest.
 - Golden vectors remain stable across supported Python versions and insertion of unrelated entities.
 

@@ -32,10 +32,18 @@ Implements API-004, ASSERT-016, OBS-001, OBS-009, OBS-012, OBS-013, OBS-014, OBS
 **Exclusive ownership**
 
 - src/webhook_receiver_conformance/observers/protocol.py
+- schemas/observer-evidence.schema.json
+- schemas/observer-request.schema.json
+- schemas/observer-response.schema.json
+- schemas/observation-record.schema.json
 
 **Allowed files**
 
 - src/webhook_receiver_conformance/observers/protocol.py
+- schemas/observer-evidence.schema.json
+- schemas/observer-request.schema.json
+- schemas/observer-response.schema.json
+- schemas/observation-record.schema.json
 - tests/unit/observers/test_protocol.py
 
 **Forbidden files**
@@ -102,6 +110,10 @@ uv run pyright
 ## Expected outputs
 
 - src/webhook_receiver_conformance/observers/protocol.py
+- schemas/observer-evidence.schema.json
+- schemas/observer-request.schema.json
+- schemas/observer-response.schema.json
+- schemas/observation-record.schema.json
 - tests/unit/observers/test_protocol.py
 
 ## Completion evidence

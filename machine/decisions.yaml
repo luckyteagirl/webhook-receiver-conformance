@@ -215,7 +215,8 @@ decisions:
   revisit_triggers:
   - Measured report readers require concurrent reads during long writes.
   - A distributed execution requirement is accepted.
-  related_or_superseded_adrs: []
+  related_or_superseded_adrs:
+  - ADR-007
 - id: ADR-005
   title: Use HMAC-SHA256 counter generation and RFC 8785 manifests
   status: accepted
@@ -272,7 +273,7 @@ decisions:
   related_or_superseded_adrs: []
 - id: ADR-006
   title: Use integer microsecond logical time with real and scaled modes
-  status: accepted
+  status: superseded
   date: '2026-07-26'
   owners:
   - principal architect
@@ -322,10 +323,11 @@ decisions:
   - Decision-specific contract and regression tests are required.
   revisit_triggers:
   - A validated use case requires coordinated receiver test clocks.
-  related_or_superseded_adrs: []
+  related_or_superseded_adrs:
+  - ADR-023
 - id: ADR-007
   title: Use SQLite WAL, synchronous FULL, and one writer
-  status: accepted
+  status: superseded
   date: '2026-07-26'
   owners:
   - principal architect
@@ -377,7 +379,8 @@ decisions:
   revisit_triggers:
   - A hosted multi-worker product becomes a committed scope.
   - Measured writer contention violates budgets.
-  related_or_superseded_adrs: []
+  related_or_superseded_adrs:
+  - ADR-004
 - id: ADR-008
   title: Separate manifest, run, event, delivery, attempt, observation, and assertion identities
   status: accepted
@@ -1173,7 +1176,8 @@ decisions:
   - Clock-jump, scale-boundary, monotonic-deadline, and false-claim tests.
   revisit_triggers:
   - A standardized receiver test-clock protocol emerges.
-  related_or_superseded_adrs: []
+  related_or_superseded_adrs:
+  - ADR-006
 - id: ADR-024
   title: Ship three built-in HMAC signature profiles in v0.1
   status: accepted

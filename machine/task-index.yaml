@@ -266,7 +266,7 @@ tasks:
   - Fuzz targets enforce size/time limits and preserve no-crash/no-leak invariants.
   - task-index validation rejects a task with empty commands_to_run or completion_evidence.
   commands_to_run:
-  - uv run pytest -q tests/schema/** tests/helpers/schema_validation.py
+  - uv run pytest -q tests/schema tests/helpers/schema_validation.py
   - uv run python scripts/validate_artifacts.py
   - uv run ruff check .
   - uv run pyright
@@ -375,7 +375,8 @@ tasks:
   title: Implement identifiers and canonical hashing
   phase: phase-01-domain-and-schemas
   priority: P0
-  objective: Implement prefixed identifiers, SHA-256 blob hashes, canonical JSON hashing, and collision checks.
+  objective: Implement execution-only UUIDv4 run IDs, raw run-agnostic canonical-manifest hashes, type-prefixed planned-entity
+    IDs, prefixed blob hashes, and collision checks.
   allowed_files: &id005
   - src/webhook_receiver_conformance/domain/identifiers.py
   - src/webhook_receiver_conformance/domain/hashing.py
@@ -397,7 +398,6 @@ tasks:
   - VT-DATA-006
   adr_ids:
   - ADR-004
-  - ADR-007
   - ADR-008
   blocks_task_ids:
   - TASK-0107
@@ -424,11 +424,15 @@ tasks:
   preconditions:
   - Every dependency task is complete and its verification commands pass.
   - No unresolved high-severity finding affects an owned interface.
-  implementation_scope: Implement prefixed identifiers, SHA-256 blob hashes, canonical JSON hashing, and collision checks.
+  implementation_scope: Implement UUIDv4 run IDs outside the manifest, raw canonical-manifest hashes that omit only manifest_id,
+    the integer-only I-JSON-safe canonical profile, type-prefixed planned-entity IDs, prefixed blob hashes, and collision
+    checks.
   error_and_edge_cases:
   - The command returns a classified nonzero result and preserves diagnostic evidence.
   acceptance_criteria:
   - Replay creates a new run_id while preserving the same manifest_id.
+  - The immutable manifest contains no run_id and its hash projection omits only manifest_id.
+  - Canonicalization rejects floating-point values and integers outside -(2^53-1) through 2^53-1.
   - Cross-language golden vectors produce the documented digest.
   - Golden vectors remain stable across supported Python versions and insertion of unrelated entities.
   commands_to_run:
@@ -560,7 +564,6 @@ tasks:
   - VT-TEST-005
   adr_ids:
   - ADR-003
-  - ADR-006
   - ADR-008
   - ADR-023
   blocks_task_ids:
@@ -604,7 +607,7 @@ tasks:
   - Hypothesis profiles run deterministic CI settings and retain minimized reproducers as explicit bundles where relevant.
   - Golden updates require an explicit compatibility review marker.
   commands_to_run:
-  - uv run pytest -q tests/unit/determinism/test_generator.py tests/golden/prng-v1.json
+  - uv run pytest -q tests/unit/determinism/test_generator.py
   - uv run python scripts/validate_artifacts.py
   - uv run ruff check .
   - uv run pyright
@@ -677,9 +680,9 @@ tasks:
   - VT-SEC-025
   adr_ids:
   - ADR-005
-  - ADR-006
   - ADR-019
   - ADR-021
+  - ADR-023
   blocks_task_ids:
   - TASK-0105
   - TASK-0106
@@ -1011,7 +1014,6 @@ tasks:
   - VT-SEC-025
   adr_ids:
   - ADR-004
-  - ADR-007
   blocks_task_ids:
   - TASK-0109
   - TASK-0401
@@ -1212,7 +1214,6 @@ tasks:
   - VT-TEST-014
   adr_ids:
   - ADR-004
-  - ADR-007
   - ADR-012
   - ADR-022
   - ADR-025
@@ -1252,8 +1253,8 @@ tasks:
   preconditions:
   - Every dependency task is complete and its verification commands pass.
   - No unresolved high-severity finding affects an owned interface.
-  implementation_scope: Freeze configuration, fixture blobs, IDs, mutations, conditional attempts, versions, and logical schedules
-    into an immutable bundle.
+  implementation_scope: Freeze configuration, fixture blobs, planned IDs, mutations, conditional attempts, versions, and logical
+    schedules into an immutable run-agnostic bundle; bind a fresh run_id only in execution artifacts.
   error_and_edge_cases:
   - The command returns a classified nonzero result and preserves diagnostic evidence.
   acceptance_criteria:
@@ -1261,6 +1262,9 @@ tasks:
   - The snapshot contains resolved non-secret defaults and secret fingerprints but no secret values.
   - '`webhook-conformance plan --help` exits 0 and the command contract test demonstrates its stated job.'
   - Replay creates a new run_id while preserving the same manifest_id.
+  - The manifest contains no run_id and hashing its canonical form omits only manifest_id.
+  - Planning rejects every floating-point manifest value and integer outside the inclusive I-JSON-safe range -(2^53-1)
+    through 2^53-1.
   - Changing one byte changes the blob digest and causes bundle verification to fail until re-planned.
   - The loader rejects a manifest whose canonical content no longer matches manifest_id.
   - Cross-language golden vectors produce the documented digest.
@@ -1426,7 +1430,6 @@ tasks:
   - VT-TEST-015
   adr_ids:
   - ADR-004
-  - ADR-007
   blocks_task_ids:
   - TASK-0202
   - TASK-0204
@@ -2051,7 +2054,7 @@ tasks:
   estimated_agent_complexity: medium
   security_constraints: Preserve all project security invariants.
   explicit_non_goals: []
-  rationale: Implements SCHED-001, SCHED-002, SCHED-003, SCHED-004, SCHED-005, SCHED-006, SCHED-007, SCHED-019 and related
+  rationale: Implements SCHED-001, SCHED-002, SCHED-003, SCHED-004, SCHED-005, SCHED-006, SCHED-007 and related
     requirements at the earliest dependency-safe point.
   requirement_ids:
   - SCHED-001
@@ -2061,7 +2064,6 @@ tasks:
   - SCHED-005
   - SCHED-006
   - SCHED-007
-  - SCHED-019
   - STATE-009
   test_ids:
   - VT-SCHED-001
@@ -2071,11 +2073,9 @@ tasks:
   - VT-SCHED-005
   - VT-SCHED-006
   - VT-SCHED-007
-  - VT-SCHED-019
   - VT-STATE-009
   adr_ids:
   - ADR-005
-  - ADR-006
   - ADR-021
   - ADR-023
   blocks_task_ids:
@@ -2113,12 +2113,12 @@ tasks:
   - Live transitions contain both fields while imported historical records explicitly mark unavailable monotonic values.
   - Scheduler ordering remains unchanged when the system wall clock jumps.
   - A simulated wall-clock jump does not change a timeout result.
-  - Schema validation rejects overflow and fractional logical durations.
+  - Clock/domain validation rejects signed-64 overflow and fractional logical durations; manifest compilation separately
+    enforces the narrower integer-only I-JSON-safe range.
   - A 100-millisecond logical wait completes within the documented test tolerance in real mode.
   - A scale outside the range fails validation and a scale of 0.01 maps 10 logical seconds to 100 physical milliseconds.
   - Virtual mode is available only to unit-test clock implementations and is rejected in project configuration.
   - Changing the schedule scale does not change a configured 2-second HTTP timeout.
-  - A clock-injection test records the discontinuity while monotonic scheduling continues.
   commands_to_run:
   - uv run pytest -q tests/unit/scheduler/test_clocks.py
   - uv run python scripts/validate_artifacts.py
@@ -2133,7 +2133,6 @@ tasks:
   - Passing evidence for VT-SCHED-005
   - Passing evidence for VT-SCHED-006
   - Passing evidence for VT-SCHED-007
-  - Passing evidence for VT-SCHED-019
   - Passing evidence for VT-STATE-009
   rollback_or_recovery: Revert only files owned by this task; preserve schema and migration history; document any partially
     generated artifact before handoff.
@@ -2719,7 +2718,6 @@ tasks:
   - VT-SEC-012
   - VT-SEC-025
   adr_ids:
-  - ADR-006
   - ADR-009
   - ADR-014
   - ADR-023
@@ -3062,7 +3060,6 @@ tasks:
   adr_ids:
   - ADR-001
   - ADR-004
-  - ADR-007
   blocks_task_ids:
   - TASK-0801
   exclusive_file_ownership:
@@ -3741,6 +3738,10 @@ tasks:
   objective: Implement versioned capabilities, observe requests, responses, evidence values, and error categories.
   allowed_files: &id040
   - src/webhook_receiver_conformance/observers/protocol.py
+  - schemas/observer-evidence.schema.json
+  - schemas/observer-request.schema.json
+  - schemas/observer-response.schema.json
+  - schemas/observation-record.schema.json
   - tests/unit/observers/test_protocol.py
   dependency_task_ids:
   - TASK-0102
@@ -3789,6 +3790,10 @@ tasks:
   - TASK-0506
   exclusive_file_ownership:
   - src/webhook_receiver_conformance/observers/protocol.py
+  - schemas/observer-evidence.schema.json
+  - schemas/observer-request.schema.json
+  - schemas/observer-response.schema.json
+  - schemas/observation-record.schema.json
   forbidden_files:
   - schemas/** unless explicitly listed
   - machine/**
@@ -4835,6 +4840,8 @@ tasks:
   acceptance_criteria:
   - Exactly one terminal result enum is present in every result summary.
   - Each terminal result category maps to exactly one documented exit code across run, resume, and replay.
+  - Pairwise reduction implements harness_error > invalid_input > ambiguous > environment_error > unsupported > receiver_failure
+    > cancelled > pass exactly.
   - Summary counts reconcile exactly with JSON Lines records and the process exit code.
   - A table-driven test covers every pairwise category combination.
   commands_to_run:
@@ -5104,7 +5111,7 @@ tasks:
   - VT-TEST-002
   - VT-TEST-005
   adr_ids:
-  - ADR-007
+  - ADR-004
   blocks_task_ids:
   - TASK-0606
   - TASK-0711
@@ -6773,7 +6780,6 @@ tasks:
   - VT-TEST-006
   adr_ids:
   - ADR-004
-  - ADR-007
   - ADR-009
   blocks_task_ids:
   - TASK-0810

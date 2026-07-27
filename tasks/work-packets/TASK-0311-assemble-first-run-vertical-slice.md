@@ -12,7 +12,7 @@
 | Parallel group | None |
 | Requirements | CLI-004, DATA-001, FR-001, PRIV-010 |
 | Tests | VT-CLI-004, VT-DATA-001, VT-FR-001, VT-PRIV-010 |
-| ADRs | ADR-001, ADR-004, ADR-007 |
+| ADRs | ADR-001, ADR-004 |
 
 ## Objective
 

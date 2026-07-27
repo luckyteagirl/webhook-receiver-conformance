@@ -9,17 +9,23 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from jsonschema import Draft202012Validator
+
+if TYPE_CHECKING:
+    from referencing import Registry
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from tests.helpers.schema_validation import (  # noqa: E402
     MAX_ARTIFACT_BYTES,
+    build_schema_registry,
+    compare_state_transitions,
     load_json,
     load_jsonl,
     load_yaml,
+    parse_state_transition_tables,
     parse_state_transitions,
     validate_instance,
 )
@@ -52,6 +58,7 @@ def validate_pack(root: Path = ROOT) -> list[str]:
             schemas[path.name] = schema
         except (OSError, UnicodeDecodeError, ValueError, TypeError) as exc:
             errors.append(f"{path.relative_to(root)}: invalid JSON Schema: {exc}")
+    registry = build_schema_registry(schemas.values())
 
     for filename, schema_name in sorted(MAPPINGS.items()):
         path = root / "examples" / filename
@@ -59,7 +66,11 @@ def validate_pack(root: Path = ROOT) -> list[str]:
             instance = load_yaml(path) if path.suffix in {".yaml", ".yml"} else load_json(path)
             errors.extend(
                 f"{path.relative_to(root)}: {message}"
-                for message in validate_instance(instance, schemas[schema_name])
+                for message in validate_instance(
+                    instance,
+                    schemas[schema_name],
+                    registry=registry,
+                )
             )
         except (OSError, UnicodeDecodeError, ValueError, TypeError, KeyError) as exc:
             errors.append(f"{path.relative_to(root)}: {exc}")
@@ -69,7 +80,11 @@ def validate_pack(root: Path = ROOT) -> list[str]:
             for number, instance in enumerate(load_jsonl(path), 1):
                 errors.extend(
                     f"{path.relative_to(root)}:{number}: {message}"
-                    for message in validate_instance(instance, schemas[schema_name])
+                    for message in validate_instance(
+                        instance,
+                        schemas[schema_name],
+                        registry=registry,
+                    )
                 )
         except (OSError, UnicodeDecodeError, ValueError, KeyError) as exc:
             errors.append(f"{path.relative_to(root)}: {exc}")
@@ -83,22 +98,27 @@ def validate_pack(root: Path = ROOT) -> list[str]:
             ET.parse(xml_path)  # noqa: S314
     except (OSError, ET.ParseError) as exc:
         errors.append(f"{xml_path.relative_to(root)}: invalid XML: {exc}")
-    errors.extend(_validate_task_index_schema(root, schemas))
+    errors.extend(_validate_task_index_schema(root, schemas, registry))
     errors.extend(_cross_references(root))
     errors.extend(_traceability_parity(root))
     errors.extend(_state_diagram_syntax(root))
+    errors.extend(_state_table_diagram_parity(root))
     errors.extend(_documentation_checks(root))
     return sorted(set(errors))
 
 
-def _validate_task_index_schema(root: Path, schemas: dict[str, dict[str, Any]]) -> list[str]:
+def _validate_task_index_schema(
+    root: Path,
+    schemas: dict[str, dict[str, Any]],
+    registry: Registry[Any],
+) -> list[str]:
     path = root / "machine" / "task-index.yaml"
     try:
         instance = load_yaml(path)
         schema = schemas["task-index.schema.json"]
         return [
             f"{path.relative_to(root)}: {message}"
-            for message in validate_instance(instance, schema)
+            for message in validate_instance(instance, schema, registry=registry)
         ]
     except (OSError, UnicodeDecodeError, ValueError, TypeError, KeyError) as exc:
         return [f"{path.relative_to(root)}: {exc}"]
@@ -220,6 +240,38 @@ def _state_diagram_syntax(root: Path) -> list[str]:
             continue
         if not transitions:
             diagnostics.append(f"{path.relative_to(root)}: no named state transitions")
+    return diagnostics
+
+
+def _state_table_diagram_parity(root: Path) -> list[str]:
+    """Require specification/09 legal-exit tables and Mermaid edges to match."""
+    specification_path = root / "specification" / "09-state-machines.md"
+    try:
+        tables = parse_state_transition_tables(specification_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError) as exc:
+        return [f"{specification_path.relative_to(root)}: {exc}"]
+    diagnostics: list[str] = []
+    expected_names = {"run", "scenario", "delivery", "attempt", "observation", "assertion"}
+    diagnostics.extend(
+        [
+            f"{specification_path.relative_to(root)}: missing {missing_name} transition table"
+            for missing_name in sorted(expected_names - tables.keys())
+        ]
+    )
+    for name in sorted(expected_names & tables.keys()):
+        diagram_path = root / "diagrams" / f"state-{name}.mmd"
+        try:
+            diagram = parse_state_transitions(diagram_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError) as exc:
+            diagnostics.append(f"{diagram_path.relative_to(root)}: {exc}")
+            continue
+        diagnostics.extend(
+            compare_state_transitions(
+                machine_name=name,
+                documented=diagram,
+                executable=tables[name],
+            )
+        )
     return diagnostics
 
 

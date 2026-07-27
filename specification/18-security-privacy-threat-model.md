@@ -97,7 +97,7 @@ Control characters, ESC, bidi controls, CR/LF header injection, and invalid Unic
 
 ## Resource controls
 
-Defaults/hard caps: 1 MiB/16 MiB request, 64 KiB/1 MiB response capture, 1 MiB response drain, 1,000 events, 5,000 attempts, 8/128 concurrency, 64 observer queries, 1 MiB observer output, 64 MiB report field materialization, and configurable run disk quota. Exceeding a cap produces a classified error and bounded evidence rather than partial uncontrolled allocation.
+Defaults/hard caps: 1 MiB/16 MiB request, 64 KiB/1 MiB response capture, 1 MiB response drain, 1,000 events, 5,000 attempts, 10/50 delivery concurrency, 64 observer queries, 1 MiB observer output, 64 MiB report field materialization, and configurable run disk quota. Exceeding a cap produces a classified error and bounded evidence rather than partial uncontrolled allocation.
 
 ## CI and artifact controls
 

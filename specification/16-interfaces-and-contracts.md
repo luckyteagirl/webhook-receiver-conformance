@@ -10,6 +10,14 @@
 - Schema/wire versions and package versions are independent.
 - Security policy is evaluated before side effects.
 
+## Identity encoding at serialized boundaries
+
+- `run_id` is a canonical lowercase, hyphenated UUIDv4 and is newly generated for every execution, including replay. It belongs to the execution journal, evidence, and results; it is not serialized in the immutable manifest.
+- `manifest_id` is the raw 64-character lowercase hexadecimal SHA-256 digest of the RFC 8785 canonical manifest with `manifest_id` omitted. It does not use the `sha256:` prefix, and no execution-specific `run_id` participates in the manifest.
+- Blob, request-body, response-body, header, dependency, and fingerprint digests keep the `sha256:<64 lowercase hexadecimal>` encoding.
+- Type-prefixed deterministic IDs are reserved for manifest-planned/domain entities. Physical attempt, observer sample, evaluation, and evidence-record IDs are separately generated and are not replay-stable.
+- Canonical manifests admit only JSON integers in the inclusive range `-9007199254740991` through `9007199254740991`. Floating-point values and integers outside this I-JSON interoperable range are rejected. Internal logical time remains signed 64-bit nanoseconds, but the compiler rejects an out-of-profile value before manifest serialization.
+
 ## Error envelope
 
 Internal application errors normalize to:
@@ -55,9 +63,9 @@ The owning task MUST provide a contract test using the corresponding schema or t
 | Owner | planning |
 | Consumer | CLI run/replay and journal |
 | Inputs | Validated ProjectConfig, fixture bytes, seed, adapter metadata |
-| Outputs | Immutable RunManifest and canonical digest |
+| Outputs | Immutable execution-agnostic RunManifest and canonical digest |
 | Preconditions | No unresolved configuration error |
-| Postconditions | All randomness realized; no network activity |
+| Postconditions | All randomness realized; no network activity; no `run_id` embedded in the manifest |
 | Errors | planning_error, fixture_error, unsupported_capability |
 | Timeout | planning budget |
 | Idempotency | Same normalized inputs and algorithm version yield the same manifest bytes |
@@ -180,7 +188,7 @@ The owning task MUST provide a contract test using the corresponding schema or t
 | Postconditions | Bounded stderr captured separately; no shell |
 | Errors | observer_timeout, observer_protocol_error, observer_process_error, unsupported_capability |
 | Timeout | configured monotonic observer timeout |
-| Idempotency | Read-only observer SHOULD be idempotent for one checkpoint |
+| Idempotency | Automatic reinvocation requires declared `read_only=true` and `idempotent=true`; retries preserve `request_id` and use a fresh `sample_id` |
 | Versioning | protocol_version and capabilities |
 | Security | Minimal env, argv-only, path containment, output cap |
 | Verification | VT-OBS-001, VT-SEC-006 |
@@ -196,16 +204,20 @@ The owning task MUST provide a contract test using the corresponding schema or t
 | Consumer | runner and recovery |
 | Inputs | Authenticated ObserverRequest JSON |
 | Outputs | ObserverResponse JSON |
-| Preconditions | Observer target separately approved; capability handshake succeeds |
+| Preconditions | Observer target separately approved; `POST /capabilities` handshake succeeds |
 | Postconditions | Evidence sanitized before persistence |
 | Errors | observer_http_error, observer_auth_error, observer_protocol_error, unsupported_capability |
 | Timeout | configured connect/read/total timeout |
-| Idempotency | Checkpoint requests carry unique sample_id; endpoint is read-only |
+| Idempotency | An observe retry preserves logical `request_id`, uses a fresh `sample_id`, and is automatic only when capabilities declare `read_only=true` and `idempotent=true` |
 | Versioning | protocol_version and media type |
 | Security | Dedicated token reference, TLS/target policy, no credential persistence |
 | Verification | VT-OBS-002, VT-OBS-003 |
 
 ### Example interaction
+
+The HTTP adapter sends capability requests to `POST /capabilities` and observation requests to `POST /observe`, both relative to the configured base URL. The request body uses `observer-request.schema.json`; an `observe` operation requires `sample_id`, UUIDv4 `run_id`, and at least one query. The response body uses `observer-response.schema.json`. Its capability object declares supported evidence keys, the exact OBS-014 evidence types, `read_only`, and `idempotent`. Every `status=ok` response contains a nonempty `snapshot_id`.
+
+The shared `observer-evidence.schema.json` owns the wire and persisted evidence-type enum: `null`, `boolean`, `integer`, `decimal-string`, `string`, `bytes-digest`, `timestamp`, `array`, and `object`. Binary evidence is digest/metadata, never arbitrary embedded bytes.
 
 The owning task MUST provide a contract test using the corresponding schema or typed model. The consumer MUST handle every documented error category without parsing human message text.
 ## IF-ASSERT — Assertion evaluator

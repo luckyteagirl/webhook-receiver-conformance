@@ -12,7 +12,7 @@
 | Parallel group | PG-01C |
 | Requirements | DATA-003, HTTP-016, SEC-015, SEC-017, SEC-018, SEC-025 |
 | Tests | VT-DATA-003, VT-HTTP-016, VT-SEC-015, VT-SEC-017, VT-SEC-018, VT-SEC-025 |
-| ADRs | ADR-004, ADR-007 |
+| ADRs | ADR-004 |
 
 ## Objective
 

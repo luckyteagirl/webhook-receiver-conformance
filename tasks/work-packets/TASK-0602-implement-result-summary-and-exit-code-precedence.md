@@ -80,6 +80,7 @@ Preserve all project security invariants.
 
 - Exactly one terminal result enum is present in every result summary.
 - Each terminal result category maps to exactly one documented exit code across run, resume, and replay.
+- Pairwise reduction implements `harness_error > invalid_input > ambiguous > environment_error > unsupported > receiver_failure > cancelled > pass` exactly.
 - Summary counts reconcile exactly with JSON Lines records and the process exit code.
 - A table-driven test covers every pairwise category combination.
 

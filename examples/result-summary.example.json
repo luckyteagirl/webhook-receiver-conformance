@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
-  "run_id": "run_01J00000000000000000000000",
-  "manifest_id": "manifest_01J00000000000000000000000",
+  "run_id": "123e4567-e89b-42d3-a456-426614174000",
+  "manifest_id": "126b2cb058cc7702127f7f95a89e3fee4a1a7d835361d6f7d04be36a31ccda34",
   "generated_at": "2026-07-26T20:00:00.200Z",
   "verdict": "pass",
   "exit_code": 0,

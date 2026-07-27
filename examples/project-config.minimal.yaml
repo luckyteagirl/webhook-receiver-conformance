@@ -1,4 +1,4 @@
-schema_version: '1.0'
+schema_version: 1
 project:
   name: minimal-local-receiver-test
   artifact_directory: .webhook-conformance
@@ -32,7 +32,7 @@ clock:
 limits:
   max_events: 100
   max_attempts: 500
-  max_concurrency: 8
+  max_concurrency: 10
   max_request_bytes: 1048576
   max_response_capture_bytes: 65536
 scenarios:

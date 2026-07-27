@@ -76,7 +76,9 @@ A file reference is opened from a contained normalized path without following a 
 | 6 | unsupported | Required declared capability is unsupported and no execution defect occurred. |
 | 130 | cancelled | Operator/CI interruption completed before a stronger committed terminal category. |
 
-Reduction precedence after recovery is: harness integrity failure (5) > unresolved ambiguity (4) > receiver failure (1) > invalid input discovered in a later artifact operation (2) > environment failure (3) > unsupported (6) > cancelled (130) > pass (0). Cancellation returns 130 only when no stronger category was already durably established. Reports preserve all categories even when one exit code wins.
+The table's `environment_failure` and `harness_failure` labels are CLI exit categories only. Persisted and reported run verdicts use the FR-006 values `environment_error` and `harness_error`.
+
+Reduction precedence after recovery is: `harness_error` (5) > `invalid_input` (2) > `ambiguous` (4) > `environment_error` (3) > `unsupported` (6) > `receiver_failure` (1) > `cancelled` (130) > `pass` (0). Cancellation returns 130 only while the run is not already durably terminal with a stronger category. Reports preserve all categories even when one exit code wins.
 
 ## Cancellation
 

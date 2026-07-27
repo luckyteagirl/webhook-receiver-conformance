@@ -2108,8 +2108,7 @@
         "IF-JOURNAL"
       ],
       "adr_ids": [
-        "ADR-004",
-        "ADR-007"
+        "ADR-004"
       ],
       "task_id": "TASK-0201",
       "test_id": "VT-DATA-001",
@@ -2137,8 +2136,7 @@
         "IF-JOURNAL"
       ],
       "adr_ids": [
-        "ADR-004",
-        "ADR-007"
+        "ADR-004"
       ],
       "task_id": "TASK-0311",
       "test_id": "VT-DATA-001",
@@ -2168,8 +2166,7 @@
         "ARC-JOURNAL"
       ],
       "adr_ids": [
-        "ADR-004",
-        "ADR-007"
+        "ADR-004"
       ],
       "task_id": "TASK-0101",
       "test_id": "VT-DATA-002",
@@ -2199,8 +2196,7 @@
         "ARC-JOURNAL"
       ],
       "adr_ids": [
-        "ADR-004",
-        "ADR-007"
+        "ADR-004"
       ],
       "task_id": "TASK-0109",
       "test_id": "VT-DATA-002",
@@ -2230,8 +2226,7 @@
         "ARC-MANIFEST"
       ],
       "adr_ids": [
-        "ADR-004",
-        "ADR-007"
+        "ADR-004"
       ],
       "task_id": "TASK-0107",
       "test_id": "VT-DATA-003",
@@ -2261,8 +2256,7 @@
         "ARC-MANIFEST"
       ],
       "adr_ids": [
-        "ADR-004",
-        "ADR-007"
+        "ADR-004"
       ],
       "task_id": "TASK-0109",
       "test_id": "VT-DATA-003",
@@ -3813,7 +3807,7 @@
         "ARC-SCHED"
       ],
       "adr_ids": [
-        "ADR-006"
+        "ADR-023"
       ],
       "task_id": "TASK-0104",
       "test_id": "VT-SCHED-006",
@@ -3843,7 +3837,7 @@
         "ARC-SCHED"
       ],
       "adr_ids": [
-        "ADR-006"
+        "ADR-023"
       ],
       "task_id": "TASK-0301",
       "test_id": "VT-SCHED-006",
@@ -3872,7 +3866,6 @@
         "IF-SCHED"
       ],
       "adr_ids": [
-        "ADR-006",
         "ADR-023"
       ],
       "task_id": "TASK-0301",
@@ -3902,7 +3895,6 @@
         "IF-SCHED"
       ],
       "adr_ids": [
-        "ADR-006",
         "ADR-023"
       ],
       "task_id": "TASK-0308",
@@ -3931,7 +3923,6 @@
         "ARC-PRNG"
       ],
       "adr_ids": [
-        "ADR-006",
         "ADR-023"
       ],
       "task_id": "TASK-0103",
@@ -3960,7 +3951,6 @@
         "ARC-PRNG"
       ],
       "adr_ids": [
-        "ADR-006",
         "ADR-023"
       ],
       "task_id": "TASK-0103",
@@ -11679,7 +11669,7 @@
         "IF-JOURNAL"
       ],
       "adr_ids": [
-        "ADR-007"
+        "ADR-004"
       ],
       "task_id": "TASK-0605",
       "test_id": "VT-REL-010",
@@ -11704,7 +11694,7 @@
         "IF-JOURNAL"
       ],
       "adr_ids": [
-        "ADR-007"
+        "ADR-004"
       ],
       "task_id": "TASK-0806",
       "test_id": "VT-REL-010",

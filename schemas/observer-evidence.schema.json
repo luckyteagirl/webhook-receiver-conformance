@@ -1,0 +1,240 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/webhook-receiver-conformance/v1/observer-evidence.schema.json",
+  "title": "Observer evidence value",
+  "$ref": "#/$defs/evidence",
+  "$defs": {
+    "evidence_type": {
+      "enum": [
+        "null",
+        "boolean",
+        "integer",
+        "decimal-string",
+        "string",
+        "bytes-digest",
+        "timestamp",
+        "array",
+        "object"
+      ]
+    },
+    "evidence": {
+      "type": "object",
+      "required": [
+        "key",
+        "value_type",
+        "value"
+      ],
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "value_type": {
+          "$ref": "#/$defs/evidence_type"
+        },
+        "value": {},
+        "sensitive": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "value_type": {
+                "const": "null"
+              }
+            },
+            "required": [
+              "value_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "value_type": {
+                "const": "boolean"
+              }
+            },
+            "required": [
+              "value_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "value_type": {
+                "const": "integer"
+              }
+            },
+            "required": [
+              "value_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "type": "integer"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "value_type": {
+                "const": "decimal-string"
+              }
+            },
+            "required": [
+              "value_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "type": "string",
+                "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "value_type": {
+                "const": "string"
+              }
+            },
+            "required": [
+              "value_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "value_type": {
+                "const": "bytes-digest"
+              }
+            },
+            "required": [
+              "value_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "type": "object",
+                "required": [
+                  "sha256",
+                  "byte_length"
+                ],
+                "properties": {
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "byte_length": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "media_type": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 255
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "value_type": {
+                "const": "timestamp"
+              }
+            },
+            "required": [
+              "value_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?Z$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "value_type": {
+                "const": "array"
+              }
+            },
+            "required": [
+              "value_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "type": "array"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "value_type": {
+                "const": "object"
+              }
+            },
+            "required": [
+              "value_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    }
+  }
+}

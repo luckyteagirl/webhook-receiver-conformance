@@ -12,7 +12,7 @@ All dependencies outside this phase are complete and their integration checkpoin
 
 | ID | Title | Dependencies | Parallel | Owned files | Exit evidence |
 | --- | --- | --- | --- | --- | --- |
-| TASK-0501 | Implement observer protocol models and capability negotiation | TASK-0102, TASK-0003 | PG-05A | src/webhook_receiver_conformance/observers/protocol.py | Passing evidence for VT-API-004; Passing evidence for VT-ASSERT-016; Passing evidence for VT-OBS-001 |
+| TASK-0501 | Implement observer protocol models and capability negotiation | TASK-0102, TASK-0003 | PG-05A | src/webhook_receiver_conformance/observers/protocol.py, schemas/observer-evidence.schema.json, schemas/observer-request.schema.json, schemas/observer-response.schema.json, schemas/observation-record.schema.json | Passing evidence for VT-API-004; Passing evidence for VT-ASSERT-016; Passing evidence for VT-OBS-001 |
 | TASK-0502 | Implement command observer | TASK-0501 | PG-05B | src/webhook_receiver_conformance/observers/command.py | Passing evidence for VT-DX-007; Passing evidence for VT-OBS-001; Passing evidence for VT-OBS-002 |
 | TASK-0503 | Implement HTTP probe observer | TASK-0501, TASK-0308 | PG-05B | src/webhook_receiver_conformance/observers/http_probe.py | Passing evidence for VT-DX-007; Passing evidence for VT-OBS-008; Passing evidence for VT-OBS-009 |
 | TASK-0504 | Implement observation polling and journaling | TASK-0502, TASK-0503, TASK-0203 | Serial | src/webhook_receiver_conformance/observers/polling.py, src/webhook_receiver_conformance/runtime/observations.py | Passing evidence for VT-ASSERT-012; Passing evidence for VT-OBS-008; Passing evidence for VT-OBS-012 |
