@@ -1,5 +1,5 @@
 """Journal-first orchestration for exactly one physical HTTP attempt."""
-# ruff: noqa: C901, D107, EM101, INP001, PLR0911, PLR0913, PLR2004, TRY003
+# ruff: noqa: C901, D105, D107, EM101, INP001, PLR0911, PLR0913, PLR2004, TRY003
 
 from __future__ import annotations
 
@@ -31,10 +31,12 @@ from webhook_receiver_conformance.http.evidence import (
     AttemptOutcome,
     AttemptProgressCheckpoint,
     AttemptResult,
+    HeaderOwner,
 )
 from webhook_receiver_conformance.http.executor import (
     HttpAttemptCommand,
     HttpAttemptExecutor,
+    HttpHeader,
 )
 from webhook_receiver_conformance.journal.repositories import TransitionRepository
 from webhook_receiver_conformance.journal.transitions import (
@@ -49,12 +51,23 @@ from webhook_receiver_conformance.journal.transitions import (
     RetrySchedule,
     TransitionCommand,
 )
+from webhook_receiver_conformance.manifest.compiler import RealizedDeliveryExecution
+from webhook_receiver_conformance.mutations.base import StaticMutationRegistry
+from webhook_receiver_conformance.mutations.pipeline import (
+    MutationPipeline,
+    MutationPipelineResult,
+)
+from webhook_receiver_conformance.mutations.raw_ops import RAW_MUTATION_REGISTRATIONS
+from webhook_receiver_conformance.mutations.signature_ops import (
+    SIGNATURE_MUTATION_REGISTRATIONS,
+)
 from webhook_receiver_conformance.scheduler.clocks import RuntimeClock, TransitionTimestamp
 from webhook_receiver_conformance.scheduler.retries import (
     ClassifiedPredecessor,
     RetryDecision,
     RetryPredicate,
 )
+from webhook_receiver_conformance.signatures.base import SignatureHeader, Signer
 
 _TIMEOUT_CODES: Final = frozenset(
     {
@@ -64,6 +77,9 @@ _TIMEOUT_CODES: Final = frozenset(
         AttemptErrorCode.POOL_TIMEOUT,
         AttemptErrorCode.TOTAL_TIMEOUT,
     }
+)
+_RUNTIME_MUTATION_REGISTRY: Final = StaticMutationRegistry(
+    (*RAW_MUTATION_REGISTRATIONS, *SIGNATURE_MUTATION_REGISTRATIONS)
 )
 type RetryDecider = Callable[[ClassifiedPredecessor], RetryDecision]
 type RetryableStatus = Callable[[int], bool]
@@ -109,6 +125,44 @@ class AttemptLifecycleResult:
     terminal_state: AttemptState
     classification: AttemptClassification
     retry_decision: RetryDecision | None
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class PreparedAttemptRequest:
+    """Exact transport command plus secret-free signing and mutation evidence."""
+
+    command: HttpAttemptCommand
+    pipeline: MutationPipelineResult
+
+    def __post_init__(self) -> None:
+        if type(self.command) is not HttpAttemptCommand:
+            raise TypeError("prepared request command must be a HttpAttemptCommand")
+        if type(self.pipeline) is not MutationPipelineResult:
+            raise TypeError("prepared request pipeline must be a MutationPipelineResult")
+        if self.command.body != self.pipeline.body:
+            raise ValueError("prepared transport body differs from pipeline output")
+
+    def __repr__(self) -> str:
+        return (
+            f"{type(self).__name__}("
+            f"body_bytes={len(self.command.body)!r}, "
+            f"header_names={tuple(item.name for item in self.command.headers)!r}, "
+            f"pipeline={self.pipeline!r})"
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RealizedAttemptLifecycleResult:
+    """Durable lifecycle result bound to the exact prepared request."""
+
+    lifecycle: AttemptLifecycleResult
+    prepared: PreparedAttemptRequest
+
+    def __post_init__(self) -> None:
+        if type(self.lifecycle) is not AttemptLifecycleResult:
+            raise TypeError("lifecycle must be an AttemptLifecycleResult")
+        if type(self.prepared) is not PreparedAttemptRequest:
+            raise TypeError("prepared must be a PreparedAttemptRequest")
 
 
 class AttemptLifecycle:
@@ -266,6 +320,36 @@ class AttemptLifecycle:
             retry_decision=decision,
         )
 
+    async def execute_realized(
+        self,
+        context: AttemptRuntimeContext,
+        command: HttpAttemptCommand,
+        recipe: RealizedDeliveryExecution,
+        *,
+        signer: Signer | None,
+        retry_decider: RetryDecider | None = None,
+        retryable_status: RetryableStatus | None = None,
+    ) -> RealizedAttemptLifecycleResult:
+        """Prepare exact signed bytes, then run the normal journal-first lifecycle."""
+        if (
+            context.scenario_id != recipe.scenario_id
+            or context.delivery_id != recipe.delivery_id
+            or context.event_id != recipe.event_id
+            or context.logical_time_ns != recipe.logical_time_ns
+        ):
+            raise ValueError("attempt context does not match its realized execution recipe")
+        prepared = prepare_realized_attempt(command, recipe, signer=signer)
+        lifecycle = await self.execute(
+            context,
+            prepared.command,
+            retry_decider=retry_decider,
+            retryable_status=retryable_status,
+        )
+        return RealizedAttemptLifecycleResult(
+            lifecycle=lifecycle,
+            prepared=prepared,
+        )
+
     async def _durable_live_state(self, context: AttemptRuntimeContext) -> AttemptState:
         """Reload the authoritative phase after executor cancellation checkpoints."""
         inventory = await self._repository.projection_inventory(context.run_id)
@@ -310,6 +394,62 @@ class AttemptLifecycle:
                 request_headers_hash=headers_digest,
             ),
         )
+
+
+def prepare_realized_attempt(
+    command: HttpAttemptCommand,
+    recipe: RealizedDeliveryExecution,
+    *,
+    signer: Signer | None,
+) -> PreparedAttemptRequest:
+    """Apply the manifest-realized live stages and produce the exact wire command."""
+    if type(command) is not HttpAttemptCommand:
+        raise TypeError("command must be a HttpAttemptCommand")
+    if type(recipe) is not RealizedDeliveryExecution:
+        raise TypeError("recipe must be a RealizedDeliveryExecution")
+    if _digest(command.body) != recipe.request_blob:
+        raise ValueError("attempt body does not match the realized request blob")
+    if recipe.signer_name is None:
+        if signer is not None:
+            raise ValueError("unsigned realized delivery cannot receive a signer")
+    elif signer is None:
+        raise ValueError("realized delivery requires its selected signer")
+    if any(header.owner is HeaderOwner.SIGNER for header in command.headers):
+        raise ValueError("base attempt command cannot contain precomputed signer headers")
+
+    input_headers = tuple(
+        SignatureHeader(name=header.name, value=header.value)
+        for header in command.headers
+    )
+    pipeline = MutationPipeline(_RUNTIME_MUTATION_REGISTRY).execute(
+        body=command.body,
+        headers=input_headers,
+        event_id=recipe.event_id,
+        logical_time_ns=recipe.logical_time_ns,
+        media_type=recipe.media_type,
+        signer=signer,
+        mutations=recipe.runtime_mutations,
+    )
+    signer_headers: frozenset[str] = (
+        frozenset() if signer is None else frozenset(signer.owned_headers)
+    )
+    exact_command = HttpAttemptCommand(
+        policy=command.policy,
+        body=pipeline.body,
+        headers=tuple(
+            HttpHeader(
+                name=header.name,
+                value=header.value,
+                owner=(
+                    HeaderOwner.SIGNER
+                    if header.name in signer_headers
+                    else HeaderOwner.USER
+                ),
+            )
+            for header in pipeline.headers
+        ),
+    )
+    return PreparedAttemptRequest(command=exact_command, pipeline=pipeline)
 
 
 def _terminal_reduction(

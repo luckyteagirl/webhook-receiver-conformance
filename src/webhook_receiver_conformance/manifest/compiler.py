@@ -1,5 +1,5 @@
 """Deterministic compiler and atomic materializer for realized run bundles."""
-# ruff: noqa: EM101, INP001, PLR0913, TC003, TRY003, TRY004
+# ruff: noqa: D105, EM101, INP001, PLR0913, TC003, TRY003, TRY004
 
 from __future__ import annotations
 
@@ -24,7 +24,11 @@ from webhook_receiver_conformance.domain.hashing import (
     sha256_digest,
     validate_sha256_digest,
 )
-from webhook_receiver_conformance.domain.identifiers import PlannedIdKind, planned_id
+from webhook_receiver_conformance.domain.identifiers import (
+    PlannedIdKind,
+    planned_id,
+    validate_planned_id,
+)
 from webhook_receiver_conformance.fixtures.blobs import BlobSnapshot, BlobStore
 from webhook_receiver_conformance.fixtures.loader import LoadedFixture, load_fixture
 from webhook_receiver_conformance.manifest.models import (
@@ -36,9 +40,21 @@ from webhook_receiver_conformance.manifest.models import (
     ScenarioPlan,
     validate_blob_entries,
 )
-from webhook_receiver_conformance.mutations.base import MutationStage, RealizedMutation
+from webhook_receiver_conformance.mutations.base import (
+    PIPELINE_STAGE_RANK,
+    MutationStage,
+    RealizedMutation,
+    StaticMutationRegistry,
+    thaw_parameter_object,
+)
 from webhook_receiver_conformance.mutations.pipeline import MutationPipeline
-from webhook_receiver_conformance.mutations.structural import STRUCTURAL_MUTATION_REGISTRY
+from webhook_receiver_conformance.mutations.raw_ops import RAW_MUTATION_REGISTRATIONS
+from webhook_receiver_conformance.mutations.signature_ops import (
+    SIGNATURE_MUTATION_REGISTRATIONS,
+)
+from webhook_receiver_conformance.mutations.structural import (
+    STRUCTURAL_MUTATION_REGISTRATIONS,
+)
 from webhook_receiver_conformance.version import VERSION_METADATA
 
 MANIFEST_FILENAME: Final = "run-manifest.json"
@@ -46,6 +62,17 @@ EFFECTIVE_CONFIG_FILENAME: Final = "effective-configuration.json"
 PREVIEW_FILENAME: Final = "plan-preview.json"
 JITTER_POLICY_VERSION: Final = "retry-jitter-v1"
 _EMPTY_HEADERS_DIGEST: Final = sha256_digest(b"[]")
+_PLANNING_STAGE_MAX_RANK: Final = PIPELINE_STAGE_RANK[MutationStage.RAW_PRE_SIGN]
+_ALL_MUTATION_REGISTRATIONS: Final = (
+    *STRUCTURAL_MUTATION_REGISTRATIONS,
+    *RAW_MUTATION_REGISTRATIONS,
+    *SIGNATURE_MUTATION_REGISTRATIONS,
+)
+_ALL_MUTATION_REGISTRY: Final = StaticMutationRegistry(_ALL_MUTATION_REGISTRATIONS)
+_MUTATION_STAGE_BY_ID: Final = {
+    registration.operator_id: registration.stage
+    for registration in _ALL_MUTATION_REGISTRATIONS
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +84,131 @@ class CompiledRunBundle:
     effective_configuration_bytes: bytes = field(repr=False)
     preview_bytes: bytes = field(repr=False)
     blobs: tuple[BlobSnapshot, ...]
+    realized_execution: tuple[RealizedDeliveryExecution, ...] = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RealizedDeliveryExecution:
+    """Digest-bound execution recipe whose stochastic inputs are already fixed."""
+
+    scenario_id: str
+    delivery_id: str
+    event_id: str
+    logical_time_ns: int
+    request_blob: str
+    media_type: str
+    signer_name: str | None
+    mutations: tuple[RealizedMutation, ...]
+    runtime_mutation_offset: int
+
+    def __post_init__(self) -> None:
+        validate_planned_id(self.scenario_id, expected_kind=PlannedIdKind.SCENARIO)
+        validate_planned_id(self.delivery_id, expected_kind=PlannedIdKind.DELIVERY)
+        validate_planned_id(self.event_id, expected_kind=PlannedIdKind.EVENT)
+        if (
+            type(self.logical_time_ns) is not int
+            or not -((1 << 53) - 1) <= self.logical_time_ns <= (1 << 53) - 1
+        ):
+            raise ValueError("realized execution logical time must be an I-JSON-safe integer")
+        validate_sha256_digest(self.request_blob)
+        if type(self.media_type) is not str or not self.media_type:
+            raise ValueError("realized execution media type must be a nonempty string")
+        if self.signer_name is not None and (
+            type(self.signer_name) is not str or not self.signer_name
+        ):
+            raise ValueError("realized execution signer name must be nonempty or None")
+        if type(self.mutations) is not tuple or any(
+            type(item) is not RealizedMutation for item in self.mutations
+        ):
+            raise TypeError("realized execution mutations must be a tuple")
+        if (
+            type(self.runtime_mutation_offset) is not int
+            or not 0 <= self.runtime_mutation_offset <= len(self.mutations)
+        ):
+            raise ValueError("runtime mutation offset is outside the realized sequence")
+        ranks = tuple(PIPELINE_STAGE_RANK[item.stage] for item in self.mutations)
+        if ranks != tuple(sorted(ranks)):
+            raise ValueError("realized mutations are not in fixed pipeline stage order")
+        if any(
+            rank > _PLANNING_STAGE_MAX_RANK
+            for rank in ranks[: self.runtime_mutation_offset]
+        ) or any(
+            rank <= _PLANNING_STAGE_MAX_RANK
+            for rank in ranks[self.runtime_mutation_offset :]
+        ):
+            raise ValueError("runtime mutation offset does not split planning stages")
+
+    @property
+    def runtime_mutations(self) -> tuple[RealizedMutation, ...]:
+        """Return only stages that must execute around the live signer."""
+        return self.mutations[self.runtime_mutation_offset :]
+
+    def to_wire(self) -> dict[str, object]:
+        """Return the canonical secret-free execution recipe projection."""
+        return {
+            "scenario_id": self.scenario_id,
+            "delivery_id": self.delivery_id,
+            "event_id": self.event_id,
+            "logical_time_ns": self.logical_time_ns,
+            "request_blob": self.request_blob,
+            "media_type": self.media_type,
+            "signer_name": self.signer_name,
+            "runtime_mutation_offset": self.runtime_mutation_offset,
+            "mutations": [
+                {
+                    "operator_id": mutation.operator_id,
+                    "operator_version": mutation.operator_version,
+                    "stage": mutation.stage.value,
+                    "parameters": thaw_parameter_object(mutation.parameters),
+                    "parameters_safe": thaw_parameter_object(mutation.parameters_safe),
+                }
+                for mutation in self.mutations
+            ],
+        }
+
+    @classmethod
+    def from_wire(cls, value: object) -> RealizedDeliveryExecution:
+        """Strictly reconstruct a recipe without invoking a generator."""
+        if type(value) is not dict:
+            raise ValueError("realized execution entry must be an object")
+        wire = cast("dict[str, object]", value)
+        expected = {
+            "scenario_id",
+            "delivery_id",
+            "event_id",
+            "logical_time_ns",
+            "request_blob",
+            "media_type",
+            "signer_name",
+            "runtime_mutation_offset",
+            "mutations",
+        }
+        if set(wire) != expected:
+            raise ValueError("realized execution entry has an invalid field set")
+        mutation_values = wire["mutations"]
+        if type(mutation_values) is not list:
+            raise ValueError("realized execution mutations must be an array")
+        mutations = tuple(
+            _realized_mutation_from_wire(item)
+            for item in cast("list[object]", mutation_values)
+        )
+        signer_name = wire["signer_name"]
+        if signer_name is not None and type(signer_name) is not str:
+            raise ValueError("realized execution signer name is invalid")
+        return cls(
+            scenario_id=_wire_string(wire["scenario_id"], "scenario_id"),
+            delivery_id=_wire_string(wire["delivery_id"], "delivery_id"),
+            event_id=_wire_string(wire["event_id"], "event_id"),
+            logical_time_ns=_wire_integer(wire["logical_time_ns"], "logical_time_ns"),
+            request_blob=_wire_string(wire["request_blob"], "request_blob"),
+            media_type=_wire_string(wire["media_type"], "media_type"),
+            signer_name=signer_name,
+            mutations=mutations,
+            runtime_mutation_offset=_wire_integer(
+                wire["runtime_mutation_offset"],
+                "runtime_mutation_offset",
+            ),
+        )
 
 
 def compile_run_bundle(
@@ -79,14 +231,6 @@ def compile_run_bundle(
     if selected_seed is None:
         raise ValueError("planning requires a normalized non-secret project seed")
     generator = ContextGenerator.from_text_seed(selected_seed)
-    _require_supported_config(config)
-    redacted = _effective_configuration(
-        config,
-        secret_fingerprints or {},
-        selected_seed=selected_seed,
-    )
-    effective_bytes = canonical_json_bytes(cast("dict[str, CanonicalJson]", redacted))
-    configuration_digest = sha256_digest(effective_bytes)
 
     bundle_directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     store = BlobStore(bundle_directory)
@@ -105,6 +249,7 @@ def compile_run_bundle(
         snapshot = store.snapshot(source.body, media_type=source.media_type)
         snapshots[snapshot.sha256] = snapshot
 
+    realized_execution: list[RealizedDeliveryExecution] = []
     scenarios = tuple(
         _compile_scenario(
             scenario,
@@ -114,9 +259,18 @@ def compile_run_bundle(
             fixture_by_id=fixture_by_id,
             store=store,
             snapshots=snapshots,
+            realized_execution=realized_execution,
         )
         for scenario_index, scenario in enumerate(config.scenarios)
     )
+    redacted = _effective_configuration(
+        config,
+        secret_fingerprints or {},
+        selected_seed=selected_seed,
+        realized_execution=tuple(realized_execution),
+    )
+    effective_bytes = canonical_json_bytes(cast("dict[str, CanonicalJson]", redacted))
+    configuration_digest = sha256_digest(effective_bytes)
     parsed_target = urlsplit(config.receiver.url)
     if parsed_target.hostname is None:
         raise ValueError("receiver URL has no authorized host")
@@ -170,6 +324,7 @@ def compile_run_bundle(
         effective_configuration_bytes=effective_bytes + b"\n",
         preview_bytes=preview_bytes,
         blobs=tuple(sorted(snapshots.values(), key=lambda item: item.sha256)),
+        realized_execution=tuple(realized_execution),
     )
     if materialize:
         materialize_run_bundle(result, bundle_directory)
@@ -204,6 +359,51 @@ def load_run_manifest(directory: Path) -> RunManifest:
         )
         store.verify(snapshot)
     return manifest
+
+
+def load_realized_execution(
+    manifest: RunManifest,
+    effective_configuration_bytes: bytes,
+) -> tuple[RealizedDeliveryExecution, ...]:
+    """Load digest-bound execution recipes without source config or randomness."""
+    if type(manifest) is not RunManifest:
+        raise TypeError("manifest must be a RunManifest")
+    effective = _parse_effective_configuration(effective_configuration_bytes)
+    canonical = canonical_json_bytes(cast("dict[str, CanonicalJson]", effective))
+    if sha256_digest(canonical) != manifest.configuration_digest:
+        raise ValueError("effective configuration digest does not match the manifest")
+    raw_entries = effective.get("realized_execution")
+    if type(raw_entries) is not list:
+        raise ValueError("effective configuration lacks realized execution recipes")
+    recipes = tuple(
+        RealizedDeliveryExecution.from_wire(item)
+        for item in cast("list[object]", raw_entries)
+    )
+    planned = {
+        delivery.delivery_id: (scenario.scenario_id, delivery)
+        for scenario in manifest.scenarios
+        for delivery in scenario.deliveries
+    }
+    if len(recipes) != len(planned) or len({item.delivery_id for item in recipes}) != len(
+        recipes
+    ):
+        raise ValueError("realized execution recipes do not match manifest deliveries")
+    for recipe in recipes:
+        expected = planned.get(recipe.delivery_id)
+        if expected is None:
+            raise ValueError("realized execution references an unknown delivery")
+        scenario_id, delivery = expected
+        if (
+            recipe.scenario_id != scenario_id
+            or recipe.event_id != delivery.event_id
+            or recipe.logical_time_ns != delivery.logical_time_ns
+            or any(
+                attempt.request_blob != recipe.request_blob
+                for attempt in delivery.attempt_plan
+            )
+        ):
+            raise ValueError("realized execution conflicts with its manifest delivery")
+    return recipes
 
 
 def manifest_relative_path(path: Path, *, project_root: Path) -> str:
@@ -245,6 +445,7 @@ def _compile_scenario(
     fixture_by_id: Mapping[str, config_models.FixtureConfig],
     store: BlobStore,
     snapshots: dict[str, BlobSnapshot],
+    realized_execution: list[RealizedDeliveryExecution],
 ) -> ScenarioPlan:
     scenario_key = (str(scenario_index), scenario.id)
     scenario_id = planned_id(generator, PlannedIdKind.SCENARIO, scenario_key)
@@ -290,7 +491,12 @@ def _compile_scenario(
             source_event = next(item for item in scenario.events if item.id == action.event)
             fixture = fixture_by_id[source_event.fixture]
             source = loaded[source_event.fixture]
-            body = _realize_structural_mutations(source.body, action.mutations, fixture)
+            mutations = _realize_mutations(action.mutations, fixture)
+            body, runtime_mutation_offset = _realize_planning_mutations(
+                source.body,
+                mutations,
+                fixture,
+            )
             request = store.snapshot(body, media_type=source.media_type)
             snapshots[request.sha256] = request
             attempts = _attempt_templates(
@@ -309,6 +515,19 @@ def _compile_scenario(
                     ordinal=ordinal,
                     concurrency_group=action.concurrency_group,
                     attempt_plan=attempts,
+                )
+            )
+            realized_execution.append(
+                RealizedDeliveryExecution(
+                    scenario_id=scenario_id,
+                    delivery_id=delivery_id,
+                    event_id=event_ids[action.event],
+                    logical_time_ns=logical_time_ns,
+                    request_blob=request.sha256,
+                    media_type=source.media_type,
+                    signer_name=action.signer,
+                    mutations=mutations,
+                    runtime_mutation_offset=runtime_mutation_offset,
                 )
             )
             ordinal += 1
@@ -368,49 +587,53 @@ def _attempt_templates(
     return tuple(result)
 
 
-def _realize_structural_mutations(
-    body: bytes,
+def _realize_mutations(
     mutations: tuple[config_models.MutationConfig, ...] | None,
     fixture: config_models.FixtureConfig,
-) -> bytes:
-    if not mutations:
-        return body
+) -> tuple[RealizedMutation, ...]:
     realized = tuple(
-        lowered
-        for mutation in mutations
-        if (lowered := _lower_structural_mutation(mutation, fixture)) is not None
+        _lower_mutation(mutation, fixture) for mutation in (mutations or ())
     )
-    if not realized:
-        return body
-    return (
-        MutationPipeline(STRUCTURAL_MUTATION_REGISTRY)
-        .execute(
-            body=body,
-            headers=(),
-            event_id="planning-event",
-            logical_time_ns=0,
-            media_type=fixture.media_type,
-            signer=None,
-            mutations=realized,
-        )
-        .body
-    )
+    ranks = tuple(PIPELINE_STAGE_RANK[item.stage] for item in realized)
+    if ranks != tuple(sorted(ranks)):
+        raise ValueError("configured mutations are not in fixed pipeline stage order")
+    return realized
 
 
-def _lower_structural_mutation(
+def _realize_planning_mutations(
+    body: bytes,
+    mutations: tuple[RealizedMutation, ...],
+    fixture: config_models.FixtureConfig,
+) -> tuple[bytes, int]:
+    if not mutations:
+        return body, 0
+    runtime_offset = next(
+        (
+            index
+            for index, mutation in enumerate(mutations)
+            if PIPELINE_STAGE_RANK[mutation.stage] > _PLANNING_STAGE_MAX_RANK
+        ),
+        len(mutations),
+    )
+    planning_mutations = mutations[:runtime_offset]
+    if not planning_mutations:
+        return body, 0
+    result = MutationPipeline(_ALL_MUTATION_REGISTRY).execute(
+        body=body,
+        headers=(),
+        event_id="planning-event",
+        logical_time_ns=0,
+        media_type=fixture.media_type,
+        signer=None,
+        mutations=planning_mutations,
+    )
+    return result.body, runtime_offset
+
+
+def _lower_mutation(
     mutation: config_models.MutationConfig,
     fixture: config_models.FixtureConfig,
-) -> RealizedMutation | None:
-    structural_types = (
-        config_models.RemoveJsonPointerMutation,
-        config_models.ReplaceJsonValueMutation,
-        config_models.ReplaceJsonTypeMutation,
-        config_models.AddJsonFieldMutation,
-        config_models.ChangeEventIdFieldMutation,
-        config_models.ChangeEventTypeFieldMutation,
-    )
-    if not isinstance(mutation, structural_types):
-        return None
+) -> RealizedMutation:
     parameters = cast(
         "dict[str, object]",
         mutation.model_dump(mode="json", exclude={"type"}, exclude_none=True),
@@ -419,42 +642,62 @@ def _lower_structural_mutation(
         parameters["pointer"] = fixture.event_id_pointer
     elif isinstance(mutation, config_models.ChangeEventTypeFieldMutation):
         parameters["pointer"] = fixture.event_type_pointer
+    elif isinstance(mutation, config_models.StaleSignatureTimestampMutation):
+        parameters = cast("dict[str, object]", {"age_ns": mutation.age.nanoseconds})
+    stage = _MUTATION_STAGE_BY_ID.get(mutation.type)
+    if stage is None:
+        message = f"unregistered mutation operator: {mutation.type}"
+        raise ValueError(message)
     return RealizedMutation(
         operator_id=mutation.type,
         operator_version=1,
-        stage=MutationStage.STRUCTURAL,
+        stage=stage,
         parameters=parameters,
         parameters_safe=parameters,
     )
 
 
-def _require_supported_config(config: config_models.ProjectConfig) -> None:
-    structural_types = (
-        config_models.RemoveJsonPointerMutation,
-        config_models.ReplaceJsonValueMutation,
-        config_models.ReplaceJsonTypeMutation,
-        config_models.AddJsonFieldMutation,
-        config_models.ChangeEventIdFieldMutation,
-        config_models.ChangeEventTypeFieldMutation,
+def _realized_mutation_from_wire(value: object) -> RealizedMutation:
+    if type(value) is not dict:
+        raise ValueError("realized mutation must be an object")
+    wire = cast("dict[str, object]", value)
+    if set(wire) != {
+        "operator_id",
+        "operator_version",
+        "stage",
+        "parameters",
+        "parameters_safe",
+    }:
+        raise ValueError("realized mutation has an invalid field set")
+    parameters = wire["parameters"]
+    parameters_safe = wire["parameters_safe"]
+    if type(parameters) is not dict or type(parameters_safe) is not dict:
+        raise ValueError("realized mutation parameters must be objects")
+    try:
+        stage = MutationStage(_wire_string(wire["stage"], "stage"))
+    except ValueError:
+        raise ValueError("realized mutation stage is unsupported") from None
+    return RealizedMutation(
+        operator_id=_wire_string(wire["operator_id"], "operator_id"),
+        operator_version=_wire_integer(wire["operator_version"], "operator_version"),
+        stage=stage,
+        parameters=cast("dict[str, object]", parameters),
+        parameters_safe=cast("dict[str, object]", parameters_safe),
     )
-    for scenario in config.scenarios:
-        for step in scenario.steps:
-            if not isinstance(step, config_models.DeliverStep):
-                continue
-            if step.deliver.signer is not None:
-                raise ValueError(
-                    "manifest schema cannot represent a selected signer; planning is unsupported"
-                )
-            unsupported = tuple(
-                mutation.type
-                for mutation in (step.deliver.mutations or ())
-                if not isinstance(mutation, structural_types)
-            )
-            if unsupported:
-                raise ValueError(
-                    "manifest schema cannot represent non-structural mutations: "
-                    + ", ".join(unsupported)
-                )
+
+
+def _wire_string(value: object, field_name: str) -> str:
+    if type(value) is not str or not value:
+        message = f"realized execution {field_name} must be a nonempty string"
+        raise ValueError(message)
+    return value
+
+
+def _wire_integer(value: object, field_name: str) -> int:
+    if type(value) is not int:
+        message = f"realized execution {field_name} must be an integer"
+        raise ValueError(message)
+    return value
 
 
 def _compile_assertion(
@@ -483,6 +726,7 @@ def _effective_configuration(
     fingerprints: Mapping[str, str],
     *,
     selected_seed: str,
+    realized_execution: tuple[RealizedDeliveryExecution, ...],
 ) -> dict[str, object]:
     wire = cast("dict[str, object]", config.model_dump(mode="json", exclude_none=True))
     project = cast("dict[str, object]", wire["project"])
@@ -514,6 +758,7 @@ def _effective_configuration(
             observer_config.token,
             fingerprints,
         )
+    wire["realized_execution"] = [item.to_wire() for item in realized_execution]
     return wire
 
 
@@ -678,9 +923,11 @@ def _utc_now() -> str:
 
 __all__ = [
     "CompiledRunBundle",
+    "RealizedDeliveryExecution",
     "compile_manifest",
     "compile_run_bundle",
     "generate_preview",
+    "load_realized_execution",
     "load_run_manifest",
     "manifest_relative_path",
     "materialize_run_bundle",

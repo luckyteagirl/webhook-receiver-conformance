@@ -1,5 +1,5 @@
 """Focused conformance tests for the realized run-bundle compiler."""
-# ruff: noqa: INP001
+# ruff: noqa: INP001, PLR2004
 
 from __future__ import annotations
 
@@ -95,22 +95,23 @@ def test_vt_sched_011_persists_normalized_seed_hash_hex(tmp_path: Path) -> None:
     )
 
 
-def test_selected_signer_is_rejected_instead_of_silently_miscompiled(
+def test_selected_signer_is_bound_to_digest_checked_realized_execution(
     tmp_path: Path,
 ) -> None:
     config, project_root = _config()
-    with pytest.raises(ValueError, match="selected signer"):
-        compile_run_bundle(
-            config,
-            project_root=project_root,
-            bundle_directory=tmp_path,
-            seed=_SEED,
-            created_at=_CREATED_AT,
-            secret_fingerprints={},
-        )
+    bundle = compile_run_bundle(
+        config,
+        project_root=project_root,
+        bundle_directory=tmp_path,
+        seed=_SEED,
+        created_at=_CREATED_AT,
+        secret_fingerprints=_SECRET_LOOKUP,
+    )
+    assert {item.signer_name for item in bundle.realized_execution} == {"test_hmac"}
+    assert b"WEBHOOK_TEST_SECRET" not in bundle.effective_configuration_bytes
 
 
-def test_non_structural_mutation_is_rejected_instead_of_ignored(tmp_path: Path) -> None:
+def test_raw_pre_sign_mutation_is_realized_into_request_blob(tmp_path: Path) -> None:
     config, project_root = _config()
     step = cast("DeliverStep", config.scenarios[0].steps[0])
     action = step.deliver.model_copy(
@@ -128,15 +129,19 @@ def test_non_structural_mutation_is_rejected_instead_of_ignored(tmp_path: Path) 
         }
     )
     changed = config.model_copy(update={"scenarios": (scenario,)})
-    with pytest.raises(ValueError, match="non-structural mutations"):
-        compile_run_bundle(
-            changed,
-            project_root=project_root,
-            bundle_directory=tmp_path,
-            seed=_SEED,
-            created_at=_CREATED_AT,
-            secret_fingerprints=_SECRET_LOOKUP,
-        )
+    bundle = compile_run_bundle(
+        changed,
+        project_root=project_root,
+        bundle_directory=tmp_path,
+        seed=_SEED,
+        created_at=_CREATED_AT,
+        secret_fingerprints=_SECRET_LOOKUP,
+    )
+    recipe = bundle.realized_execution[0]
+    assert recipe.runtime_mutation_offset == 1
+    assert recipe.runtime_mutations == ()
+    snapshot = next(item for item in bundle.blobs if item.sha256 == recipe.request_blob)
+    assert len(snapshot.path.read_bytes()) == 8
 
 
 def test_replanning_preserves_ids_schedules_and_manifest(tmp_path: Path) -> None:
