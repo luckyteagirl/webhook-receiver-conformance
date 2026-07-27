@@ -44,6 +44,14 @@ class AttemptPhase(StrEnum):
     CLOSE = "close"
 
 
+class AttemptProgressCheckpoint(StrEnum):
+    """Closed nonsecret checkpoints awaited before subsequent transport effects."""
+
+    CONNECTION_ATTEMPT_STARTED = "connection_attempt_started"
+    REQUEST_SEND_STARTED = "request_send_started"
+    AWAITING_RESPONSE = "awaiting_response"
+
+
 class AttemptErrorCode(StrEnum):
     """Closed IF-HTTP error vocabulary plus bounded input failures."""
 

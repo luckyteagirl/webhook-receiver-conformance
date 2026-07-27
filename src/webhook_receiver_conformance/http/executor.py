@@ -22,6 +22,7 @@ from webhook_receiver_conformance.http.evidence import (
     AttemptErrorCode,
     AttemptOutcome,
     AttemptPhase,
+    AttemptProgressCheckpoint,
     AttemptResult,
     AttemptTimings,
     HeaderEvidence,
@@ -98,6 +99,7 @@ _CLIENT_OWNED_HEADERS = frozenset(
 _NO_BODY_STATUSES = frozenset({204, 205, 304})
 
 type ResponseRedactor = Callable[[bytes], bytes]
+type AttemptProgressSink = Callable[[AttemptProgressCheckpoint], Awaitable[None]]
 
 
 class HttpInputErrorCode(StrEnum):
@@ -118,6 +120,10 @@ class HttpInputError(ValueError):
     def __init__(self, code: HttpInputErrorCode, message: str) -> None:
         self.code = code
         super().__init__(message)
+
+
+class HttpProgressError(RuntimeError):
+    """A sanitized progress-sink failure that stopped later transport effects."""
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -427,8 +433,16 @@ class HttpAttemptExecutor:
             acquisitions=self._acquisitions,
         )
 
-    async def execute(self, command: HttpAttemptCommand) -> AttemptResult:
+    async def execute(
+        self,
+        command: HttpAttemptCommand,
+        *,
+        progress_sink: AttemptProgressSink | None = None,
+    ) -> AttemptResult:
         """Dispatch exactly one physical attempt through an HTTPX one-shot shell."""
+        if progress_sink is not None and not callable(progress_sink):
+            message = "progress_sink must be an async callable or None"
+            raise TypeError(message)
         wire = _build_wire_request(command, limits=self._limits)
         started_ns = self._clock.monotonic_now_ns()
         progress = _AttemptProgress(
@@ -439,7 +453,12 @@ class HttpAttemptExecutor:
         token = object()
         transport = _PinnedHttpxTransport(
             command_token=token,
-            execute=lambda: self._execute_with_slot(command, wire, progress),
+            execute=lambda: self._execute_with_slot(
+                command,
+                wire,
+                progress,
+                progress_sink,
+            ),
         )
         request = httpx.Request(
             "POST",
@@ -478,6 +497,7 @@ class HttpAttemptExecutor:
         command: HttpAttemptCommand,
         wire: _WireRequest,
         progress: _AttemptProgress,
+        progress_sink: AttemptProgressSink | None,
     ) -> AttemptResult:
         acquired = False
         try:
@@ -497,7 +517,12 @@ class HttpAttemptExecutor:
             self._active += 1
             self._acquisitions += 1
             self._peak = max(self._peak, self._active)
-            return await self._execute_connected(command, wire, progress)
+            return await self._execute_connected(
+                command,
+                wire,
+                progress,
+                progress_sink,
+            )
         finally:
             if acquired:
                 self._active -= 1
@@ -508,9 +533,14 @@ class HttpAttemptExecutor:
         command: HttpAttemptCommand,
         wire: _WireRequest,
         progress: _AttemptProgress,
+        progress_sink: AttemptProgressSink | None,
     ) -> AttemptResult:
         progress.phase = AttemptPhase.CONNECT
         progress.connect_started_ns = self._clock.monotonic_now_ns()
+        await _checkpoint(
+            progress_sink,
+            AttemptProgressCheckpoint.CONNECTION_ATTEMPT_STARTED,
+        )
         try:
             connection = await self._dialer.dial(
                 command.policy,
@@ -556,18 +586,33 @@ class HttpAttemptExecutor:
             peer_family=connection.evidence.peer_family,
             tls=connection.plan.ssl_context is not None,
         )
-        return await self._use_connection(connection, wire, progress)
+        return await self._use_connection(
+            connection,
+            wire,
+            progress,
+            progress_sink,
+        )
 
     async def _use_connection(
         self,
         connection: PinnedConnection,
         wire: _WireRequest,
         progress: _AttemptProgress,
+        progress_sink: AttemptProgressSink | None,
     ) -> AttemptResult:
         try:
-            write_failure = await self._send_request(connection, wire, progress)
+            write_failure = await self._send_request(
+                connection,
+                wire,
+                progress,
+                progress_sink,
+            )
             if write_failure is not None:
                 return write_failure
+            await _checkpoint(
+                progress_sink,
+                AttemptProgressCheckpoint.AWAITING_RESPONSE,
+            )
             return await self._read_response(connection, progress)
         finally:
             progress.phase = AttemptPhase.CLOSE
@@ -581,9 +626,14 @@ class HttpAttemptExecutor:
         connection: PinnedConnection,
         wire: _WireRequest,
         progress: _AttemptProgress,
+        progress_sink: AttemptProgressSink | None,
     ) -> AttemptResult | None:
         progress.phase = AttemptPhase.WRITE
         progress.send_started_ns = self._clock.monotonic_now_ns()
+        await _checkpoint(
+            progress_sink,
+            AttemptProgressCheckpoint.REQUEST_SEND_STARTED,
+        )
         try:
             with anyio.fail_after(_seconds(self._timeouts.write_ns)):
                 progress.request_bytes_may_have_left = True
@@ -760,6 +810,21 @@ class HttpAttemptExecutor:
             timings=timings,
             request_bytes_may_have_left=progress.request_bytes_may_have_left,
         )
+
+
+async def _checkpoint(
+    sink: AttemptProgressSink | None,
+    checkpoint: AttemptProgressCheckpoint,
+) -> None:
+    if sink is None:
+        return
+    try:
+        await sink(checkpoint)
+    except anyio.get_cancelled_exc_class():
+        raise
+    except Exception:
+        message = f"progress sink failed at {checkpoint.value}"
+        raise HttpProgressError(message) from None
 
 
 def _build_wire_request(

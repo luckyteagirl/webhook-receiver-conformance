@@ -9,11 +9,13 @@ from typing import TYPE_CHECKING
 
 import anyio
 import pytest
+from anyio.lowlevel import checkpoint as yield_checkpoint
 
 from webhook_receiver_conformance.config.models import ReceiverConfig
 from webhook_receiver_conformance.http.evidence import (
     AttemptErrorCode,
     AttemptOutcome,
+    AttemptProgressCheckpoint,
     AttemptResult,
     HeaderOwner,
 )
@@ -25,6 +27,7 @@ from webhook_receiver_conformance.http.executor import (
     HttpInputError,
     HttpInputErrorCode,
     HttpLimits,
+    HttpProgressError,
     HttpTimeouts,
 )
 from webhook_receiver_conformance.network.dialer import PinnedDestinationDialer
@@ -96,12 +99,15 @@ class ScriptedStream(ConnectedByteStream):
     sent: list[bytes] = field(default_factory=list[bytes])
     receive_calls: int = 0
     closed: bool = False
+    trace: list[str] | None = None
 
     @property
     def peer_address(self) -> PeerAddress:
         return self.peer
 
     async def send(self, item: bytes) -> None:
+        if self.trace is not None:
+            self.trace.append("send")
         if self.send_delay:
             await anyio.sleep(self.send_delay)
         if self.fail_send:
@@ -110,6 +116,8 @@ class ScriptedStream(ConnectedByteStream):
         self.sent.append(item)
 
     async def receive(self, max_bytes: int = 65_536) -> bytes:
+        if self.trace is not None:
+            self.trace.append("receive")
         self.receive_calls += 1
         delay = self.receive_delays.pop(0) if self.receive_delays else self.receive_delay
         if delay:
@@ -126,6 +134,8 @@ class ScriptedStream(ConnectedByteStream):
         return None
 
     async def aclose(self) -> None:
+        if self.trace is not None:
+            self.trace.append("close")
         self.closed = True
 
 
@@ -142,8 +152,11 @@ class ScriptedConnector(Connector):
     calls: int = 0
     streams: list[ScriptedStream] = field(default_factory=list[ScriptedStream])
     connected: anyio.Event = field(default_factory=anyio.Event)
+    trace: list[str] | None = None
 
     async def connect(self, plan: ConnectionPlan) -> ScriptedStream:
+        if self.trace is not None:
+            self.trace.append("dial")
         self.calls += 1
         if self.connect_delay:
             await anyio.sleep(self.connect_delay)
@@ -159,6 +172,7 @@ class ScriptedConnector(Connector):
             receive_delays=list(self.receive_delays),
             send_delay=self.send_delay,
             fail_send=self.fail_send,
+            trace=self.trace,
         )
         self.streams.append(stream)
         self.connected.set()
@@ -233,6 +247,89 @@ async def test_exact_post_bytes_and_value_free_header_ownership() -> None:
     assert "signature-secret" not in repr(result)
     assert body.decode() not in repr(command)
     assert connector.streams[0].closed
+
+
+@pytest.mark.anyio
+async def test_progress_checkpoints_complete_before_each_transport_effect() -> None:
+    trace: list[str] = []
+    connector = ScriptedConnector(
+        b"HTTP/1.1 204 No Content\r\n\r\n",
+        trace=trace,
+    )
+
+    async def sink(checkpoint: AttemptProgressCheckpoint) -> None:
+        trace.append(f"{checkpoint.value}:begin")
+        await yield_checkpoint()
+        trace.append(f"{checkpoint.value}:complete")
+
+    result = await _executor(connector).execute(
+        HttpAttemptCommand(policy=_policy(), body=b"nonsecret"),
+        progress_sink=sink,
+    )
+    assert result.outcome is AttemptOutcome.RESPONSE
+    assert trace.index("connection_attempt_started:complete") < trace.index("dial")
+    assert trace.index("request_send_started:complete") < trace.index("send")
+    assert trace.index("awaiting_response:complete") < trace.index("receive")
+    assert trace[-1] == "close"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "target",
+    list(AttemptProgressCheckpoint),
+)
+async def test_progress_failure_stops_later_io_and_closes_connection(
+    target: AttemptProgressCheckpoint,
+) -> None:
+    canary = "sink-secret-canary"
+    connector = ScriptedConnector(b"HTTP/1.1 204 No Content\r\n\r\n")
+
+    async def sink(checkpoint: AttemptProgressCheckpoint) -> None:
+        if checkpoint is target:
+            raise RuntimeError(canary)
+
+    with pytest.raises(HttpProgressError) as captured:
+        await _executor(connector).execute(
+            HttpAttemptCommand(policy=_policy(), body=b"body-secret"),
+            progress_sink=sink,
+        )
+    assert canary not in str(captured.value)
+    assert "body-secret" not in str(captured.value)
+    assert repr(target) in {
+        "<AttemptProgressCheckpoint.CONNECTION_ATTEMPT_STARTED: 'connection_attempt_started'>",
+        "<AttemptProgressCheckpoint.REQUEST_SEND_STARTED: 'request_send_started'>",
+        "<AttemptProgressCheckpoint.AWAITING_RESPONSE: 'awaiting_response'>",
+    }
+    if target is AttemptProgressCheckpoint.CONNECTION_ATTEMPT_STARTED:
+        assert connector.calls == 0
+        return
+    stream = connector.streams[0]
+    assert stream.closed
+    if target is AttemptProgressCheckpoint.REQUEST_SEND_STARTED:
+        assert stream.sent == []
+        assert stream.receive_calls == 0
+    else:
+        assert stream.sent
+        assert stream.receive_calls == 0
+
+
+@pytest.mark.anyio
+async def test_progress_cancellation_before_first_send_closes_without_io() -> None:
+    connector = ScriptedConnector(b"HTTP/1.1 204 No Content\r\n\r\n")
+
+    async def sink(checkpoint: AttemptProgressCheckpoint) -> None:
+        if checkpoint is AttemptProgressCheckpoint.REQUEST_SEND_STARTED:
+            raise anyio.get_cancelled_exc_class()
+
+    with pytest.raises(anyio.get_cancelled_exc_class()):
+        await _executor(connector).execute(
+            HttpAttemptCommand(policy=_policy(), body=b"secret"),
+            progress_sink=sink,
+        )
+    stream = connector.streams[0]
+    assert stream.sent == []
+    assert stream.receive_calls == 0
+    assert stream.closed
 
 
 @pytest.mark.anyio
