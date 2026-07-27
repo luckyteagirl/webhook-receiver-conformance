@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "profile": "stripe-v1",
+  "adapter_version": "v1",
+  "template_version": "stripe-v1-timestamp-dot-body-v1",
+  "compatibility_review": {
+    "status": "approved",
+    "contract": "SIG-014",
+    "marker": "stripe-v1-v1-reviewed-2026-07-27"
+  },
+  "key_fingerprints": [
+    "sha256:42f5259ac8a7fe0efc8558d9cfd5ea945ba0b172b08d78d80889a277534779cc",
+    "sha256:9c050ed6a5c03b829d26f9ee3491284f0a288a51434b64ac370f8694e89d9fc1"
+  ],
+  "vectors": [
+    {
+      "name": "ascii-json",
+      "event_id": "evt_ascii",
+      "logical_time_ns": 1700000000123456789,
+      "timestamp_seconds": 1700000000,
+      "body_base64": "eyJpZCI6ImV2dF8xIiwib2siOnRydWV9",
+      "body_sha256": "sha256:c3f5720e65f32b95e0ac4ab05f966b0c66704900b325965d8842b6d8eafc27bf",
+      "covered_bytes_base64": "MTcwMDAwMDAwMC57ImlkIjoiZXZ0XzEiLCJvayI6dHJ1ZX0=",
+      "covered_bytes_sha256": "sha256:902f7dd11dd96b52f9743bd16fc11c04d1e43bda84cc6eafef25f9c1baf0aac2",
+      "primary_signature": "4baa0848f825cb0ac3bb399a74627fed469f817c39cce6dc8c379ee6bbe24675",
+      "rotation_signature": "057fa4b1965bdd9651e016d75b9d59ef33f8309cfb57427836eb0c1963a14103",
+      "single_header": "t=1700000000,v1=4baa0848f825cb0ac3bb399a74627fed469f817c39cce6dc8c379ee6bbe24675",
+      "rotation_header": "t=1700000000,v1=4baa0848f825cb0ac3bb399a74627fed469f817c39cce6dc8c379ee6bbe24675,v1=057fa4b1965bdd9651e016d75b9d59ef33f8309cfb57427836eb0c1963a14103"
+    },
+    {
+      "name": "utf8-json",
+      "event_id": "evt_utf8",
+      "logical_time_ns": 1700000001999999999,
+      "timestamp_seconds": 1700000001,
+      "body_base64": "eyJtZXNzYWdlIjoic25vd21hbiDimIMifQ==",
+      "body_sha256": "sha256:b703ad4046816246125f4c30bdeba8ee8fec539588d65037e01d75e3a0b6d6b8",
+      "covered_bytes_base64": "MTcwMDAwMDAwMS57Im1lc3NhZ2UiOiJzbm93bWFuIOKYgyJ9",
+      "covered_bytes_sha256": "sha256:9f6d8fed491e4a691cf0039abe128823c1f3dbdb970db38f4b79e7a25d444405",
+      "primary_signature": "4538d151e535777039f08e315330cacadaa6d66eb195da5d6550b88818057b1c",
+      "rotation_signature": "39d9727214c8f2e4eee295827b51f76dadccc3bbb3e3a245e49a0541eb770435",
+      "single_header": "t=1700000001,v1=4538d151e535777039f08e315330cacadaa6d66eb195da5d6550b88818057b1c",
+      "rotation_header": "t=1700000001,v1=4538d151e535777039f08e315330cacadaa6d66eb195da5d6550b88818057b1c,v1=39d9727214c8f2e4eee295827b51f76dadccc3bbb3e3a245e49a0541eb770435"
+    },
+    {
+      "name": "binary-exact",
+      "event_id": "evt_binary",
+      "logical_time_ns": 0,
+      "timestamp_seconds": 0,
+      "body_base64": "AP9yYXcNCg==",
+      "body_sha256": "sha256:45422708565e09b1da4f527acba9c0185b412ba13ed51f5045adb905be631c75",
+      "covered_bytes_base64": "MC4A/3Jhdw0K",
+      "covered_bytes_sha256": "sha256:bb093fe3e1b6fff4de21f3f30b8fc501d3135184ee9547b595b8ca3c3458c591",
+      "primary_signature": "1d7dff87c8933f61de4847de88d0d9940264c648965b7961f756d78bfc5e73b8",
+      "rotation_signature": "6e986f7fc54de9435f38ba8f1cecf5e6c14559929d894aeae81407ffaf6efc97",
+      "single_header": "t=0,v1=1d7dff87c8933f61de4847de88d0d9940264c648965b7961f756d78bfc5e73b8",
+      "rotation_header": "t=0,v1=1d7dff87c8933f61de4847de88d0d9940264c648965b7961f756d78bfc5e73b8,v1=6e986f7fc54de9435f38ba8f1cecf5e6c14559929d894aeae81407ffaf6efc97"
+    }
+  ]
+}
