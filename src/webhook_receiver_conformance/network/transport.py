@@ -11,6 +11,7 @@ from ipaddress import ip_address
 from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 import anyio
+import httpx
 from anyio.abc import ByteStream, SocketAttribute
 
 if TYPE_CHECKING:
@@ -175,7 +176,7 @@ class DefaultTLSContextProvider:
         if type(server_hostname) is not str or not server_hostname:
             message = "TLS server hostname must be nonempty"
             raise ValueError(message)
-        context = ssl.create_default_context(purpose=ssl.Purpose.SERVER_AUTH)
+        context = httpx.create_ssl_context(verify=True, trust_env=False)
         context.check_hostname = True
         context.verify_mode = ssl.CERT_REQUIRED
         return context

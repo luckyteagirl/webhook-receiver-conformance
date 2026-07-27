@@ -36,6 +36,7 @@ from webhook_receiver_conformance.network.transport import (
     ConnectedByteStream,
     ConnectionPlan,
     Connector,
+    DefaultTLSContextProvider,
     PeerAddress,
     Resolver,
     SocketFamily,
@@ -59,6 +60,18 @@ type GetaddrinfoRecord = tuple[
     str,
     tuple[str, int],
 ]
+
+
+def test_default_tls_context_ignores_ambient_certificate_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SSL_CERT_FILE", "ambient-certificate-file-must-not-be-read.pem")
+    monkeypatch.setenv("SSL_CERT_DIR", "ambient-certificate-directory-must-not-be-read")
+
+    context = DefaultTLSContextProvider().create("receiver.test")
+
+    assert context.check_hostname
+    assert context.verify_mode is ssl.CERT_REQUIRED
 
 
 def _policy(
