@@ -936,7 +936,7 @@ def _require_valid_json(
     try:
         decoded = body.decode("utf-8")
         json.loads(decoded, parse_constant=_reject_non_json_constant)
-    except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError):
         raise MutationError.not_applicable(
             code,
             message,

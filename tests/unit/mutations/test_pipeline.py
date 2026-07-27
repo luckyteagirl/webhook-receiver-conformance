@@ -520,6 +520,28 @@ def test_structural_preflight_rejects_non_rfc_json_constants(constant: bytes) ->
     assert calls == []
 
 
+def test_structural_preflight_classifies_recursion_exhausting_json() -> None:
+    calls: list[str] = []
+    registration = _registration(
+        "json-replace",
+        MutationStage.STRUCTURAL,
+        BodyFake(calls, "structural", lambda body: body),
+        changes_body=True,
+        requires_valid_json=True,
+    )
+    body = (b"[" * 10_000) + b"0" + (b"]" * 10_000)
+
+    with pytest.raises(MutationError) as caught:
+        _run(
+            StaticMutationRegistry((registration,)),
+            (_realized("json-replace", MutationStage.STRUCTURAL),),
+            body=body,
+        )
+
+    assert caught.value.diagnostic.code == "MUT_STRUCTURAL_INPUT_INVALID_JSON"
+    assert calls == []
+
+
 def test_conflicting_signature_removals_fail_before_signing() -> None:
     calls: list[str] = []
     first = _registration(
