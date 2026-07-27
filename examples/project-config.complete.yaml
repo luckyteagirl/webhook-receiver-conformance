@@ -10,7 +10,12 @@ receiver:
   allowed_ports:
   - 8000
   public_challenge_path: /.well-known/webhook-conformance-challenge
-  tls_verify: true
+  timeouts:
+    connect: 5s
+    write: 5s
+    read: 5s
+    pool: 5s
+    total: 30s
 fixtures:
 - id: payment_succeeded
   path: fixtures/payment_succeeded.json
@@ -41,10 +46,10 @@ observers:
     timeout: 2s
     environment_allowlist:
     - TEST_DATABASE_URL
+lifecycles: {}
 clock:
   mode: scaled
-  scale_numerator: 1
-  scale_denominator: 100
+  scale: "0.01"
   minimum_physical_wait: 1ms
 limits:
   max_events: 100

@@ -48,7 +48,8 @@
       "type": "object",
       "required": [
         "url",
-        "target_profile"
+        "target_profile",
+        "timeouts"
       ],
       "properties": {
         "url": {
@@ -88,9 +89,64 @@
           "pattern": "^/[^\\r\\n]*$",
           "default": "/.well-known/webhook-conformance-challenge"
         },
-        "tls_verify": {
-          "type": "boolean",
-          "default": true
+        "test_ca_file": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "description": "Optional project-confined CA bundle path. TLS verification cannot be disabled."
+        },
+        "timeouts": {
+          "type": "object",
+          "required": [
+            "connect",
+            "write",
+            "read",
+            "pool",
+            "total"
+          ],
+          "properties": {
+            "connect": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/positive_duration"
+                }
+              ],
+              "default": "5s"
+            },
+            "write": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/positive_duration"
+                }
+              ],
+              "default": "5s"
+            },
+            "read": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/positive_duration"
+                }
+              ],
+              "default": "5s"
+            },
+            "pool": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/positive_duration"
+                }
+              ],
+              "default": "5s"
+            },
+            "total": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/positive_duration"
+                }
+              ],
+              "default": "30s"
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
@@ -160,9 +216,7 @@
             "$ref": "#/$defs/secret_ref"
           },
           "header_name": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 128
+            "$ref": "#/$defs/configured_header_name"
           },
           "replay_window": {
             "$ref": "#/$defs/duration"
@@ -249,6 +303,17 @@
         ]
       }
     },
+    "lifecycles": {
+      "type": "object",
+      "maxProperties": 16,
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/lifecycle_profile"
+      },
+      "default": {}
+    },
     "clock": {
       "type": "object",
       "required": [
@@ -261,22 +326,55 @@
             "scaled"
           ]
         },
-        "scale_numerator": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 1000000,
-          "default": 1
-        },
-        "scale_denominator": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 1000000,
-          "default": 1
+        "scale": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "pattern": "^(?:0\\.(?:00[1-9]\\d*|0[1-9]\\d*|[1-9]\\d*)|[1-9]\\d?(?:\\.\\d+)?|100(?:\\.0+)?)(?![\\s\\S])",
+          "description": "Exact decimal rational scale in the inclusive range 0.001 through 100; never parsed through binary floating point."
         },
         "minimum_physical_wait": {
           "$ref": "#/$defs/duration"
         }
       },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "scaled"
+              }
+            },
+            "required": [
+              "mode"
+            ]
+          },
+          "then": {
+            "required": [
+              "scale"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "real"
+              }
+            },
+            "required": [
+              "mode"
+            ]
+          },
+          "then": {
+            "not": {
+              "required": [
+                "scale"
+              ]
+            }
+          }
+        }
+      ],
       "additionalProperties": false
     },
     "limits": {
@@ -284,7 +382,6 @@
       "required": [
         "max_events",
         "max_attempts",
-        "max_concurrency",
         "max_request_bytes",
         "max_response_capture_bytes"
       ],
@@ -384,6 +481,45 @@
       "additionalProperties": false
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "scenarios": {
+            "contains": {
+              "properties": {
+                "steps": {
+                  "contains": {
+                    "type": "object",
+                    "required": [
+                      "restart"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "steps"
+              ]
+            }
+          }
+        },
+        "required": [
+          "scenarios"
+        ]
+      },
+      "then": {
+        "required": [
+          "lifecycles"
+        ],
+        "properties": {
+          "lifecycles": {
+            "minProperties": 1
+          }
+        }
+      }
+    }
+  ],
+  "$comment": "The configuration model must additionally verify that every restart value names an enabled lifecycle profile and that every lifecycle readiness_observer names a configured observer.",
   "additionalProperties": false,
   "$defs": {
     "id": {
@@ -435,20 +571,116 @@
           ],
           "properties": {
             "generated": {
-              "enum": [
-                "hmac-256",
-                "ed25519-test"
-              ]
+              "const": "hmac-256"
             }
           },
           "additionalProperties": false
         }
       ]
     },
+    "configured_header_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+(?![\\s\\S])",
+      "not": {
+        "pattern": "^(?:[Hh][Oo][Ss][Tt]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt]-[Ll][Ee][Nn][Gg][Tt][Hh]|[Tt][Rr][Aa][Nn][Ss][Ff][Ee][Rr]-[Ee][Nn][Cc][Oo][Dd][Ii][Nn][Gg]|[Cc][Oo][Nn][Nn][Ee][Cc][Tt][Ii][Oo][Nn]|[Pp][Rr][Oo][Xx][Yy]-[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn])$"
+      }
+    },
+    "argv": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "prefixItems": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      ],
+      "items": {
+        "type": "string",
+        "maxLength": 4096
+      }
+    },
+    "lifecycle_profile": {
+      "type": "object",
+      "required": [
+        "stop_argv",
+        "start_argv",
+        "restart_argv",
+        "working_directory",
+        "environment_allowlist",
+        "timeout",
+        "readiness_observer"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "stop_argv": {
+          "$ref": "#/$defs/argv"
+        },
+        "start_argv": {
+          "$ref": "#/$defs/argv"
+        },
+        "restart_argv": {
+          "$ref": "#/$defs/argv"
+        },
+        "working_directory": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "environment_allowlist": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]{0,127}$"
+          }
+        },
+        "timeout": {
+          "$ref": "#/$defs/positive_duration"
+        },
+        "readiness_observer": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        }
+      },
+      "additionalProperties": false
+    },
     "duration": {
       "type": "string",
-      "pattern": "^(?:0|[1-9]\\d*)(?:ns|us|ms|s|m|h)$",
-      "description": "Non-negative integer duration with an explicit unit; floating-point durations are prohibited."
+      "pattern": "^(?:0(?:ns|us|ms|s|m|h)|(?:[1-9]\\d{0,17}|[1-8]\\d{18}|9[0-1]\\d{17}|92[0-1]\\d{16}|922[0-2]\\d{15}|9223[0-2]\\d{14}|92233[0-6]\\d{13}|922337[0-1]\\d{12}|92233720[0-2]\\d{10}|922337203[0-5]\\d{9}|9223372036[0-7]\\d{8}|92233720368[0-4]\\d{7}|922337203685[0-3]\\d{6}|9223372036854[0-6]\\d{5}|92233720368547[0-6]\\d{4}|922337203685477[0-4]\\d{3}|9223372036854775[0-7]\\d{2}|922337203685477580[0-6]|9223372036854775807)ns|(?:[1-9]\\d{0,14}|[1-8]\\d{15}|9[0-1]\\d{14}|92[0-1]\\d{13}|922[0-2]\\d{12}|9223[0-2]\\d{11}|92233[0-6]\\d{10}|922337[0-1]\\d{9}|92233720[0-2]\\d{7}|922337203[0-5]\\d{6}|9223372036[0-7]\\d{5}|92233720368[0-4]\\d{4}|922337203685[0-3]\\d{3}|9223372036854[0-6]\\d{2}|92233720368547[0-6]\\d|922337203685477[0-4]|9223372036854775)us|(?:[1-9]\\d{0,11}|[1-8]\\d{12}|9[0-1]\\d{11}|92[0-1]\\d{10}|922[0-2]\\d{9}|9223[0-2]\\d{8}|92233[0-6]\\d{7}|922337[0-1]\\d{6}|92233720[0-2]\\d{4}|922337203[0-5]\\d{3}|9223372036[0-7]\\d{2}|92233720368[0-4]\\d|922337203685[0-3]|9223372036854)ms|(?:[1-9]\\d{0,8}|[1-8]\\d{9}|9[0-1]\\d{8}|92[0-1]\\d{7}|922[0-2]\\d{6}|9223[0-2]\\d{5}|92233[0-6]\\d{4}|922337[0-1]\\d{3}|92233720[0-2]\\d|922337203[0-5]|9223372036)s|(?:[1-9]\\d{0,7}|1[0-4]\\d{7}|15[0-2]\\d{6}|153[0-6]\\d{5}|1537[0-1]\\d{4}|15372[0-1]\\d{3}|153722[0-7]\\d{2}|1537228[0-5]\\d|15372286[0-6]|153722867)m|(?:[1-9]\\d{0,5}|1\\d{6}|2[0-4]\\d{5}|25[0-5]\\d{4}|256[0-1]\\d{3}|25620[0-3]\\d|256204[0-6]|2562047)h)(?![\\s\\S])",
+      "description": "Non-negative integer duration with an explicit unit whose converted nanoseconds fit signed 64-bit; floating-point durations are prohibited."
+    },
+    "positive_duration": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/duration"
+        },
+        {
+          "not": {
+            "pattern": "^0(?:ns|us|ms|s|m|h)$"
+          }
+        }
+      ]
+    },
+    "poll_duration": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/duration"
+        },
+        {
+          "not": {
+            "pattern": "^(?:(?:0|[1-9]\\d{0,6})ns|(?:0|[1-9]\\d{0,3})us|[0-9]ms|0(?:s|m|h))$"
+          }
+        }
+      ],
+      "description": "Physical observer polling duration of at least 10 milliseconds."
     },
     "mutation": {
       "type": "object",
@@ -535,7 +767,7 @@
           "$ref": "#/$defs/duration"
         },
         "poll_interval": {
-          "$ref": "#/$defs/duration"
+          "$ref": "#/$defs/poll_duration"
         },
         "on_unsupported": {
           "enum": [
@@ -669,7 +901,8 @@
           ],
           "properties": {
             "restart": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$"
             }
           },
           "additionalProperties": false
