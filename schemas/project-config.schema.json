@@ -33,13 +33,21 @@
           "maxLength": 128
         },
         "artifact_directory": {
-          "type": "string",
-          "minLength": 1
+          "$ref": "#/$defs/path"
         },
         "seed": {
           "type": "string",
           "minLength": 1,
           "maxLength": 1024
+        },
+        "secret_roots": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/project_relative_path"
+          },
+          "default": []
         }
       },
       "additionalProperties": false
@@ -519,9 +527,82 @@
       }
     }
   ],
-  "$comment": "The configuration model must additionally verify that every restart value names an enabled lifecycle profile and that every lifecycle readiness_observer names a configured observer.",
+  "$comment": "Future production loaders MUST enforce MAX_CONFIG_BYTES=16777216 before parsing and MAX_CONFIG_DEPTH=64 plus MAX_CONFIG_NODES=100000 before model construction. JSON Schema cannot distinguish an integral floating-point runtime value from an integer, so the YAML/JSON loader MUST reject every floating-point lexical value before schema validation. Semantic validation must additionally verify secret-file containment under project.secret_roots, reference resolution, global event/attempt budgets, that every restart value names an enabled lifecycle profile, and that every lifecycle readiness_observer names a configured observer.",
+  "x-resource-limits": {
+    "MAX_CONFIG_BYTES": 16777216,
+    "MAX_CONFIG_DEPTH": 64,
+    "MAX_CONFIG_NODES": 100000
+  },
   "additionalProperties": false,
   "$defs": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+      "maxLength": 64
+    },
+    "bounded_string": {
+      "type": "string",
+      "maxLength": 4096
+    },
+    "nonempty_string": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "path": {
+      "$ref": "#/$defs/nonempty_string"
+    },
+    "project_relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^(?![A-Za-z][A-Za-z0-9+.-]*:)(?![\\\\/])(?!\\.\\.(?:[\\\\/]|$))(?!.*[\\\\/]\\.\\.(?:[\\\\/]|$))(?!.*[\\u0000-\\u001F\\u007F]).+$"
+    },
+    "json_pointer": {
+      "type": "string",
+      "maxLength": 4096,
+      "pattern": "^(?:/(?:[^~/]|~0|~1)*)*$"
+    },
+    "safe_integer": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "canonical_json_value": {
+      "$comment": "Canonical JSON admits null, booleans, safe integers, bounded strings, arrays, and objects. Floating-point lexical values are rejected by the loader before JSON Schema because JSON Schema treats 1 and 1.0 as the same mathematical value.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "$ref": "#/$defs/safe_integer"
+        },
+        {
+          "$ref": "#/$defs/bounded_string"
+        },
+        {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "$ref": "#/$defs/canonical_json_value"
+          }
+        },
+        {
+          "type": "object",
+          "maxProperties": 1000,
+          "propertyNames": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/canonical_json_value"
+          }
+        }
+      ]
+    },
     "id": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_[0-9A-HJKMNP-TV-Z]{26}$",
@@ -535,7 +616,9 @@
       "type": "string",
       "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?Z$"
     },
-    "json_value": {},
+    "json_value": {
+      "$ref": "#/$defs/canonical_json_value"
+    },
     "secret_ref": {
       "oneOf": [
         {
@@ -558,8 +641,7 @@
           ],
           "properties": {
             "file": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/$defs/path"
             }
           },
           "additionalProperties": false
@@ -683,48 +765,474 @@
       "description": "Physical observer polling duration of at least 10 milliseconds."
     },
     "mutation": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/mutation_remove_json_pointer"
+        },
+        {
+          "$ref": "#/$defs/mutation_replace_json_value"
+        },
+        {
+          "$ref": "#/$defs/mutation_replace_json_type"
+        },
+        {
+          "$ref": "#/$defs/mutation_add_json_field"
+        },
+        {
+          "$ref": "#/$defs/mutation_change_event_id_field"
+        },
+        {
+          "$ref": "#/$defs/mutation_change_event_type_field"
+        },
+        {
+          "$ref": "#/$defs/mutation_truncate_bytes"
+        },
+        {
+          "$ref": "#/$defs/mutation_invalid_json"
+        },
+        {
+          "$ref": "#/$defs/mutation_content_type_mismatch"
+        },
+        {
+          "$ref": "#/$defs/mutation_alter_after_signing"
+        },
+        {
+          "$ref": "#/$defs/mutation_stale_signature_timestamp"
+        },
+        {
+          "$ref": "#/$defs/mutation_wrong_signing_key"
+        },
+        {
+          "$ref": "#/$defs/mutation_missing_signature"
+        },
+        {
+          "$ref": "#/$defs/mutation_malformed_signature"
+        },
+        {
+          "$ref": "#/$defs/mutation_oversized_body"
+        }
+      ]
+    },
+    "mutation_common": {
       "type": "object",
       "required": [
         "type"
       ],
       "properties": {
         "type": {
-          "enum": [
-            "remove-json-pointer",
-            "replace-json-value",
-            "replace-json-type",
-            "add-json-field",
-            "change-event-id",
-            "change-event-type",
-            "truncate-bytes",
-            "invalid-json",
-            "invalid-utf8",
-            "duplicate-json-key",
-            "content-type-mismatch",
-            "alter-after-signing",
-            "stale-signature-timestamp",
-            "wrong-signing-key",
-            "missing-signature",
-            "malformed-signature",
-            "oversized-body"
-          ]
-        },
-        "pointer": {
-          "type": "string"
-        },
-        "value": {},
-        "bytes": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "age": {
-          "$ref": "#/$defs/duration"
-        },
-        "media_type": {
-          "type": "string"
+          "type": "string",
+          "maxLength": 64
         }
-      },
-      "additionalProperties": false
+      }
+    },
+    "mutation_remove_json_pointer": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/mutation_common"
+        },
+        {
+          "type": "object",
+          "required": [
+            "pointer"
+          ],
+          "properties": {
+            "type": {
+              "const": "remove-json-pointer-v1"
+            },
+            "pointer": {
+              "$ref": "#/$defs/json_pointer"
+            },
+            "if_missing": {
+              "enum": [
+                "error",
+                "ignore"
+              ],
+              "default": "error"
+            },
+            "accept_prior_mutation": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "mutation_replace_json_value": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/mutation_common"
+        },
+        {
+          "type": "object",
+          "required": [
+            "pointer",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "const": "replace-json-value-v1"
+            },
+            "pointer": {
+              "$ref": "#/$defs/json_pointer"
+            },
+            "value": {
+              "$ref": "#/$defs/canonical_json_value"
+            },
+            "accept_prior_mutation": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "mutation_replace_json_type": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/mutation_common"
+        },
+        {
+          "type": "object",
+          "required": [
+            "pointer",
+            "target_type"
+          ],
+          "properties": {
+            "type": {
+              "const": "replace-json-type-v1"
+            },
+            "pointer": {
+              "$ref": "#/$defs/json_pointer"
+            },
+            "target_type": {
+              "enum": [
+                "null",
+                "boolean",
+                "integer",
+                "string",
+                "array",
+                "object"
+              ]
+            },
+            "accept_prior_mutation": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "mutation_add_json_field": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/mutation_common"
+        },
+        {
+          "type": "object",
+          "required": [
+            "pointer",
+            "name",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "const": "add-json-field-v1"
+            },
+            "pointer": {
+              "$ref": "#/$defs/json_pointer"
+            },
+            "name": {
+              "$ref": "#/$defs/nonempty_string"
+            },
+            "value": {
+              "$ref": "#/$defs/canonical_json_value"
+            },
+            "overwrite": {
+              "type": "boolean",
+              "default": false
+            },
+            "accept_prior_mutation": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "mutation_change_event_id_field": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/mutation_common"
+        },
+        {
+          "type": "object",
+          "required": [
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "const": "change-event-id-field-v1"
+            },
+            "value": {
+              "$ref": "#/$defs/nonempty_string"
+            },
+            "accept_prior_mutation": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "mutation_change_event_type_field": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/mutation_common"
+        },
+        {
+          "type": "object",
+          "required": [
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "const": "change-event-type-field-v1"
+            },
+            "value": {
+              "$ref": "#/$defs/nonempty_string"
+            },
+            "accept_prior_mutation": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "mutation_truncate_bytes": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/mutation_common"
+        },
+        {
+          "type": "object",
+          "required": [
+            "length"
+          ],
+          "properties": {
+            "type": {
+              "const": "truncate-bytes-v1"
+            },
+            "length": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 16777216
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "mutation_invalid_json": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/mutation_common"
+        },
+        {
+          "type": "object",
+          "required": [
+            "strategy"
+          ],
+          "properties": {
+            "type": {
+              "const": "invalid-json-v1"
+            },
+            "strategy": {
+              "enum": [
+                "truncated-object",
+                "bad-escape",
+                "trailing-comma"
+              ]
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "mutation_content_type_mismatch": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/mutation_common"
+        },
+        {
+          "type": "object",
+          "required": [
+            "media_type"
+          ],
+          "properties": {
+            "type": {
+              "const": "content-type-mismatch-v1"
+            },
+            "media_type": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "mutation_alter_after_signing": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/mutation_common"
+        },
+        {
+          "type": "object",
+          "required": [
+            "offset",
+            "xor"
+          ],
+          "properties": {
+            "type": {
+              "const": "alter-after-signing-v1"
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 16777215
+            },
+            "xor": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 255
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "mutation_stale_signature_timestamp": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/mutation_common"
+        },
+        {
+          "type": "object",
+          "required": [
+            "age"
+          ],
+          "properties": {
+            "type": {
+              "const": "stale-signature-timestamp-v1"
+            },
+            "age": {
+              "$ref": "#/$defs/positive_duration"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "mutation_wrong_signing_key": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/mutation_common"
+        },
+        {
+          "type": "object",
+          "required": [
+            "context"
+          ],
+          "properties": {
+            "type": {
+              "const": "wrong-signing-key-v1"
+            },
+            "context": {
+              "$ref": "#/$defs/nonempty_string"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "mutation_missing_signature": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/mutation_common"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "missing-signature-v1"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "mutation_malformed_signature": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/mutation_common"
+        },
+        {
+          "type": "object",
+          "required": [
+            "case"
+          ],
+          "properties": {
+            "type": {
+              "const": "malformed-signature-v1"
+            },
+            "case": {
+              "enum": [
+                "invalid-encoding",
+                "missing-component",
+                "invalid-delimiter",
+                "duplicate-component"
+              ]
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "mutation_oversized_body": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/mutation_common"
+        },
+        {
+          "type": "object",
+          "required": [
+            "target_bytes",
+            "fill"
+          ],
+          "properties": {
+            "type": {
+              "const": "oversized-body-v1"
+            },
+            "target_bytes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 16777216
+            },
+            "fill": {
+              "const": "ascii-space"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
     },
     "assertion": {
       "type": "object",

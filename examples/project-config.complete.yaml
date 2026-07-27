@@ -3,6 +3,8 @@ project:
   name: minimal-local-receiver-test
   artifact_directory: .webhook-conformance
   seed: env:WEBHOOK_CONFORMANCE_SEED
+  secret_roots:
+  - .secrets
 receiver:
   url: http://127.0.0.1:8000/webhooks
   target_profile: loopback
