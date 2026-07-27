@@ -22,6 +22,7 @@ from webhook_receiver_conformance.errors import (
     ResultCategory,
     exit_for_result,
     format_unexpected_exception,
+    new_incident_id,
     normalize_unexpected_exception,
 )
 from webhook_receiver_conformance.types import DiagnosticCode, EntityId, IncidentId
@@ -124,6 +125,52 @@ def test_diagnostic_serialization_round_trip_is_strict_and_immutable() -> None:
 
 
 @pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("message", " "),
+        ("message", "unsafe\x1b[31m"),
+        ("field_path", ""),
+        ("field_path", "receiver.url\nnext"),
+        ("entity_id", "attempt id"),
+        ("incident_id", "incident=id"),
+    ],
+)
+def test_diagnostic_rejects_empty_or_terminal_unsafe_text(
+    field: str,
+    value: str,
+) -> None:
+    values: dict[str, object] = {
+        "category": ErrorCategory.CONFIGURATION_ERROR,
+        "code": DiagnosticCode("CFG_INVALID"),
+        "message": "Configuration is invalid.",
+        "retryable": False,
+        "result_category": ResultCategory.INVALID_INPUT,
+    }
+    values[field] = value
+    with pytest.raises(ValidationError):
+        Diagnostic.model_validate(values)
+
+
+@pytest.mark.parametrize("number", [float("nan"), float("inf"), float("-inf")])
+def test_diagnostic_rejects_nonfinite_nested_safe_details(number: float) -> None:
+    with pytest.raises(ValidationError, match="non-finite JSON numbers"):
+        Diagnostic(
+            category=ErrorCategory.CONFIGURATION_ERROR,
+            code=DiagnosticCode("CFG_INVALID"),
+            message="Configuration is invalid.",
+            retryable=False,
+            safe_details={"nested": [{"number": number}]},
+            result_category=ResultCategory.INVALID_INPUT,
+        )
+
+
+def test_diagnostic_location_rejects_empty_and_control_paths() -> None:
+    for path in ("", " ", "project.yaml\rforged"):
+        with pytest.raises(ValidationError):
+            DiagnosticLocation(path=path)
+
+
+@pytest.mark.parametrize(
     ("field_path", "entity_id", "corrective_action"),
     [
         (None, None, "Fix it."),
@@ -193,6 +240,9 @@ def test_default_crash_format_is_private() -> None:
     assert diagnostic.code == INTERNAL_ERROR_CODE
     assert diagnostic.result_category is ResultCategory.HARNESS_ERROR
     assert diagnostic.safe_details == {"exception_type": "RuntimeError"}
+    serialized = diagnostic.model_dump_json()
+    assert "secret-canary" not in serialized
+    assert "Bearer-secret" not in serialized
     assert rendered == (
         "HARNESS_INTERNAL_ERROR: An internal harness error occurred.\n"
         "incident_id: incident_test\n"
@@ -217,11 +267,64 @@ def test_debug_crash_format_contains_frames_but_no_messages_or_locals() -> None:
             environ={DEBUG_ENVIRONMENT_VARIABLE: "true"},
         ),
     )
+    assert "Traceback (frame metadata only):" in rendered
     assert 'File "' in rendered
+    assert "<sha256:" in rendered
     assert "in _raise_canary_crash" in rendered
+    assert __file__ not in rendered
     assert "secret-canary" not in rendered
     assert "Bearer-secret" not in rendered
     assert "secret_local" not in rendered
+
+
+def test_crash_formatter_rejects_an_unrelated_diagnostic() -> None:
+    diagnostic = Diagnostic(
+        category=ErrorCategory.CONFIGURATION_ERROR,
+        code=DiagnosticCode("CFG_INVALID"),
+        message="Configuration is invalid.",
+        retryable=False,
+        result_category=ResultCategory.INVALID_INPUT,
+    )
+    with pytest.raises(ValueError, match="normalized internal-error"):
+        format_unexpected_exception(
+            RuntimeError("secret-canary"),
+            diagnostic,
+            debug_policy=DebugPolicy(),
+        )
+
+
+def test_generated_incident_ids_are_opaque_bounded_tokens() -> None:
+    first = new_incident_id()
+    second = new_incident_id()
+    assert first != second
+    assert first.startswith("incident_")
+    assert len(first) == len("incident_") + 32
+    assert set(first.removeprefix("incident_")) <= set("0123456789abcdef")
+
+
+@pytest.mark.parametrize(
+    ("environment_value", "expected"),
+    [
+        ("1", True),
+        (" TRUE ", True),
+        ("yes", True),
+        ("on", True),
+        ("0", False),
+        ("false", False),
+        ("unexpected", False),
+        ("", False),
+    ],
+)
+def test_debug_policy_environment_gate_is_explicit(
+    environment_value: str,
+    *,
+    expected: bool,
+) -> None:
+    policy = DebugPolicy.resolve(
+        explicit=False,
+        environ={DEBUG_ENVIRONMENT_VARIABLE: environment_value},
+    )
+    assert policy.enabled is expected
 
 
 def test_version_metadata_is_independent_and_preserves_schema_strings() -> None:
@@ -252,3 +355,29 @@ def test_version_metadata_is_independent_and_preserves_schema_strings() -> None:
     assert changed.configuration_schema == VERSION_METADATA.configuration_schema
     with pytest.raises(FrozenInstanceError):
         VERSION_METADATA.package = "0.2.0"  # pyright: ignore[reportAttributeAccessIssue]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("package", "1.0"),
+        ("package", "01.0.0"),
+        ("configuration_schema", "1"),
+        ("manifest_schema", "1.0.0"),
+        ("observer_protocol", "v1.0"),
+        ("report_schema", ""),
+        ("task_index_schema", "01.0"),
+        ("generator_algorithm", "HMAC-SHA256-v1"),
+        ("generator_algorithm", ""),
+        ("sqlite_user_version", -1),
+        ("sqlite_user_version", True),
+    ],
+)
+def test_version_metadata_rejects_malformed_boundary_values(
+    field: str,
+    value: object,
+) -> None:
+    values = dict[str, object](VERSION_METADATA.as_dict())
+    values[field] = value
+    with pytest.raises(ValueError, match="must be"):
+        VersionMetadata(**values)  # pyright: ignore[reportArgumentType]

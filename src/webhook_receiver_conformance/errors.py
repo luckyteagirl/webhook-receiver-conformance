@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import math
 import os
 import re
 import uuid
@@ -15,6 +17,7 @@ from webhook_receiver_conformance.types import (
     EntityId,
     IncidentId,
     JsonObject,
+    JsonValue,
 )
 
 if TYPE_CHECKING:
@@ -24,6 +27,7 @@ if TYPE_CHECKING:
 DEBUG_ENVIRONMENT_VARIABLE = "WEBHOOK_CONFORMANCE_DEBUG"
 INTERNAL_ERROR_CODE = DiagnosticCode("HARNESS_INTERNAL_ERROR")
 _DIAGNOSTIC_CODE = re.compile(r"[A-Z][A-Z0-9_]{2,127}")
+_BOUNDARY_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}")
 _C0_CONTROL_LIMIT = 32
 _DELETE_CONTROL_CODEPOINT = 127
 
@@ -145,6 +149,15 @@ class DiagnosticLocation(BaseModel):
     line: int | None = Field(default=None, ge=1)
     column: int | None = Field(default=None, ge=1)
 
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: str | None) -> str | None:
+        """Reject empty or terminal-unsafe source paths."""
+        if value is not None and (not value.strip() or _contains_control_character(value)):
+            msg = "diagnostic location path must be nonempty and control-character free"
+            raise ValueError(msg)
+        return value
+
     @model_validator(mode="after")
     def require_one_coordinate(self) -> DiagnosticLocation:
         """Reject empty location objects."""
@@ -186,12 +199,41 @@ class Diagnostic(BaseModel):
     @classmethod
     def reject_control_characters(cls, value: str | None) -> str | None:
         """Keep terminal-facing text single-line and control-character free."""
-        if value is not None and any(
-            ord(character) < _C0_CONTROL_LIMIT or ord(character) == _DELETE_CONTROL_CODEPOINT
-            for character in value
-        ):
-            msg = "diagnostic text must not contain control characters"
+        if value is not None:
+            if not value.strip():
+                msg = "diagnostic text must not be empty or whitespace"
+                raise ValueError(msg)
+            if _contains_control_character(value):
+                msg = "diagnostic text must not contain control characters"
+                raise ValueError(msg)
+        return value
+
+    @field_validator("entity_id", "incident_id")
+    @classmethod
+    def validate_boundary_identifier(
+        cls,
+        value: EntityId | IncidentId | None,
+    ) -> EntityId | IncidentId | None:
+        """Keep record identifiers bounded and safe for diagnostic rendering."""
+        if value is not None and _BOUNDARY_IDENTIFIER.fullmatch(value) is None:
+            msg = "diagnostic identifiers must be bounded ASCII tokens"
             raise ValueError(msg)
+        return value
+
+    @field_validator("field_path")
+    @classmethod
+    def validate_field_path(cls, value: str | None) -> str | None:
+        """Reject empty or terminal-unsafe field paths."""
+        if value is not None and (not value.strip() or _contains_control_character(value)):
+            msg = "field_path must be nonempty and control-character free"
+            raise ValueError(msg)
+        return value
+
+    @field_validator("safe_details")
+    @classmethod
+    def validate_safe_details(cls, value: JsonObject) -> JsonObject:
+        """Require details to remain losslessly JSON serializable."""
+        _reject_nonfinite_json_numbers(value)
         return value
 
     @model_validator(mode="after")
@@ -275,12 +317,21 @@ def format_unexpected_exception(
     debug_policy: DebugPolicy,
 ) -> str:
     """Format a crash diagnostic, optionally adding message-free frame metadata."""
+    if (
+        diagnostic.category is not ErrorCategory.INTERNAL_ERROR
+        or diagnostic.code != INTERNAL_ERROR_CODE
+        or diagnostic.result_category is not ResultCategory.HARNESS_ERROR
+        or diagnostic.incident_id is None
+    ):
+        msg = "unexpected exceptions require a normalized internal-error diagnostic"
+        raise ValueError(msg)
     lines = [
         f"{INTERNAL_ERROR_CODE}: An internal harness error occurred.",
         f"incident_id: {diagnostic.incident_id}",
         f"exception_type: {_safe_exception_type(exception)}",
     ]
     if debug_policy.enabled:
+        lines.append("Traceback (frame metadata only):")
         lines.extend(_format_traceback_frames(exception.__traceback__))
     return "\n".join(lines)
 
@@ -295,6 +346,36 @@ def _format_traceback_frames(traceback: TracebackType | None) -> list[str]:
     current = traceback
     while current is not None:
         code = current.tb_frame.f_code
-        lines.append(f'File "{code.co_filename}", line {current.tb_lineno}, in {code.co_name}')
+        filename_hash = hashlib.sha256(
+            code.co_filename.encode("utf-8", errors="surrogatepass")
+        ).hexdigest()[:16]
+        function_name = (
+            code.co_name if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", code.co_name) else "callable"
+        )
+        lines.append(
+            f'File "<sha256:{filename_hash}>", line {current.tb_lineno}, in {function_name}'
+        )
         current = current.tb_next
     return lines
+
+
+def _contains_control_character(value: str) -> bool:
+    return any(
+        ord(character) < _C0_CONTROL_LIMIT or ord(character) == _DELETE_CONTROL_CODEPOINT
+        for character in value
+    )
+
+
+def _reject_nonfinite_json_numbers(value: JsonValue) -> None:
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            msg = "safe_details must not contain non-finite JSON numbers"
+            raise ValueError(msg)
+        return
+    if isinstance(value, list):
+        for item in value:
+            _reject_nonfinite_json_numbers(item)
+        return
+    if isinstance(value, dict):
+        for item in value.values():
+            _reject_nonfinite_json_numbers(item)
