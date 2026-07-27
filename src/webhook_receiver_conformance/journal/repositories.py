@@ -20,7 +20,9 @@ from webhook_receiver_conformance.domain.enums import (
     ScenarioState,
 )
 from webhook_receiver_conformance.domain.identifiers import (
+    FreshIdKind,
     PlannedIdKind,
+    validate_fresh_id,
     validate_planned_id,
     validate_run_id,
 )
@@ -412,6 +414,36 @@ class _ProjectionAuditOperation:
         return compare_projection_inventories(projected, replayed)
 
 
+@dataclass(frozen=True, slots=True)
+class _AttemptRecordIdOperation:
+    run_id: str
+    attempt_id: str
+
+    def execute(self, transaction: JournalTransaction) -> str | None:
+        _require_run_exists(transaction, self.run_id)
+        result = transaction.execute(
+            JournalStatement(
+                """
+                SELECT record_id
+                FROM attempt_records
+                WHERE run_id = ? AND attempt_id = ?
+                """,
+                (self.run_id, self.attempt_id),
+            )
+        )
+        if len(result.rows) > 1:
+            message = "attempt record identity is duplicated"
+            raise ProjectionIntegrityError(message)
+        if not result.rows:
+            return None
+        if len(result.rows[0]) != 1:
+            message = "attempt record identity row has an invalid shape"
+            raise ProjectionIntegrityError(message)
+        record_id = _text(result.rows[0][0], name="attempt record_id")
+        validate_fresh_id(record_id, expected_kind=FreshIdKind.RECORD)
+        return record_id
+
+
 class TransitionRepository:
     """Typed async facade over atomic single-writer transition operations."""
 
@@ -537,6 +569,21 @@ class TransitionRepository:
         """Replay history and compare it with live lifecycle projections."""
         validate_run_id(run_id)
         return await self._service.execute(_ProjectionAuditOperation(run_id))
+
+    async def attempt_record_id(
+        self,
+        run_id: str,
+        attempt_id: str,
+    ) -> str | None:
+        """Return the durable evidence identity for one terminal attempt, if any."""
+        validate_run_id(run_id)
+        validate_fresh_id(attempt_id, expected_kind=FreshIdKind.ATTEMPT)
+        return await self._service.execute(
+            _AttemptRecordIdOperation(
+                run_id=run_id,
+                attempt_id=attempt_id,
+            )
+        )
 
 
 def _load_attempt_schedule(

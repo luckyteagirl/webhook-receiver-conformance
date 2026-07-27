@@ -10,10 +10,13 @@ from typing import TYPE_CHECKING, cast
 
 from webhook_receiver_conformance.domain.enums import (
     AttemptClassification,
+    AttemptEvidenceState,
     AttemptState,
     ObservationState,
     RunState,
 )
+from webhook_receiver_conformance.domain.identifiers import FreshIdKind, new_fresh_id
+from webhook_receiver_conformance.domain.models import TransportError
 from webhook_receiver_conformance.errors import ErrorCategory
 from webhook_receiver_conformance.journal.repositories import TransitionRepository
 from webhook_receiver_conformance.journal.service import (
@@ -23,6 +26,7 @@ from webhook_receiver_conformance.journal.service import (
 )
 from webhook_receiver_conformance.journal.transitions import (
     AttemptTerminalOutcome,
+    AttemptTransportEvidenceCommand,
     CausalReference,
     CommittedTransition,
     EntityType,
@@ -346,11 +350,24 @@ class RecoveryScanner:
         if plan.run_id != self._context.run_id or plan.owner_epoch != self._context.owner_epoch:
             message = "recovery plan belongs to a different owner context"
             raise RecoveryOwnerEpochError(message)
-        committed_attempts = [
-            await self._repository.apply(_attempt_transition(item, plan.owner_epoch, timestamp))
-            for item in plan.attempts
-            if item.requires_transition
-        ]
+        committed_attempts: list[CommittedTransition] = []
+        for item in plan.attempts:
+            if not item.requires_transition:
+                continue
+            record_id = await self._repository.attempt_record_id(
+                item.run_id,
+                item.attempt_id,
+            )
+            evidence = _attempt_recovery_evidence(
+                item,
+                record_id=(new_fresh_id(FreshIdKind.RECORD) if record_id is None else record_id),
+            )
+            committed_attempts.append(
+                await self._repository.apply_attempt(
+                    _attempt_transition(item, plan.owner_epoch, timestamp),
+                    transport_evidence=evidence,
+                )
+            )
         committed_observations = [
             await self._repository.apply(
                 _observation_transition(
@@ -675,6 +692,49 @@ def _attempt_transition(
         ),
         causal_reference=CausalReference(item.run_id, item.attempt_id),
         attempt_outcome=AttemptTerminalOutcome(classification),
+    )
+
+
+def _attempt_recovery_evidence(
+    item: AttemptRecoveryItem,
+    *,
+    record_id: str,
+) -> AttemptTransportEvidenceCommand:
+    if item.target_state is AttemptState.NOT_SENT:
+        classification = (
+            AttemptClassification.HARNESS_FAILURE
+            if item.durable_no_send_proof is DurableNoSendProof.CONTROLLED_PRE_TRANSPORT
+            else AttemptClassification.ENVIRONMENT_FAILURE
+        )
+        state = AttemptEvidenceState.CONNECTION_FAILED
+        category = (
+            "recovery_controlled_pre_transport"
+            if item.durable_no_send_proof is DurableNoSendProof.CONTROLLED_PRE_TRANSPORT
+            else "recovery_no_connection"
+        )
+        message = "Recovery proved that no application request bytes left the harness."
+    elif item.target_state is AttemptState.UNKNOWN_OUTCOME:
+        classification = AttemptClassification.AMBIGUOUS
+        state = AttemptEvidenceState.UNKNOWN_OUTCOME
+        category = "recovery_interrupted_send"
+        message = "Recovery found a possible request send without a durable response."
+    else:
+        message = "attempt recovery item has no automatic terminal evidence"
+        raise RecoveryIntegrityError(message)
+    return AttemptTransportEvidenceCommand(
+        record_id=record_id,
+        run_id=item.run_id,
+        scenario_id=item.scenario_id,
+        event_id=item.event_id,
+        delivery_id=item.delivery_id,
+        attempt_id=item.attempt_id,
+        state=state,
+        classification=classification,
+        error=TransportError(
+            category=category,
+            message_redacted=message,
+            phase=item.prior_state.value,
+        ),
     )
 
 

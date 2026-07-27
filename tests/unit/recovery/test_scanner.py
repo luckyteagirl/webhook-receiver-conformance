@@ -532,6 +532,61 @@ async def test_fresh_process_scan_and_apply_are_deterministic_conservative_and_o
             "SELECT count(*) FROM schedule_entries WHERE run_id = ?",
             (RUN_ID,),
         ) == ((0,),)
+        attempt_records = await _rows(
+            service,
+            """
+            SELECT
+                attempts.ordinal,
+                attempt_records.state,
+                attempt_records.classification,
+                attempt_records.error_category,
+                attempt_records.error_phase
+            FROM attempt_records
+            JOIN attempts
+              ON attempts.run_id = attempt_records.run_id
+             AND attempts.attempt_id = attempt_records.attempt_id
+            WHERE attempt_records.run_id = ?
+            ORDER BY attempts.ordinal
+            """,
+            (RUN_ID,),
+        )
+        assert attempt_records == (
+            (
+                3,
+                "connection_failed",
+                AttemptClassification.HARNESS_FAILURE.value,
+                "recovery_controlled_pre_transport",
+                AttemptState.PRE_SEND_COMMITTED.value,
+            ),
+            (
+                4,
+                "unknown_outcome",
+                AttemptClassification.AMBIGUOUS.value,
+                "recovery_interrupted_send",
+                AttemptState.CONNECTING.value,
+            ),
+            (
+                5,
+                "connection_failed",
+                AttemptClassification.ENVIRONMENT_FAILURE.value,
+                "recovery_no_connection",
+                AttemptState.CONNECTING.value,
+            ),
+            (
+                6,
+                "unknown_outcome",
+                AttemptClassification.AMBIGUOUS.value,
+                "recovery_interrupted_send",
+                AttemptState.SENDING.value,
+            ),
+            (
+                7,
+                "unknown_outcome",
+                AttemptClassification.AMBIGUOUS.value,
+                "recovery_interrupted_send",
+                AttemptState.AWAITING_RESPONSE.value,
+            ),
+        )
 
 
 @pytest.mark.anyio
@@ -543,7 +598,10 @@ async def test_fresh_process_scan_and_apply_are_deterministic_conservative_and_o
         AttemptState.AWAITING_RESPONSE,
     ],
 )
-@pytest.mark.parametrize("mutation_phase", tuple(TransitionMutationPhase))
+@pytest.mark.parametrize(
+    "mutation_phase",
+    [*TransitionMutationPhase, AttemptMutationPhase.AFTER_ATTEMPT_RECORD],
+)
 async def test_interrupted_send_recovery_is_atomic_at_every_mutation_phase(
     tmp_path: Path,
     attempt_state: AttemptState,
@@ -577,6 +635,11 @@ async def test_interrupted_send_recovery_is_atomic_at_every_mutation_phase(
             "SELECT count(*) FROM transitions WHERE run_id = ?",
             (RUN_ID,),
         ) == ((0,),)
+        assert await _rows(
+            service,
+            "SELECT count(*) FROM attempt_records WHERE run_id = ?",
+            (RUN_ID,),
+        ) == ((0,),)
 
         recovered = RecoveryScanner(service, context)
         recovered_plan = await recovered.scan()
@@ -590,6 +653,22 @@ async def test_interrupted_send_recovery_is_atomic_at_every_mutation_phase(
             (
                 AttemptState.UNKNOWN_OUTCOME.value,
                 AttemptClassification.AMBIGUOUS.value,
+            ),
+        )
+        assert await _rows(
+            service,
+            """
+            SELECT state, classification, error_category, error_phase
+            FROM attempt_records
+            WHERE run_id = ?
+            """,
+            (RUN_ID,),
+        ) == (
+            (
+                "unknown_outcome",
+                AttemptClassification.AMBIGUOUS.value,
+                "recovery_interrupted_send",
+                attempt_state.value,
             ),
         )
 
