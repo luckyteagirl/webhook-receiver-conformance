@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "profile": "standard-webhooks-hmac",
+  "adapter_version": "v1",
+  "template_version": "standard-webhooks-id-timestamp-body-v1",
+  "compatibility_review": {
+    "status": "approved",
+    "contract": "SIG-013,SIG-015",
+    "marker": "standard-webhooks-hmac-v1-reviewed-2026-07-27"
+  },
+  "key_fingerprints": [
+    "sha256:be3cb4af5586894a0168951018c3ebcf13b8cb29a81a91a2406f550b122f7be6",
+    "sha256:79b24c5bd85b1a0c1f4eca92d9bcfacb8dd71eb7f9a3cdf771149f112ad4a959"
+  ],
+  "vector": {
+    "event_id": "msg_2K5E7Y8J6T4Q",
+    "logical_time_ns": 1700000000123456789,
+    "timestamp_seconds": 1700000000,
+    "body_base64": "eyJpZCI6ImV2dF8xIiwib2siOnRydWV9",
+    "covered_bytes_base64": "bXNnXzJLNUU3WThKNlQ0US4xNzAwMDAwMDAwLnsiaWQiOiJldnRfMSIsIm9rIjp0cnVlfQ==",
+    "webhook_signature": "v1,LH6iSeIQ4CSoqKp0jPAjIJGJrjbG3QBKt3lLL0ewpCg= v1,uwz7cFaMiqTYKFpTuAf20S6PrXS9anmY7b93FEH1F0s="
+  }
+}
