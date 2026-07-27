@@ -1,0 +1,78 @@
+{
+  "algorithm_id": "hmac-sha256-context-v1",
+  "message_domain_separator_hex": "777263682d70726e672d763100",
+  "initial_counter": 0,
+  "counter_encoding": "uint64-big-endian",
+  "context_encoding": "uint32-big-endian-length-plus-utf8",
+  "text_seed": "reproducible café seed",
+  "normalized_seed_hash_hex": "66018d2afc139a44ea478dd11df81d5ffdd30c12475ba53916e5fa2f76a8c893",
+  "seed_fingerprint": "7d409ff23d66bd81a8c92971ddc296ca3d2ed7986b832109bb2de3be79f6445a",
+  "byte_draws": [
+    {
+      "context": [
+        "byte-draw",
+        "zero"
+      ],
+      "length": 0,
+      "output_hex": ""
+    },
+    {
+      "context": [
+        "byte-draw",
+        "short"
+      ],
+      "length": 16,
+      "output_hex": "0a140dbc58937a1b2a4168bc9d78918b"
+    },
+    {
+      "context": [
+        "byte-draw",
+        "multi-block"
+      ],
+      "length": 65,
+      "output_hex": "70b3c19b9637325c8f8c18a372adad2901d59ac1b9f93f6bb16d3665bb7f8838f38d6620fa5da212fea3fe02deb77fcd442e87d61e88f1a34ca9f4d8156ce5cc9f"
+    }
+  ],
+  "bounded_rejection": {
+    "context": [
+      "bounded-rejection",
+      "0"
+    ],
+    "lower": -10,
+    "upper": 119,
+    "candidate_width_bytes": 1,
+    "rejection_limit": 129,
+    "candidates": [
+      229,
+      128
+    ],
+    "result": 118
+  },
+  "jitter": [
+    {
+      "scenario_id": "scenario_01",
+      "planned_delivery_id": "delivery_02",
+      "attempt_ordinal": 0,
+      "jitter_policy_version": "jitter-policy-v1",
+      "magnitude_bound": 0,
+      "result": 0
+    },
+    {
+      "scenario_id": "scenario_01",
+      "planned_delivery_id": "delivery_02",
+      "attempt_ordinal": 3,
+      "jitter_policy_version": "jitter-policy-v1",
+      "magnitude_bound": 1000000,
+      "result": -877814
+    },
+    {
+      "scenario_id": "scenario_02",
+      "planned_delivery_id": "delivery_09",
+      "attempt_ordinal": 18446744073709551615,
+      "jitter_policy_version": "jitter-policy-v2",
+      "magnitude_bound": 9223372036854775807,
+      "result": 2560136260960580398
+    }
+  ],
+  "compatibility_review": "Reviewed for hmac-sha256-context-v1 initial counter 0, exact domain separators, context encoding, stream-based rejection sampling, and retry-jitter context ordering."
+}
