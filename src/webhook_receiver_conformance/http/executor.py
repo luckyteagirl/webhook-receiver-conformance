@@ -67,6 +67,7 @@ _HEADER_NAME = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
 _STATUS_LINE = re.compile(rb"HTTP/1\.1 ([1-5][0-9]{2})(?: ([\x20-\x7e\t]*))?")
 _CONTENT_LENGTH = re.compile(r"(?:0|[1-9][0-9]*)")
 _CHUNK_SIZE = re.compile(rb"[0-9A-Fa-f]+")
+_MEDIA_TYPE = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+/[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
 _MAX_CONTENT_LENGTH_DIGITS = 19
 _MAX_CHUNK_SIZE_DIGITS = 16
 _MAX_SIGNED_INT64 = (2**63) - 1
@@ -1021,6 +1022,7 @@ def _parse_response_head(
             raise _ProtocolFailure("response header value is invalid")
         headers.append((name, value))
     _validate_response_framing(tuple(headers))
+    _response_media_type(tuple(headers))
     return int(status_match.group(1)), tuple(headers)
 
 
@@ -1331,6 +1333,7 @@ def _response_evidence(
         captured_body=captured,
         truncated=truncated,
         body_complete=body_complete,
+        media_type=_response_media_type(head.headers),
     )
 
 
@@ -1345,7 +1348,20 @@ def _empty_response_from_head(head: _ParsedHead) -> ResponseEvidence:
         captured_body=b"",
         truncated=True,
         body_complete=False,
+        media_type=_response_media_type(head.headers),
     )
+
+
+def _response_media_type(headers: tuple[tuple[str, str], ...]) -> str | None:
+    values = tuple(value for name, value in headers if name.casefold() == "content-type")
+    if not values:
+        return None
+    if len(values) != 1:
+        raise _ProtocolFailure("response contains duplicate content-type headers")
+    media_type = values[0].partition(";")[0].strip()
+    if _MEDIA_TYPE.fullmatch(media_type) is None:
+        raise _ProtocolFailure("response content type is malformed")
+    return media_type.casefold()
 
 
 def _classify_dial_error(

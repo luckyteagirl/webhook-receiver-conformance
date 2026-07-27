@@ -12,6 +12,7 @@ from webhook_receiver_conformance.network.transport import SocketFamily
 REDACTED_HEADER_VALUE = "[REDACTED]"
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 _HEADER_NAME = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
+_MEDIA_TYPE = re.compile(r"[!#$%&'*+\-.^_`|~0-9a-z]+/[!#$%&'*+\-.^_`|~0-9a-z]+")
 _MAX_SIGNED_INT64 = (2**63) - 1
 
 
@@ -129,6 +130,7 @@ class ResponseEvidence:
     truncated: bool = False
     body_complete: bool = True
     protocol: str = "HTTP/1.1"
+    media_type: str | None = None
 
     def __post_init__(self) -> None:
         if type(self.status) is not int or not 100 <= self.status <= 599:
@@ -137,6 +139,7 @@ class ResponseEvidence:
         if self.protocol != "HTTP/1.1":
             message = "v0.1 response evidence requires HTTP/1.1"
             raise ValueError(message)
+        _validate_media_type(self.media_type)
         if type(self.headers) is not tuple or any(
             type(name) is not str or _HEADER_NAME.fullmatch(name) is None for name in self.headers
         ):
@@ -180,7 +183,8 @@ class ResponseEvidence:
             f"observed_body_sha256={self.observed_body_sha256!r}, "
             f"observed_body_bytes={self.observed_body_bytes!r}, "
             f"captured_bytes={len(self.captured_body)!r}, truncated={self.truncated!r}, "
-            f"body_complete={self.body_complete!r}, protocol={self.protocol!r})"
+            f"body_complete={self.body_complete!r}, protocol={self.protocol!r}, "
+            f"media_type={self.media_type!r})"
         )
 
 
@@ -333,6 +337,14 @@ class AttemptResult:
 def _validate_digest(value: object) -> None:
     if type(value) is not str or _DIGEST.fullmatch(value) is None:
         message = "body digest must be a lowercase sha256 digest"
+        raise ValueError(message)
+
+
+def _validate_media_type(media_type: str | None) -> None:
+    if media_type is not None and (
+        type(media_type) is not str or _MEDIA_TYPE.fullmatch(media_type) is None
+    ):
+        message = "response media type must be a normalized lowercase type/subtype"
         raise ValueError(message)
 
 

@@ -202,7 +202,8 @@ def _executor(
 @pytest.mark.anyio
 async def test_exact_post_bytes_and_value_free_header_ownership() -> None:
     response = (
-        b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:9/nope\r\nContent-Length: 2\r\n\r\nok"
+        b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:9/nope\r\n"
+        b"Content-Type: Application/JSON; charset=utf-8\r\nContent-Length: 2\r\n\r\nok"
     )
     connector = ScriptedConnector(response)
     executor = _executor(connector)
@@ -223,6 +224,7 @@ async def test_exact_post_bytes_and_value_free_header_ownership() -> None:
     assert result.response is not None
     assert result.response.status == 302
     assert result.response.protocol == "HTTP/1.1"
+    assert result.response.media_type == "application/json"
     assert result.response.captured_body == b"ok"
     assert result.peer is not None
     assert result.peer.authorized_address == result.peer.peer_address == "127.0.0.1"
@@ -447,6 +449,11 @@ async def test_chunked_response_and_informational_head_are_parsed_incrementally(
         b"HTTP/1.1 200 OK\r\n Folded: bad\r\n\r\n",
         b"HTTP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n",
         b"HTTP/1.1 200 OK\r\nContent-Length: 1, 1\r\n\r\nx",
+        (
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+            b"Content-Type: text/plain\r\nContent-Length: 1\r\n\r\nx"
+        ),
+        b"HTTP/1.1 200 OK\r\nContent-Type: invalid\r\nContent-Length: 1\r\n\r\nx",
     ],
 )
 async def test_smuggling_and_malformed_response_heads_are_protocol_failures(
