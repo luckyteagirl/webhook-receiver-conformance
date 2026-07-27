@@ -22,7 +22,7 @@
 | Conflict | Resolution |
 | --- | --- |
 | Earlier WAL preference versus current single-writer needs | Current SQLite documentation and the one-owner run model favor rollback journal DELETE with synchronous EXTRA. ADR-004 owns the resolution. |
-| Seed reproducibility versus Python PRNG implementation stability | The generator is explicitly versioned and context-derived; the realized manifest, not the seed, is the replay authority. |
+| Seed reproducibility versus Python PRNG implementation stability | The generator is explicitly versioned and context-derived. Per SCHED-011, the realized manifest persists the normalized non-secret seed as `generator.normalized_seed_hash_hex`; the manifest remains the replay authority and replay does not depend on the original config or Python PRNG behavior. This resolves the earlier run-manifest schema omission. |
 | Virtual time for CI versus an external receiver clock | Network runs support real/scaled time only. Virtual time is an in-process test facility, not a product claim. |
 | Provider-independent core versus provider-specific fidelity | The core models generic identities and attempts; signing/header profiles are isolated built-ins. |
 | Plugin extensibility versus v0.1 compatibility cost | Internal protocols remain nonpublic; only observer wire protocol is public. |

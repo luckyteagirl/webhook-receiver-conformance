@@ -61,11 +61,17 @@
       "type": "object",
       "required": [
         "algorithm",
+        "normalized_seed_hash_hex",
         "seed_fingerprint"
       ],
       "properties": {
         "algorithm": {
           "const": "hmac-sha256-context-v1"
+        },
+        "normalized_seed_hash_hex": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "The persisted 32-byte normalized non-secret generator seed, encoded as lowercase hexadecimal."
         },
         "seed_fingerprint": {
           "$ref": "#/$defs/sha256"

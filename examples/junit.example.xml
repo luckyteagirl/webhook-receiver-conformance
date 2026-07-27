@@ -3,7 +3,7 @@
   <testsuite name="scenario:scenario_01J00000000000000000000000" tests="1" failures="0" errors="0" skipped="0" time="0.160" timestamp="2026-07-26T20:00:00Z">
     <properties>
       <property name="run_id" value="123e4567-e89b-42d3-a456-426614174000"/>
-      <property name="manifest_id" value="126b2cb058cc7702127f7f95a89e3fee4a1a7d835361d6f7d04be36a31ccda34"/>
+      <property name="manifest_id" value="bdd7360b498b0ce79aa162379249e88a1b8ab01f8875538b05122197046ae4e8"/>
       <property name="artifact.result_summary" value="result-summary.json"/>
     </properties>
     <testcase classname="webhook-conformance.sequential-duplicate" name="assertion:assertion_01J00000000000000000000000" time="0.010"/>

@@ -51,7 +51,7 @@ from webhook_receiver_conformance.errors import ResultCategory
 
 ROOT = Path(__file__).resolve().parents[2]
 RUN_ID = "123e4567-e89b-42d3-a456-426614174000"
-MANIFEST_ID = "126b2cb058cc7702127f7f95a89e3fee4a1a7d835361d6f7d04be36a31ccda34"
+MANIFEST_ID = "bdd7360b498b0ce79aa162379249e88a1b8ab01f8875538b05122197046ae4e8"
 DEFAULT_CONCURRENCY = 10
 MAX_CONCURRENCY = 50
 PERSISTED_EXAMPLE_CASES = (
@@ -204,6 +204,17 @@ def test_run_and_manifest_identifiers_use_dedicated_encodings() -> None:
     assert manifest["manifest_id"] == MANIFEST_ID
     assert validate_instance(manifest, manifest_schema, registry=registry) == []
     assert validate_instance(summary, summary_schema, registry=registry) == []
+    assert manifest["generator"]["normalized_seed_hash_hex"] == (
+        "66018d2afc139a44ea478dd11df81d5ffdd30c12475ba53916e5fa2f76a8c893"
+    )
+
+    missing_normalized_seed = deepcopy(manifest)
+    del missing_normalized_seed["generator"]["normalized_seed_hash_hex"]
+    assert validate_instance(
+        missing_normalized_seed,
+        manifest_schema,
+        registry=registry,
+    )
 
     canonical_projection = deepcopy(manifest)
     del canonical_projection["manifest_id"]

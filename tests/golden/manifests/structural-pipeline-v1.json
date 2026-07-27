@@ -1,0 +1,15 @@
+{
+  "compatibility_review": "TASK-0109 hostile-review remediation",
+  "fixture_sha256": "sha256:cdcc7f0e4b266e14c8a2b93842d79286daa67a69652d0c6a636763568a9de67e",
+  "mutation": {
+    "operator_id": "change-event-type-field-v1",
+    "operator_version": 1,
+    "parameters": {
+      "accept_prior_mutation": false,
+      "pointer": "/type",
+      "value": "payment.changed"
+    },
+    "stage": "structural"
+  },
+  "request_blob_sha256": "sha256:08f42a518ce2b219dc4834ff670aef755aac04b26905e197f4f1336410f4690c"
+}
