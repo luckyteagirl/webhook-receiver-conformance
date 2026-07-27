@@ -1,5 +1,5 @@
 """Atomic transition/projection operations over the sole journal writer."""
-# ruff: noqa: C901, EM101, INP001, PLR2004, S608, TRY003
+# ruff: noqa: C901, D105, D107, EM101, INP001, PLR2004, S608, TRY003
 
 from __future__ import annotations
 
@@ -16,6 +16,8 @@ from webhook_receiver_conformance.domain.enums import (
     AttemptEvidenceState,
     AttemptState,
     DeliveryState,
+    ObservationState,
+    ObservationStatus,
     RunState,
     ScenarioState,
 )
@@ -27,6 +29,11 @@ from webhook_receiver_conformance.domain.identifiers import (
     validate_run_id,
 )
 from webhook_receiver_conformance.domain.models import AttemptEvidence
+from webhook_receiver_conformance.observers.protocol import (
+    ObservationRecord,
+    ObservationRecordError,
+    ObserverEvidence,
+)
 from webhook_receiver_conformance.scheduler.clocks import TransitionTimestamp
 
 from .service import (
@@ -78,6 +85,8 @@ _ASSERTION_GUARD_COLUMN_COUNT = 3
 _TRANSITION_COLUMN_COUNT = 15
 _PROJECTION_COLUMN_COUNT = 2
 _ATTEMPT_RECORD_COLUMN_COUNT = 25
+_OBSERVATION_SERIES_COLUMN_COUNT = 6
+_OBSERVATION_SAMPLE_COLUMN_COUNT = 13
 
 TRIGGER_ATTEMPT_OUTCOME = "attempt_outcome"
 TRIGGER_ASSERTION_POLICY = "assertion_policy"
@@ -195,11 +204,29 @@ class AttemptMutationPhase(StrEnum):
     AFTER_ATTEMPT_RECORD = "after_attempt_record"
 
 
+class ObservationMutationPhase(StrEnum):
+    """Injectable boundaries specific to observation persistence."""
+
+    AFTER_SERIES_INSERT = "after_series_insert"
+    AFTER_SAMPLE_INSERT = "after_sample_insert"
+
+
 class TransitionCrashHook(Protocol):
     """Synchronous failpoint callback executed inside the writer transaction."""
 
     def __call__(self, phase: TransitionMutationPhase | AttemptMutationPhase) -> None:
         """Observe or fail one exact transaction boundary."""
+        ...
+
+
+class ObservationCrashHook(Protocol):
+    """Failpoint callback covering series/sample and nested transition phases."""
+
+    def __call__(
+        self,
+        phase: TransitionMutationPhase | AttemptMutationPhase | ObservationMutationPhase,
+    ) -> None:
+        """Observe or fail one exact observation transaction boundary."""
         ...
 
 
@@ -584,6 +611,660 @@ class TransitionRepository:
                 attempt_id=attempt_id,
             )
         )
+
+
+@dataclass(frozen=True, slots=True)
+class ObservationSeriesCommand:
+    """Create one planned observation series and start its first invocation."""
+
+    run_id: str
+    scenario_id: str
+    observation_id: str
+    observer_id: str
+    checkpoint: str
+    event_id: str | None
+    initial_transition: TransitionCommand[ObservationState]
+    running_transition: TransitionCommand[ObservationState]
+
+    def __post_init__(self) -> None:
+        validate_run_id(self.run_id)
+        validate_planned_id(self.scenario_id, expected_kind=PlannedIdKind.SCENARIO)
+        validate_planned_id(
+            self.observation_id,
+            expected_kind=PlannedIdKind.OBSERVATION,
+        )
+        if self.event_id is not None:
+            validate_planned_id(self.event_id, expected_kind=PlannedIdKind.EVENT)
+        _bounded_control_free_text(
+            self.observer_id,
+            name="observer_id",
+            maximum=256,
+        )
+        _bounded_control_free_text(
+            self.checkpoint,
+            name="observation checkpoint",
+            maximum=128,
+        )
+        if type(self.initial_transition) is not TransitionCommand:
+            raise TypeError("initial_transition must be a TransitionCommand")
+        if type(self.running_transition) is not TransitionCommand:
+            raise TypeError("running_transition must be a TransitionCommand")
+        initial = self.initial_transition
+        running = self.running_transition
+        if (
+            initial.run_id != self.run_id
+            or initial.entity_type is not EntityType.OBSERVATION
+            or initial.entity_id != self.observation_id
+            or initial.expected_state is not None
+            or initial.new_state is not ObservationState.SCHEDULED
+            or initial.causal_reference is not None
+            or initial.attempt_outcome is not None
+        ):
+            raise ValueError("initial observation transition has a different identity or edge")
+        if (
+            running.run_id != self.run_id
+            or running.entity_type is not EntityType.OBSERVATION
+            or running.entity_id != self.observation_id
+            or running.expected_state is not ObservationState.SCHEDULED
+            or running.new_state is not ObservationState.RUNNING
+            or running.owner_epoch != initial.owner_epoch
+            or running.attempt_outcome is not None
+        ):
+            raise ValueError("running observation transition has a different identity or edge")
+
+
+@dataclass(frozen=True, slots=True)
+class ObservationSampleCommand:
+    """Append one sanitized sample and optionally terminate its series."""
+
+    record: ObservationRecord
+    owner_epoch: int
+    terminal_transition: TransitionCommand[ObservationState] | None = None
+
+    def __post_init__(self) -> None:
+        if type(self.record) is not ObservationRecord:
+            raise TypeError("record must be an ObservationRecord")
+        if type(self.owner_epoch) is not int or not 0 <= self.owner_epoch <= MAX_SAFE_INTEGER:
+            raise ValueError("owner_epoch must be a nonnegative I-JSON integer")
+        transition = self.terminal_transition
+        if transition is None:
+            if self.record.status not in {
+                ObservationStatus.OK,
+                ObservationStatus.PENDING,
+                ObservationStatus.ERROR,
+            }:
+                raise ValueError("unsupported and timeout samples must terminate their series")
+            return
+        if type(transition) is not TransitionCommand:
+            raise TypeError("terminal_transition must be a TransitionCommand or None")
+        if (
+            transition.run_id != self.record.run_id
+            or transition.entity_type is not EntityType.OBSERVATION
+            or transition.entity_id != self.record.observation_id
+            or transition.expected_state is not ObservationState.RUNNING
+            or transition.owner_epoch != self.owner_epoch
+            or transition.causal_reference is None
+            or transition.causal_reference.record_id != self.record.record_id
+            or transition.attempt_outcome is not None
+        ):
+            raise ValueError("terminal observation transition differs from its sample")
+        allowed_states = {
+            ObservationStatus.OK: frozenset({ObservationState.OK}),
+            ObservationStatus.PENDING: frozenset({ObservationState.PENDING}),
+            ObservationStatus.UNSUPPORTED: frozenset({ObservationState.UNSUPPORTED}),
+            ObservationStatus.ERROR: frozenset(
+                {
+                    ObservationState.ERROR,
+                    ObservationState.CANCELLED,
+                }
+            ),
+            ObservationStatus.TIMEOUT: frozenset({ObservationState.TIMED_OUT}),
+        }
+        if transition.new_state not in allowed_states[self.record.status]:
+            raise ValueError("sample status and terminal observation state disagree")
+
+
+@dataclass(frozen=True, slots=True)
+class CommittedObservationSample:
+    """One durable sample append and its optional terminal transition."""
+
+    record: ObservationRecord
+    idempotent_replay: bool
+    transition: CommittedTransition | None
+
+
+@dataclass(frozen=True, slots=True)
+class _BeginObservationSeriesOperation:
+    command: ObservationSeriesCommand
+    crash_hook: ObservationCrashHook | None
+
+    def execute(
+        self,
+        transaction: JournalTransaction,
+    ) -> tuple[CommittedTransition, CommittedTransition]:
+        command = self.command
+        _require_current_owner(
+            transaction,
+            cast("TransitionCommand[LifecycleState]", command.initial_transition),
+        )
+        _require_current_owner(
+            transaction,
+            cast("TransitionCommand[LifecycleState]", command.running_transition),
+        )
+        existing = _load_observation_series(transaction, command.observation_id)
+        if existing is None:
+            _reject_conflicting_observation_scope(transaction, command)
+            result = transaction.execute(
+                JournalStatement(
+                    """
+                    INSERT INTO observer_series (
+                        observation_id, run_id, scenario_id, event_id,
+                        checkpoint, observer_id, state
+                    ) VALUES (?, ?, ?, ?, ?, ?, 'scheduled')
+                    """,
+                    (
+                        command.observation_id,
+                        command.run_id,
+                        command.scenario_id,
+                        command.event_id,
+                        command.checkpoint,
+                        command.observer_id,
+                    ),
+                )
+            )
+            if result.rowcount != 1:
+                raise ProjectionIntegrityError(
+                    "observation series insertion did not affect one row"
+                )
+            _call_observation_crash_hook(
+                self.crash_hook,
+                ObservationMutationPhase.AFTER_SERIES_INSERT,
+            )
+        else:
+            expected = (
+                command.run_id,
+                command.scenario_id,
+                command.event_id,
+                command.checkpoint,
+                command.observer_id,
+            )
+            if existing[:5] != expected:
+                raise IdempotencyConflictError(
+                    "observation series identity differs from its replay"
+                )
+        initial = _ApplyTransitionOperation(
+            cast("TransitionCommand[LifecycleState]", command.initial_transition),
+            self.crash_hook,
+        ).execute(transaction)
+        running = _ApplyTransitionOperation(
+            cast("TransitionCommand[LifecycleState]", command.running_transition),
+            self.crash_hook,
+        ).execute(transaction)
+        return (initial, running)
+
+
+@dataclass(frozen=True, slots=True)
+class _AppendObservationSampleOperation:
+    command: ObservationSampleCommand
+    crash_hook: ObservationCrashHook | None
+
+    def execute(self, transaction: JournalTransaction) -> CommittedObservationSample:
+        command = self.command
+        record = command.record
+        _require_owner_epoch(
+            transaction,
+            run_id=record.run_id,
+            owner_epoch=command.owner_epoch,
+        )
+        series = _load_observation_series(transaction, record.observation_id)
+        if series is None:
+            raise IllegalTransitionError("observation sample series does not exist")
+        expected_series = (
+            record.run_id,
+            record.scenario_id,
+            record.event_id,
+            series[3],
+            record.observer_id,
+        )
+        if series[:5] != expected_series:
+            raise CrossRunReferenceError("observation sample scope differs from its series")
+
+        existing = _load_observation_sample_identity(
+            transaction,
+            sample_id=record.sample_id,
+            record_id=record.record_id,
+        )
+        if existing is not None:
+            _verify_observation_sample_row(existing, record)
+            transition = _apply_observation_terminal_transition(
+                transaction,
+                command,
+                self.crash_hook,
+            )
+            return CommittedObservationSample(
+                record=record,
+                idempotent_replay=True,
+                transition=transition,
+            )
+        if series[5] != ObservationState.RUNNING.value:
+            raise IllegalTransitionError("new samples require a running observation series")
+        _require_next_observation_sequence(transaction, record)
+        result = transaction.execute(
+            JournalStatement(
+                """
+                INSERT INTO observation_samples (
+                    sample_id, record_id, run_id, scenario_id, observation_id,
+                    sample_sequence, status, recorded_at, snapshot_id,
+                    evidence_json, error_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                _observation_sample_insert_values(record),
+            )
+        )
+        if result.rowcount != 1:
+            raise ProjectionIntegrityError("observation sample append did not insert one row")
+        _call_observation_crash_hook(
+            self.crash_hook,
+            ObservationMutationPhase.AFTER_SAMPLE_INSERT,
+        )
+        transition = _apply_observation_terminal_transition(
+            transaction,
+            command,
+            self.crash_hook,
+        )
+        return CommittedObservationSample(
+            record=record,
+            idempotent_replay=False,
+            transition=transition,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _ObservationSamplesOperation:
+    run_id: str
+    observation_id: str
+
+    def execute(self, transaction: JournalTransaction) -> tuple[ObservationRecord, ...]:
+        _require_run_exists(transaction, self.run_id)
+        result = transaction.execute(
+            JournalStatement(
+                """
+                SELECT
+                    observation_samples.record_id,
+                    observation_samples.run_id,
+                    observation_samples.scenario_id,
+                    observation_samples.observation_id,
+                    observation_samples.sample_id,
+                    observer_series.observer_id,
+                    observation_samples.sample_sequence,
+                    observation_samples.recorded_at,
+                    observation_samples.status,
+                    observer_series.event_id,
+                    observation_samples.snapshot_id,
+                    observation_samples.evidence_json,
+                    observation_samples.error_json
+                FROM observation_samples
+                JOIN observer_series
+                  ON observer_series.run_id = observation_samples.run_id
+                 AND observer_series.scenario_id = observation_samples.scenario_id
+                 AND observer_series.observation_id = observation_samples.observation_id
+                WHERE observation_samples.run_id = ?
+                  AND observation_samples.observation_id = ?
+                ORDER BY observation_samples.sample_sequence
+                LIMIT ?
+                """,
+                (self.run_id, self.observation_id, MAX_REPLAY_TRANSITIONS + 1),
+            )
+        )
+        if len(result.rows) > MAX_REPLAY_TRANSITIONS:
+            raise ProjectionIntegrityError(
+                "observation sample history exceeds the bounded replay limit"
+            )
+        return tuple(_observation_record_from_row(row) for row in result.rows)
+
+
+class ObservationRepository:
+    """Atomic single-writer persistence for observation series and samples."""
+
+    __slots__ = ("_crash_hook", "_service")
+
+    def __init__(
+        self,
+        service: JournalService,
+        *,
+        crash_hook: ObservationCrashHook | None = None,
+    ) -> None:
+        if not isinstance(  # pyright: ignore[reportUnnecessaryIsInstance]
+            service,
+            JournalService,
+        ):
+            raise TypeError("service must be a JournalService")
+        if crash_hook is not None and not callable(crash_hook):
+            raise TypeError("crash_hook must be callable")
+        self._service = service
+        self._crash_hook = crash_hook
+
+    async def begin_series(
+        self,
+        command: ObservationSeriesCommand,
+    ) -> tuple[CommittedTransition, CommittedTransition]:
+        """Create and start one series in one transaction."""
+        if type(command) is not ObservationSeriesCommand:
+            raise TypeError("command must be an ObservationSeriesCommand")
+        return await self._service.execute(
+            _BeginObservationSeriesOperation(command, self._crash_hook)
+        )
+
+    async def append_sample(
+        self,
+        command: ObservationSampleCommand,
+    ) -> CommittedObservationSample:
+        """Append one sanitized sample and optional terminal edge atomically."""
+        if type(command) is not ObservationSampleCommand:
+            raise TypeError("command must be an ObservationSampleCommand")
+        return await self._service.execute(
+            _AppendObservationSampleOperation(command, self._crash_hook)
+        )
+
+    async def samples(
+        self,
+        run_id: str,
+        observation_id: str,
+    ) -> tuple[ObservationRecord, ...]:
+        """Load one bounded append-ordered sample series."""
+        validate_run_id(run_id)
+        validate_planned_id(
+            observation_id,
+            expected_kind=PlannedIdKind.OBSERVATION,
+        )
+        return await self._service.execute(_ObservationSamplesOperation(run_id, observation_id))
+
+
+def _load_observation_series(
+    transaction: JournalTransaction,
+    observation_id: str,
+) -> tuple[object, ...] | None:
+    result = transaction.execute(
+        JournalStatement(
+            """
+            SELECT run_id, scenario_id, event_id, checkpoint, observer_id, state
+            FROM observer_series
+            WHERE observation_id = ?
+            """,
+            (observation_id,),
+        )
+    )
+    if not result.rows:
+        return None
+    row = cast("tuple[object, ...]", result.rows[0])
+    if len(row) != _OBSERVATION_SERIES_COLUMN_COUNT:
+        raise ProjectionIntegrityError("observation series row has an invalid shape")
+    return row
+
+
+def _reject_conflicting_observation_scope(
+    transaction: JournalTransaction,
+    command: ObservationSeriesCommand,
+) -> None:
+    result = transaction.execute(
+        JournalStatement(
+            """
+            SELECT observation_id
+            FROM observer_series
+            WHERE run_id = ? AND scenario_id = ?
+              AND checkpoint = ? AND observer_id = ?
+              AND (
+                    (event_id IS NULL AND ? IS NULL)
+                    OR event_id = ?
+              )
+            LIMIT 1
+            """,
+            (
+                command.run_id,
+                command.scenario_id,
+                command.checkpoint,
+                command.observer_id,
+                command.event_id,
+                command.event_id,
+            ),
+        )
+    )
+    if result.rows:
+        raise IdempotencyConflictError(
+            "observation scope already belongs to a different observation_id"
+        )
+
+
+def _require_owner_epoch(
+    transaction: JournalTransaction,
+    *,
+    run_id: str,
+    owner_epoch: int,
+) -> None:
+    result = transaction.execute(
+        JournalStatement(
+            "SELECT owner_epoch FROM runs WHERE run_id = ?",
+            (run_id,),
+        )
+    )
+    if not result.rows:
+        raise CrossRunReferenceError("observation run does not exist")
+    current = _integer(result.rows[0][0], name="run owner_epoch")
+    if current != owner_epoch:
+        raise StaleOwnerEpochError("observation owner epoch is stale")
+
+
+def _load_observation_sample_identity(
+    transaction: JournalTransaction,
+    *,
+    sample_id: str,
+    record_id: str,
+) -> tuple[object, ...] | None:
+    result = transaction.execute(
+        JournalStatement(
+            """
+            SELECT
+                observation_samples.record_id,
+                observation_samples.run_id,
+                observation_samples.scenario_id,
+                observation_samples.observation_id,
+                observation_samples.sample_id,
+                observer_series.observer_id,
+                observation_samples.sample_sequence,
+                observation_samples.recorded_at,
+                observation_samples.status,
+                observer_series.event_id,
+                observation_samples.snapshot_id,
+                observation_samples.evidence_json,
+                observation_samples.error_json
+            FROM observation_samples
+            JOIN observer_series
+              ON observer_series.run_id = observation_samples.run_id
+             AND observer_series.scenario_id = observation_samples.scenario_id
+             AND observer_series.observation_id = observation_samples.observation_id
+            WHERE observation_samples.sample_id = ?
+               OR observation_samples.record_id = ?
+            """,
+            (sample_id, record_id),
+        )
+    )
+    if len(result.rows) > 1:
+        raise IdempotencyConflictError("sample_id and record_id name different samples")
+    if not result.rows:
+        return None
+    row = cast("tuple[object, ...]", result.rows[0])
+    if len(row) != _OBSERVATION_SAMPLE_COLUMN_COUNT:
+        raise ProjectionIntegrityError("observation sample row has an invalid shape")
+    return row
+
+
+def _verify_observation_sample_row(
+    row: tuple[object, ...],
+    record: ObservationRecord,
+) -> None:
+    if row != _observation_sample_row_values(record):
+        raise IdempotencyConflictError("observation sample replay differs from durable evidence")
+
+
+def _require_next_observation_sequence(
+    transaction: JournalTransaction,
+    record: ObservationRecord,
+) -> None:
+    result = transaction.execute(
+        JournalStatement(
+            """
+            SELECT COALESCE(MAX(sample_sequence), 0) + 1
+            FROM observation_samples
+            WHERE run_id = ? AND observation_id = ?
+            """,
+            (record.run_id, record.observation_id),
+        )
+    )
+    expected = _integer(result.rows[0][0], name="observation sample sequence")
+    if record.sample_sequence != expected:
+        raise IdempotencyConflictError("observation sample sequence is not the next value")
+
+
+def _apply_observation_terminal_transition(
+    transaction: JournalTransaction,
+    command: ObservationSampleCommand,
+    crash_hook: ObservationCrashHook | None,
+) -> CommittedTransition | None:
+    transition = command.terminal_transition
+    if transition is None:
+        return None
+    return _ApplyTransitionOperation(
+        cast("TransitionCommand[LifecycleState]", transition),
+        crash_hook,
+    ).execute(transaction)
+
+
+def _observation_sample_insert_values(
+    record: ObservationRecord,
+) -> tuple[SqlValue, ...]:
+    row = _observation_sample_row_values(record)
+    return (
+        cast("str", row[4]),
+        cast("str", row[0]),
+        cast("str", row[1]),
+        cast("str", row[2]),
+        cast("str", row[3]),
+        cast("int", row[6]),
+        cast("str", row[8]),
+        cast("str", row[7]),
+        cast("str | None", row[10]),
+        cast("bytes", row[11]),
+        cast("bytes | None", row[12]),
+    )
+
+
+def _observation_sample_row_values(
+    record: ObservationRecord,
+) -> tuple[object, ...]:
+    evidence_json = _canonical_json_bytes([item.wire_dict() for item in record.evidence])
+    error_json = None if record.error is None else _canonical_json_bytes(record.error.wire_dict())
+    return (
+        record.record_id,
+        record.run_id,
+        record.scenario_id,
+        record.observation_id,
+        record.sample_id,
+        record.observer_id,
+        record.sample_sequence,
+        record.recorded_at,
+        record.status.value,
+        record.event_id,
+        record.snapshot_id,
+        evidence_json,
+        error_json,
+    )
+
+
+def _observation_record_from_row(row: Sequence[object]) -> ObservationRecord:
+    if len(row) != _OBSERVATION_SAMPLE_COLUMN_COUNT:
+        raise ProjectionIntegrityError("observation sample row has an invalid shape")
+    evidence_raw = _json_blob(row[11], name="observation evidence", allow_null=False)
+    error_raw = _json_blob(row[12], name="observation error", allow_null=True)
+    if not isinstance(evidence_raw, list):
+        raise ProjectionIntegrityError("observation evidence is not an array")
+    try:
+        evidence_items = cast("list[object]", evidence_raw)
+        evidence = tuple(ObserverEvidence.model_validate(item) for item in evidence_items)
+        error = None if error_raw is None else ObservationRecordError.model_validate(error_raw)
+        return ObservationRecord(
+            schema_version="1.0",
+            record_id=_text(row[0], name="observation record_id"),
+            run_id=_text(row[1], name="observation run_id"),
+            scenario_id=_text(row[2], name="observation scenario_id"),
+            observation_id=_text(row[3], name="observation_id"),
+            sample_id=_text(row[4], name="sample_id"),
+            observer_id=_text(row[5], name="observer_id"),
+            sample_sequence=_integer(row[6], name="sample sequence"),
+            recorded_at=_text(row[7], name="observation recorded_at"),
+            status=ObservationStatus(_text(row[8], name="observation status")),
+            event_id=_optional_text(row[9], name="observation event_id"),
+            snapshot_id=_optional_text(row[10], name="observation snapshot_id"),
+            evidence=evidence,
+            error=error,
+        )
+    except (TypeError, ValueError) as error:
+        raise ProjectionIntegrityError(
+            "observation sample contains invalid persisted evidence"
+        ) from error
+
+
+def _canonical_json_bytes(value: object) -> bytes:
+    try:
+        return json.dumps(
+            value,
+            ensure_ascii=True,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("ascii")
+    except (TypeError, ValueError, RecursionError) as error:
+        raise ValueError("observation evidence is not canonical JSON") from error
+
+
+def _json_blob(
+    value: object,
+    *,
+    name: str,
+    allow_null: bool,
+) -> object:
+    if value is None:
+        if allow_null:
+            return None
+        message = f"{name} is missing"
+        raise ProjectionIntegrityError(message)
+    if not isinstance(value, bytes):
+        message = f"{name} is not a BLOB"
+        raise ProjectionIntegrityError(message)
+    try:
+        return json.loads(
+            value.decode("ascii"),
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        RecursionError,
+        ValueError,
+    ) as error:
+        message = f"{name} is malformed"
+        raise ProjectionIntegrityError(message) from error
+
+
+def _bounded_control_free_text(value: object, *, name: str, maximum: int) -> str:
+    if (
+        type(value) is not str
+        or not 1 <= len(value) <= maximum
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
+        message = f"{name} must be bounded control-free text"
+        raise ValueError(message)
+    return value
 
 
 def _load_attempt_schedule(
@@ -2327,6 +3008,14 @@ def _parse_wall_time(value: str) -> datetime:
 def _call_crash_hook(
     hook: TransitionCrashHook | None,
     phase: TransitionMutationPhase | AttemptMutationPhase,
+) -> None:
+    if hook is not None:
+        hook(phase)
+
+
+def _call_observation_crash_hook(
+    hook: ObservationCrashHook | None,
+    phase: ObservationMutationPhase,
 ) -> None:
     if hook is not None:
         hook(phase)
