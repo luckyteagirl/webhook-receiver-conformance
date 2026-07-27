@@ -66,3 +66,47 @@ jobs:
 
       - name: Build wheel and source distribution
         run: uv build
+
+      - name: Smoke-test installed wheel and source distribution
+        shell: uv run python {0}
+        run: |
+          from pathlib import Path
+          import os
+          import subprocess
+          import sys
+
+          wheels = tuple(Path("dist").glob("*.whl"))
+          sdists = tuple(Path("dist").glob("*.tar.gz"))
+          assert len(wheels) == len(sdists) == 1, (wheels, sdists)
+          assert wheels[0].name.endswith("-py3-none-any.whl"), wheels[0]
+
+          smoke = (
+              "import webhook_receiver_conformance; "
+              "from importlib.metadata import version; "
+              "from webhook_receiver_conformance.version import VERSION_METADATA; "
+              "assert VERSION_METADATA.package == "
+              "version('webhook-receiver-conformance')"
+          )
+          for env, artifact in zip(
+              (".smoke-wheel", ".smoke-sdist"),
+              (wheels[0], sdists[0]),
+              strict=True,
+          ):
+              subprocess.check_call(
+                  ["uv", "venv", "--clear", "--python", sys.executable, env]
+              )
+              executable = Path(env) / (
+                  "Scripts/python.exe" if os.name == "nt" else "bin/python"
+              )
+              subprocess.check_call(
+                  [
+                      "uv",
+                      "pip",
+                      "install",
+                      "--no-deps",
+                      "--python",
+                      str(executable),
+                      str(artifact),
+                  ]
+              )
+              subprocess.check_call([str(executable), "-I", "-c", smoke])

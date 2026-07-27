@@ -1,4 +1,14 @@
 version: 2
+
+# Review policy for dependency pull requests:
+# - Every `security-sensitive-*` group requires focused review of its named trust
+#   boundary before merge; do not combine it with routine development updates.
+# - Transport review covers destination pinning, proxy/redirect behavior, TLS, and
+#   cancellation. Parser/schema review covers strictness, resource bounds, and
+#   unsafe object construction. Crypto review covers signing and secret handling.
+#   Template/report review covers terminal, HTML, XML, and structured-data escaping.
+# Repository-level reviewer enforcement belongs in CODEOWNERS and branch protection;
+# this file deliberately identifies the classes without inventing reviewer accounts.
 updates:
   - package-ecosystem: uv
     directory: /
@@ -6,8 +16,7 @@ updates:
       interval: weekly
     open-pull-requests-limit: 10
     groups:
-      # Security-sensitive transport changes require focused review.
-      transport-http:
+      security-sensitive-transport:
         patterns:
           - anyio
           - certifi
@@ -15,23 +24,20 @@ updates:
           - httpcore
           - httpx
           - idna
-      # Security-sensitive parsers and schema validators require focused review.
-      parser-schema:
+      security-sensitive-parser-schema:
         patterns:
           - jsonschema
           - jsonschema-specifications
           - pyyaml
           - referencing
           - rpds-py
-      # Reserved now so future signing dependencies cannot enter a routine group.
-      crypto-signing:
+      security-sensitive-crypto-signing:
         patterns:
           - cffi
           - cryptography
           - pynacl
           - pycryptodome
-      # Report/template boundaries require injection and escaping review.
-      template-report:
+      security-sensitive-template-report:
         patterns:
           - jinja2
           - markupsafe
