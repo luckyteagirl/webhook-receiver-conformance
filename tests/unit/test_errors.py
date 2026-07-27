@@ -28,6 +28,8 @@ from webhook_receiver_conformance.errors import (
 from webhook_receiver_conformance.types import DiagnosticCode, EntityId, IncidentId
 from webhook_receiver_conformance.version import VERSION_METADATA, VersionMetadata
 
+MAX_SAFE_DIAGNOSTIC_BYTES = 1024
+
 RESULT_VALUES = {
     "pass",
     "receiver_failure",
@@ -43,6 +45,7 @@ ERROR_VALUES = {
     "configuration_error",
     "unsupported_schema",
     "secret_reference_error",
+    "resource_limit",
     "planning_error",
     "fixture_error",
     "unsupported_capability",
@@ -101,6 +104,38 @@ def test_result_to_exit_mapping_is_total_and_preserves_distinct_names() -> None:
         CliExitCategory.HARNESS_FAILURE,
         ExitCode.HARNESS_FAILURE,
     )
+
+
+def test_configuration_resource_limit_is_invalid_input_with_safe_remediation() -> None:
+    diagnostic = Diagnostic(
+        category=ErrorCategory.RESOURCE_LIMIT,
+        code=DiagnosticCode("CFG_RESOURCE_LIMIT"),
+        message="Configuration exceeds a bounded input limit.",
+        retryable=False,
+        safe_details={
+            "input_class": "configuration",
+            "limit_name": "document_bytes",
+            "limit": 16_777_216,
+            "observed": "over_limit",
+        },
+        result_category=ResultCategory.INVALID_INPUT,
+        user_correctable=True,
+        field_path="$",
+        corrective_action="Reduce the configuration document below the supported limit.",
+    )
+
+    assert exit_for_result(diagnostic.result_category) == (
+        CliExitCategory.INVALID_INPUT,
+        ExitCode.INVALID_INPUT,
+    )
+    assert diagnostic.retryable is False
+    assert diagnostic.user_correctable is True
+    assert diagnostic.field_path == "$"
+    assert diagnostic.corrective_action is not None
+    assert diagnostic.incident_id is None
+    encoded = diagnostic.model_dump_json()
+    assert len(encoded.encode()) < MAX_SAFE_DIAGNOSTIC_BYTES
+    assert "secret-canary" not in encoded
 
 
 def test_diagnostic_serialization_round_trip_is_strict_and_immutable() -> None:

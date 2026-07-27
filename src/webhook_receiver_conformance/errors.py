@@ -98,6 +98,7 @@ class ErrorCategory(StrEnum):
     CONFIGURATION_ERROR = "configuration_error"
     UNSUPPORTED_SCHEMA = "unsupported_schema"
     SECRET_REFERENCE_ERROR = "secret_reference_error"  # noqa: S105
+    RESOURCE_LIMIT = "resource_limit"
     PLANNING_ERROR = "planning_error"
     FIXTURE_ERROR = "fixture_error"
     UNSUPPORTED_CAPABILITY = "unsupported_capability"
