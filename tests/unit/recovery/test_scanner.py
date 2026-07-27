@@ -17,6 +17,7 @@ from webhook_receiver_conformance.domain.enums import (
 )
 from webhook_receiver_conformance.journal.integrity import verify_resume_integrity
 from webhook_receiver_conformance.journal.repositories import (
+    AttemptMutationPhase,
     TransitionMutationPhase,
     TransitionRepository,
 )
@@ -94,9 +95,9 @@ class _AttemptSeed:
 
 @dataclass(frozen=True, slots=True)
 class _CrashAt:
-    target: TransitionMutationPhase
+    target: TransitionMutationPhase | AttemptMutationPhase
 
-    def __call__(self, phase: TransitionMutationPhase) -> None:
+    def __call__(self, phase: TransitionMutationPhase | AttemptMutationPhase) -> None:
         if phase is self.target:
             raise _InjectedCrashError(phase.value)
 
