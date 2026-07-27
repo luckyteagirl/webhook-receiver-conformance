@@ -9,6 +9,10 @@
 5. A timeout is an attempt observation, not proof that the receiver did not process the request.
 6. Restart and partial-processing cases require an enabled lifecycle profile or the controlled reference receiver.
 
+### Baseline references
+
+A scenario may declare `baselines` as mappings from one closed v0.1 `fault_class` token to a scenario ID. Structural schema validation closes each mapping and bounds the array. Model validation requires one mapping per distinct fault class in a multi-fault scenario, resolves every scenario ID, rejects self-references and cycles, and proves that each referenced scenario contains exactly the single fault class named by its mapping. A one-fault scenario may omit `baselines`; omission materializes as an empty array.
+
 ## Inventory
 
 | ID | Name | Motivation | Requirements | Correct result |

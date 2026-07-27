@@ -53,6 +53,7 @@ scenarios:
       retry:
         max_attempts: 1
         backoff: []
+        retry_on: []
   - observe:
       observer: receiver_state
       checkpoint: after_duplicate

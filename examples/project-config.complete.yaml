@@ -72,6 +72,7 @@ scenarios:
       retry:
         max_attempts: 1
         backoff: []
+        retry_on: []
   - observe:
       observer: receiver_state
       checkpoint: after_duplicate
@@ -110,6 +111,8 @@ scenarios:
         max_attempts: 2
         backoff:
         - 2s
+        retry_on:
+        - timed_out
         jitter: 100ms
   - observe:
       observer: receiver_state

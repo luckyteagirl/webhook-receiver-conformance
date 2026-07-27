@@ -788,6 +788,173 @@
       ],
       "description": "Physical observer polling duration of at least 10 milliseconds."
     },
+    "retry": {
+      "$comment": "For max_attempts > 1, model validation MUST require len(backoff) == max_attempts - 1 after exact duration parsing. retryable_statuses is present if and only if retry_on contains retryable_status. jitter is a non-negative magnitude consumed by internal jitter-policy-v1: sample an inclusive signed integer-nanosecond offset in [-jitter, +jitter], add it to the logical base backoff, and clamp the result at zero. Logical retry delays participate in clock scaling; transport timeouts remain physical monotonic durations.",
+      "type": "object",
+      "required": [
+        "max_attempts",
+        "backoff",
+        "retry_on"
+      ],
+      "properties": {
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "backoff": {
+          "type": "array",
+          "maxItems": 31,
+          "items": {
+            "$ref": "#/$defs/duration"
+          }
+        },
+        "retry_on": {
+          "type": "array",
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "timed_out",
+              "connection_failed",
+              "retryable_status"
+            ]
+          }
+        },
+        "retryable_statuses": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "oneOf": [
+              {
+                "type": "integer",
+                "minimum": 100,
+                "maximum": 599
+              },
+              {
+                "enum": [
+                  "2xx",
+                  "3xx",
+                  "4xx",
+                  "5xx"
+                ]
+              }
+            ]
+          }
+        },
+        "jitter": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/duration"
+            }
+          ],
+          "default": "0ns"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "max_attempts": {
+                "const": 1
+              }
+            },
+            "required": [
+              "max_attempts"
+            ]
+          },
+          "then": {
+            "properties": {
+              "backoff": {
+                "maxItems": 0
+              },
+              "retry_on": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "retry_on": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "retry_on": {
+                "contains": {
+                  "const": "retryable_status"
+                }
+              }
+            },
+            "required": [
+              "retry_on"
+            ]
+          },
+          "then": {
+            "required": [
+              "retryable_statuses"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "retryable_statuses"
+              ]
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "fault_class": {
+      "$comment": "The v0.1 fault-class vocabulary is finite and closed.",
+      "enum": [
+        "mutation:remove-json-pointer-v1",
+        "mutation:replace-json-value-v1",
+        "mutation:replace-json-type-v1",
+        "mutation:add-json-field-v1",
+        "mutation:change-event-id-field-v1",
+        "mutation:change-event-type-field-v1",
+        "mutation:truncate-bytes-v1",
+        "mutation:invalid-json-v1",
+        "mutation:content-type-mismatch-v1",
+        "mutation:alter-after-signing-v1",
+        "mutation:stale-signature-timestamp-v1",
+        "mutation:wrong-signing-key-v1",
+        "mutation:missing-signature-v1",
+        "mutation:malformed-signature-v1",
+        "mutation:oversized-body-v1",
+        "delivery:duplicate",
+        "delivery:concurrent",
+        "delivery:dependency-order-reversal",
+        "retry:timed_out",
+        "retry:connection_failed",
+        "retry:retryable_status",
+        "lifecycle:restart"
+      ]
+    },
+    "baseline": {
+      "type": "object",
+      "required": [
+        "fault_class",
+        "scenario"
+      ],
+      "properties": {
+        "fault_class": {
+          "$ref": "#/$defs/fault_class"
+        },
+        "scenario": {
+          "$ref": "#/$defs/name"
+        }
+      },
+      "additionalProperties": false
+    },
     "mutation": {
       "oneOf": [
         {
@@ -2047,25 +2214,7 @@
                   "$ref": "#/$defs/duration"
                 },
                 "retry": {
-                  "type": "object",
-                  "properties": {
-                    "max_attempts": {
-                      "type": "integer",
-                      "minimum": 1,
-                      "maximum": 32
-                    },
-                    "backoff": {
-                      "type": "array",
-                      "items": {
-                        "$ref": "#/$defs/duration"
-                      },
-                      "maxItems": 31
-                    },
-                    "jitter": {
-                      "$ref": "#/$defs/duration"
-                    }
-                  },
-                  "additionalProperties": false
+                  "$ref": "#/$defs/retry"
                 }
               },
               "additionalProperties": false
@@ -2199,6 +2348,15 @@
           "items": {
             "$ref": "#/$defs/assertion"
           }
+        },
+        "baselines": {
+          "$comment": "Model validation MUST require fault_class values to be unique within this array, every scenario reference to resolve, no reference to the containing scenario, an acyclic baseline graph, exact coverage of every distinct fault class in a multi-fault scenario, and proof that each referenced scenario contains exactly one fault class matching the mapping.",
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/baseline"
+          },
+          "default": []
         },
         "failure_policy": {
           "enum": [
