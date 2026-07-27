@@ -31,6 +31,7 @@ from webhook_receiver_conformance.network.policy import (
     normalize_host,
     parse_destination_policy,
     validate_authorized_destination,
+    validate_destination_policy,
 )
 
 if TYPE_CHECKING:
@@ -627,6 +628,32 @@ def test_phase_two_rejects_mutated_or_deserialized_policy_provenance() -> None:
     with pytest.raises(DestinationPolicyError) as deserialized:
         authorize_resolved_addresses(deserialized_policy, ("10.0.0.1",))
     assert deserialized.value.code is PolicyErrorCode.PREFLIGHT_CONFIGURATION_INVALID
+
+
+def test_phase_one_validator_rejects_copied_and_mutated_policy_authority() -> None:
+    policy = parse_destination_policy(
+        _receiver(
+            url="http://receiver.test:8080/hook",
+            target_profile="private-allowlist",
+            allowed_hosts=["receiver.test"],
+            allowed_ports=[8080],
+        )
+    )
+    assert validate_destination_policy(policy) is policy
+
+    copied = copy.copy(policy)
+    with pytest.raises(DestinationPolicyError) as copied_error:
+        validate_destination_policy(copied)
+    assert copied_error.value.code is PolicyErrorCode.PREFLIGHT_CONFIGURATION_INVALID
+
+    original_host = policy.destination.host
+    try:
+        object.__setattr__(policy.destination, "host", "evil.test")
+        with pytest.raises(DestinationPolicyError) as mutated_error:
+            validate_destination_policy(policy)
+        assert mutated_error.value.code is PolicyErrorCode.PREFLIGHT_CONFIGURATION_INVALID
+    finally:
+        object.__setattr__(policy.destination, "host", original_host)
 
 
 def test_copy_and_field_reconstruction_cannot_turn_loopback_into_public_authority() -> None:

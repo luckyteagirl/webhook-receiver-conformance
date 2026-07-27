@@ -228,7 +228,7 @@ def authorize_resolved_addresses(
     candidates: Sequence[str] | None = None,
 ) -> AuthorizedDestination:
     """Validate every supplied resolver candidate without performing resolution."""
-    _validate_policy_provenance(policy)
+    validate_destination_policy(policy)
     if candidates is None:
         literal = policy.destination.literal_address
         if literal is None:
@@ -264,6 +264,12 @@ def authorize_resolved_addresses(
         addresses=ordered,
         _seal=_AUTHORIZED_CONSTRUCTOR_SEAL,
     )
+
+
+def validate_destination_policy(policy: DestinationPolicy) -> DestinationPolicy:
+    """Validate phase-one authority before a resolver consumes destination fields."""
+    _validate_policy_provenance(policy)
+    return policy
 
 
 def validate_authorized_destination(
