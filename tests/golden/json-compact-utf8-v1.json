@@ -1,0 +1,94 @@
+{
+  "serializer_id": "json-compact-utf8-v1",
+  "encoding": "UTF-8 without BOM",
+  "separators": {
+    "member": ",",
+    "name": ":",
+    "insignificant_whitespace": false
+  },
+  "escaping": "JSON string escaping with Unicode scalar values emitted as UTF-8 and solidus unescaped",
+  "key_order": "ascending UTF-16 big-endian code units",
+  "numeric_domain": {
+    "kind": "safe-integer-only",
+    "minimum": -9007199254740991,
+    "maximum": 9007199254740991,
+    "fractional_or_exponent_lexemes": "rejected"
+  },
+  "duplicate_member_names": "rejected",
+  "vectors": [
+    {
+      "name": "compact-separators-and-key-order",
+      "input_json_text": "{\n  \"z\": 1,\n  \"a\": [true, null, \"x\"]\n}",
+      "expected_json_text": "{\"a\":[true,null,\"x\"],\"z\":1}"
+    },
+    {
+      "name": "unicode-is-direct-utf8",
+      "input_value": {
+        "é": "雪",
+        "emoji": "😀"
+      },
+      "expected_json_text": "{\"emoji\":\"😀\",\"é\":\"雪\"}",
+      "expected_utf8_hex": "7b22656d6f6a69223a22f09f9880222c22c3a9223a22e99baa227d"
+    },
+    {
+      "name": "string-escaping",
+      "input_value": {
+        "text": "\"/\\\b\f\n\r\t\u0000"
+      },
+      "expected_json_text": "{\"text\":\"\\\"/\\\\\\b\\f\\n\\r\\t\\u0000\"}"
+    },
+    {
+      "name": "utf16-code-unit-order",
+      "input_value": {
+        "": 1,
+        "😀": 2
+      },
+      "expected_json_text": "{\"😀\":2,\"\":1}"
+    },
+    {
+      "name": "safe-integer-boundaries-and-negative-zero",
+      "input_json_text": "[-9007199254740991,9007199254740991,-0]",
+      "expected_json_text": "[-9007199254740991,9007199254740991,0]"
+    },
+    {
+      "name": "empty-object-member-name",
+      "input_value": {
+        "a": 2,
+        "": 1
+      },
+      "expected_json_text": "{\"\":1,\"a\":2}"
+    }
+  ],
+  "rejected_inputs": [
+    {
+      "name": "duplicate-member-name",
+      "input_json_text": "{\"a\":1,\"a\":2}",
+      "diagnostic_code": "MUT_STRUCTURAL_JSON_DUPLICATE_MEMBER"
+    },
+    {
+      "name": "fractional-number",
+      "input_json_text": "{\"n\":1.0}",
+      "diagnostic_code": "MUT_STRUCTURAL_JSON_NUMBER_UNSUPPORTED"
+    },
+    {
+      "name": "exponent-number",
+      "input_json_text": "{\"n\":1e0}",
+      "diagnostic_code": "MUT_STRUCTURAL_JSON_NUMBER_UNSUPPORTED"
+    },
+    {
+      "name": "unsafe-positive-integer",
+      "input_json_text": "{\"n\":9007199254740992}",
+      "diagnostic_code": "MUT_STRUCTURAL_JSON_NUMBER_UNSUPPORTED"
+    },
+    {
+      "name": "unsafe-negative-integer",
+      "input_json_text": "{\"n\":-9007199254740992}",
+      "diagnostic_code": "MUT_STRUCTURAL_JSON_NUMBER_UNSUPPORTED"
+    },
+    {
+      "name": "lone-surrogate",
+      "input_json_text": "{\"s\":\"\\ud800\"}",
+      "diagnostic_code": "MUT_STRUCTURAL_JSON_UNICODE_UNSUPPORTED"
+    }
+  ]
+}
