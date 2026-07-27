@@ -7,7 +7,7 @@ import re
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from enum import StrEnum
 from fractions import Fraction
-from typing import Annotated, Any, ClassVar, Literal, Self, cast
+from typing import Annotated, Any, ClassVar, Literal, Self, cast, get_args
 from urllib.parse import urlsplit
 
 from pydantic import (
@@ -55,6 +55,12 @@ MAX_ASSERTION_STATES = 64
 MAX_PARTIAL_PREDICATES = 64
 MAX_SCENARIO_ASSERTIONS = 256
 MIN_COMPOSITE_ASSERTION_ITEMS = 2
+MAX_SCALE_LENGTH = 32
+MAX_PROJECT_FIXTURES = 1000
+MAX_PROJECT_SIGNERS = 32
+MAX_PROJECT_OBSERVERS = 16
+MAX_PROJECT_LIFECYCLES = 16
+MAX_PROJECT_SCENARIOS = 256
 CONTROL_CHARACTER_LIMIT = 32
 DELETE_CHARACTER_CODEPOINT = 127
 MINIMUM_SCALE = Fraction(1, 1000)
@@ -187,6 +193,110 @@ class FrozenDict[T](Mapping[str, T]):
             other_mapping = cast("Mapping[object, object]", other)
             return dict(self.__items) == dict(other_mapping.items())
         return NotImplemented
+
+
+class NamedMap[T](Mapping[str, T]):
+    """Immutable profile-name keyed map with a strict JSON-object boundary."""
+
+    __items: tuple[tuple[str, T], ...]
+    __slots__ = ("__items",)
+
+    def __init__(self, values: dict[str, T]) -> None:
+        if type(values) is not dict:
+            msg = "NamedMap construction requires a dictionary"
+            raise ValueError(msg)
+        materialized: tuple[tuple[str, T], ...] = tuple(values.items())
+
+        seen: set[str] = set()
+        for key, _value in materialized:
+            if _PROFILE_NAME.fullmatch(key) is None:
+                msg = "named-map keys must be profile names"
+                raise ValueError(msg)
+            if key in seen:
+                msg = f"NamedMap keys must be unique; duplicate key: {key!r}"
+                raise ValueError(msg)
+            seen.add(key)
+        object.__setattr__(self, "_NamedMap__items", materialized)
+
+    def __setattr__(self, _name: str, _value: object) -> None:
+        msg = "NamedMap is immutable"
+        raise AttributeError(msg)
+
+    def __delattr__(self, _name: str) -> None:
+        msg = "NamedMap is immutable"
+        raise AttributeError(msg)
+
+    def __getitem__(self, key: str) -> T:
+        for candidate, value in self.__items:
+            if candidate == key:
+                return value
+        raise KeyError(key)
+
+    def __iter__(self) -> Iterator[str]:
+        return (key for key, _value in self.__items)
+
+    def __len__(self) -> int:
+        return len(self.__items)
+
+    def __repr__(self) -> str:
+        return f"NamedMap({dict(self.__items)!r})"
+
+    def __hash__(self) -> int:
+        return hash(frozenset(self.__items))
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, Mapping):
+            other_mapping = cast("Mapping[object, object]", other)
+            return dict(self.__items) == dict(other_mapping.items())
+        return NotImplemented
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls,
+        source_type: Any,
+        handler: GetCoreSchemaHandler,
+    ) -> CoreSchema:
+        arguments = get_args(source_type)
+        value_type = arguments[0] if arguments else Any
+        value_schema = handler.generate_schema(value_type)
+        dictionary_schema = core_schema.dict_schema(
+            keys_schema=core_schema.str_schema(strict=True, pattern=_PROFILE_NAME.pattern),
+            values_schema=value_schema,
+        )
+
+        def validate(
+            value: object,
+            nested_handler: core_schema.ValidatorFunctionWrapHandler,
+        ) -> NamedMap[object]:
+            if isinstance(value, cls):
+                value = dict(cast("NamedMap[object]", value).items())
+            elif type(value) is not dict:
+                msg = "named maps must be provided as dictionaries"
+                raise ValueError(msg)
+            validated = nested_handler(value)
+            if not isinstance(validated, dict):
+                msg = "named-map validation did not produce a dictionary"
+                raise TypeError(msg)
+            return NamedMap[object](cast("dict[str, object]", validated))
+
+        def serialize(
+            value: object,
+            nested_handler: SerializerFunctionWrapHandler,
+        ) -> object:
+            if not isinstance(value, cls):
+                msg = "named-map serializer received an invalid value"
+                raise TypeError(msg)
+            named_map = cast("NamedMap[object]", value)
+            return nested_handler(dict(named_map.items()))
+
+        return core_schema.no_info_wrap_validator_function(
+            validate,
+            dictionary_schema,
+            serialization=core_schema.wrap_serializer_function_ser_schema(
+                serialize,
+                schema=dictionary_schema,
+            ),
+        )
 
 
 class _FrozenJsonArray(tuple["FrozenJsonValue", ...]):
@@ -422,6 +532,9 @@ class Scale(str):
     __slots__ = ()
 
     def __new__(cls, value: str) -> Self:
+        if len(value) > MAX_SCALE_LENGTH:
+            msg = "scale cannot exceed 32 characters"
+            raise ValueError(msg)
         if _SCALE.fullmatch(value) is None:
             msg = "scale must be a canonical decimal string"
             raise ValueError(msg)
@@ -1697,6 +1810,82 @@ class ScenarioConfig(_ScenarioConfigBase):
             msg = "assertions must contain between 1 and 256 entries"
             raise ValueError(msg)
         return value
+
+
+class ProjectConfig(ConfigModel):
+    schema_version: Annotated[StrictInt, Field(ge=1, le=1)]
+    project: ProjectSettings
+    receiver: ReceiverConfig
+    fixtures: FrozenSequence[FixtureConfig]
+    signers: NamedMap[SignerConfig]
+    observers: NamedMap[ObserverConfig]
+    lifecycles: NamedMap[LifecycleProfile] = NamedMap[LifecycleProfile]({})
+    clock: ClockConfig
+    limits: LimitsConfig
+    scenarios: FrozenSequence[ScenarioConfig]
+    reports: ReportsConfig
+
+    @field_validator("fixtures")
+    @classmethod
+    def validate_fixtures(
+        cls,
+        value: tuple[FixtureConfig, ...],
+    ) -> tuple[FixtureConfig, ...]:
+        if not 1 <= len(value) <= MAX_PROJECT_FIXTURES:
+            msg = "fixtures must contain between 1 and 1000 entries"
+            raise ValueError(msg)
+        return value
+
+    @field_validator("signers")
+    @classmethod
+    def validate_signers(cls, value: NamedMap[SignerConfig]) -> NamedMap[SignerConfig]:
+        if not 1 <= len(value) <= MAX_PROJECT_SIGNERS:
+            msg = "signers must contain between 1 and 32 entries"
+            raise ValueError(msg)
+        return value
+
+    @field_validator("observers")
+    @classmethod
+    def validate_observers(
+        cls,
+        value: NamedMap[ObserverConfig],
+    ) -> NamedMap[ObserverConfig]:
+        if len(value) > MAX_PROJECT_OBSERVERS:
+            msg = "observers cannot contain more than 16 entries"
+            raise ValueError(msg)
+        return value
+
+    @field_validator("lifecycles")
+    @classmethod
+    def validate_lifecycles(
+        cls,
+        value: NamedMap[LifecycleProfile],
+    ) -> NamedMap[LifecycleProfile]:
+        if len(value) > MAX_PROJECT_LIFECYCLES:
+            msg = "lifecycles cannot contain more than 16 entries"
+            raise ValueError(msg)
+        return value
+
+    @field_validator("scenarios")
+    @classmethod
+    def validate_scenarios(
+        cls,
+        value: tuple[ScenarioConfig, ...],
+    ) -> tuple[ScenarioConfig, ...]:
+        if not 1 <= len(value) <= MAX_PROJECT_SCENARIOS:
+            msg = "scenarios must contain between 1 and 256 entries"
+            raise ValueError(msg)
+        return value
+
+    @model_validator(mode="after")
+    def validate_restart_structure(self) -> ProjectConfig:
+        contains_restart = any(
+            isinstance(step, RestartStep) for scenario in self.scenarios for step in scenario.steps
+        )
+        if contains_restart and not self.lifecycles:
+            msg = "a restart step requires at least one lifecycle"
+            raise ValueError(msg)
+        return self
 
 
 def _validate_http_uri(value: str) -> None:

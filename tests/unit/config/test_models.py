@@ -8,9 +8,12 @@ import json
 from collections import UserDict
 from copy import deepcopy
 from fractions import Fraction
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
+import yaml
+from jsonschema import Draft202012Validator
 from pydantic import TypeAdapter, ValidationError
 
 from webhook_receiver_conformance.config import models as config_models
@@ -58,6 +61,7 @@ from webhook_receiver_conformance.config.models import (
     MalformedSignatureMutation,
     MissingSignatureMutation,
     MutationConfig,
+    NamedMap,
     NoPartialSideEffectAssertion,
     NullTypedValue,
     ObjectTypedValue,
@@ -71,6 +75,7 @@ from webhook_receiver_conformance.config.models import (
     PositiveDuration,
     Predicate,
     ProcessingCountAssertion,
+    ProjectConfig,
     ProjectSettings,
     RealClockConfig,
     ReceiverConfig,
@@ -122,7 +127,10 @@ from webhook_receiver_conformance.errors import (
     ResultCategory,
     exit_for_result,
 )
+from webhook_receiver_conformance.types import DiagnosticCode
 from webhook_receiver_conformance.version import VERSION_METADATA
+
+PROJECT_ROOT = Path(__file__).parents[3]
 
 
 class _ProbeModel(ConfigModel):
@@ -148,6 +156,26 @@ def _receiver_timeouts() -> dict[str, str]:
 
 def _observer_timeouts() -> dict[str, str]:
     return {"connect": "5s", "read": "5s", "total": "30s"}
+
+
+def _load_project_example(filename: str) -> dict[str, object]:
+    parsed: object = yaml.safe_load(
+        (PROJECT_ROOT / "examples" / filename).read_text(encoding="utf-8")
+    )
+    if not isinstance(parsed, dict):
+        msg = f"{filename} must contain a YAML object"
+        raise TypeError(msg)
+    return cast("dict[str, object]", parsed)
+
+
+def _project_schema_validator() -> Draft202012Validator:
+    parsed: object = json.loads(
+        (PROJECT_ROOT / "schemas" / "project-config.schema.json").read_text(encoding="utf-8")
+    )
+    if not isinstance(parsed, dict):
+        msg = "project schema must be a JSON object"
+        raise TypeError(msg)
+    return Draft202012Validator(cast("dict[str, object]", parsed))
 
 
 def _assert_model_wire_round_trip(model: ConfigModel, model_type: type[ConfigModel]) -> None:
@@ -2829,6 +2857,420 @@ def test_stage_b1_scenario_maximum_collection_bounds() -> None:
         scenario_type.model_validate(payload)
 
 
+def test_scale_enforces_schema_maximum_string_length_before_fraction_parsing() -> None:
+    at_limit = "1." + ("0" * 30)
+    over_limit = "1." + ("0" * 31)
+    assert len(at_limit) == 32
+    assert TypeAdapter(Scale).validate_python(at_limit).fraction == Fraction(1)
+    with pytest.raises(ValidationError, match="32 characters"):
+        TypeAdapter(Scale).validate_python(over_limit)
+
+
+def test_named_map_validates_typed_values_and_serializes_as_a_json_object() -> None:
+    adapter: TypeAdapter[NamedMap[FixtureConfig]] = TypeAdapter(NamedMap[FixtureConfig])
+    source: dict[str, object] = {
+        "payment": {
+            "id": "payment",
+            "path": "fixtures/payment.json",
+            "media_type": "application/json",
+        }
+    }
+    named = adapter.validate_python(source)
+    source["payment"] = {
+        "id": "changed",
+        "path": "changed",
+        "media_type": "text/plain",
+    }
+    source["later"] = {}
+
+    assert isinstance(named, NamedMap)
+    assert named["payment"].id == "payment"
+    wire = adapter.dump_python(named, mode="json", exclude_none=True)
+    assert wire == {
+        "payment": {
+            "id": "payment",
+            "path": "fixtures/payment.json",
+            "media_type": "application/json",
+            "event_id_pointer": "/id",
+            "event_type_pointer": "/type",
+        }
+    }
+    assert adapter.validate_python(named) == named
+    assert adapter.validate_python(json.loads(json.dumps(wire))) == named
+
+
+def test_named_map_is_immutable_order_independent_and_rejects_untrusted_construction() -> None:
+    first = NamedMap({"alpha": 1, "beta": 2})
+    second = NamedMap({"beta": 2, "alpha": 1})
+    assert first == second
+    assert hash(first) == hash(second)
+
+    with pytest.raises(AttributeError, match="NamedMap is immutable"):
+        first._NamedMap__items = (("changed", 1),)  # type: ignore[attr-defined]  # noqa: SLF001
+    with pytest.raises(ValueError, match="construction requires a dictionary"):
+        NamedMap(UserDict({"alpha": 1}))  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="construction requires a dictionary"):
+        NamedMap(iter([("alpha", 1), ("alpha", 2)]))  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        UserDict(
+            {
+                "payment": {
+                    "id": "payment",
+                    "path": "payment.json",
+                    "media_type": "application/json",
+                }
+            }
+        ),
+        (),
+        (
+            (
+                "payment",
+                {
+                    "id": "payment",
+                    "path": "payment.json",
+                    "media_type": "application/json",
+                },
+            ),
+        ),
+        {"Payment": {"id": "payment", "path": "p", "media_type": "text/plain"}},
+        {"x" * 65: {"id": "payment", "path": "p", "media_type": "text/plain"}},
+        {1: {"id": "payment", "path": "p", "media_type": "text/plain"}},
+        {"payment": {"id": "payment", "path": "p"}},
+    ],
+)
+def test_named_map_rejects_non_dict_boundaries_bad_keys_and_invalid_values(
+    value: object,
+) -> None:
+    with pytest.raises(ValidationError):
+        TypeAdapter(NamedMap[FixtureConfig]).validate_python(value)
+
+
+@pytest.mark.parametrize(
+    "filename",
+    ["project-config.minimal.yaml", "project-config.complete.yaml"],
+)
+def test_yaml_examples_validate_to_immutable_schema_valid_project_configs(
+    filename: str,
+) -> None:
+    payload = _load_project_example(filename)
+    signers_source = cast("dict[str, object]", payload["signers"])
+    scenarios_source = cast("list[object]", payload["scenarios"])
+    model = ProjectConfig.model_validate(payload)
+    signers_source.clear()
+    scenarios_source.clear()
+
+    assert model.schema_version == 1
+    assert isinstance(model.signers, NamedMap)
+    assert len(model.signers) >= 1
+    assert len(model.scenarios) >= 1
+    wire = model.to_wire()
+    assert isinstance(wire["signers"], dict)
+    assert isinstance(wire["observers"], dict)
+    assert isinstance(wire["lifecycles"], dict)
+    _project_schema_validator().validate(wire)  # pyright: ignore[reportUnknownMemberType]
+    _assert_model_wire_round_trip(model, ProjectConfig)
+
+
+ROOT_REQUIRED_FIELDS = (
+    "schema_version",
+    "project",
+    "receiver",
+    "fixtures",
+    "signers",
+    "observers",
+    "clock",
+    "limits",
+    "scenarios",
+    "reports",
+)
+
+
+@pytest.mark.parametrize("field", ROOT_REQUIRED_FIELDS)
+def test_project_config_requires_each_authoritative_root_field(field: str) -> None:
+    payload = _load_project_example("project-config.minimal.yaml")
+    del payload[field]
+    with pytest.raises(ValidationError):
+        ProjectConfig.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    "version",
+    [True, 1.0, "1", 2],
+)
+def test_project_config_schema_version_is_directly_strict_and_exact(
+    version: object,
+) -> None:
+    payload = _load_project_example("project-config.minimal.yaml")
+    payload["schema_version"] = version
+    with pytest.raises(ValidationError):
+        ProjectConfig.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [*ROOT_REQUIRED_FIELDS, "lifecycles"],
+)
+def test_project_config_rejects_explicit_null_at_every_root_field(field: str) -> None:
+    payload = _load_project_example("project-config.minimal.yaml")
+    payload[field] = None
+    with pytest.raises(ValidationError, match="cannot be null"):
+        ProjectConfig.model_validate(payload)
+
+
+def test_project_config_rejects_unknown_root_fields_and_configurable_methods() -> None:
+    payload = _load_project_example("project-config.minimal.yaml")
+    with pytest.raises(ValidationError):
+        ProjectConfig.model_validate({**payload, "unknown": True})
+
+    root_method = deepcopy(payload)
+    root_method["method"] = "PUT"
+    with pytest.raises(ValidationError):
+        ProjectConfig.model_validate(root_method)
+
+    receiver_method = deepcopy(payload)
+    receiver = cast("dict[str, object]", receiver_method["receiver"])
+    receiver["method"] = "PUT"
+    with pytest.raises(ValidationError):
+        ProjectConfig.model_validate(receiver_method)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("fixtures", ()),
+        ("fixtures", ({"id": "f", "path": "f", "media_type": "text/plain"},)),
+        ("scenarios", ()),
+        ("signers", ()),
+        ("observers", ()),
+        ("lifecycles", ()),
+    ],
+)
+def test_project_config_rejects_tuple_collection_boundaries(
+    field: str,
+    value: object,
+) -> None:
+    payload = _load_project_example("project-config.minimal.yaml")
+    payload[field] = value
+    with pytest.raises(ValidationError):
+        ProjectConfig.model_validate(payload)
+
+
+@pytest.mark.parametrize("field", ["signers", "observers", "lifecycles"])
+def test_project_config_rejects_generic_mapping_boundaries(field: str) -> None:
+    payload = _load_project_example("project-config.minimal.yaml")
+    mapping = cast("dict[str, object]", payload[field])
+    payload[field] = UserDict(mapping)
+    with pytest.raises(ValidationError, match="provided as dictionaries"):
+        ProjectConfig.model_validate(payload)
+
+
+def _lifecycle_payload() -> dict[str, object]:
+    return {
+        "enabled": False,
+        "stop_argv": ["control", "stop"],
+        "start_argv": ["control", "start"],
+        "restart_argv": ["control", "restart"],
+        "working_directory": ".",
+        "environment_allowlist": ["PATH"],
+        "timeout": "1s",
+        "readiness_observer": "receiver_state",
+    }
+
+
+@pytest.mark.parametrize(
+    ("field", "mapping"),
+    [
+        (
+            "signers",
+            {
+                "Bad": {
+                    "profile": "generic-hmac-sha256",
+                    "secret": {"env": "WEBHOOK_SECRET"},
+                }
+            },
+        ),
+        (
+            "observers",
+            {
+                "bad.key": {
+                    "type": "command",
+                    "argv": ["observer"],
+                    "timeout": "1s",
+                }
+            },
+        ),
+        ("lifecycles", {"_bad": _lifecycle_payload()}),
+    ],
+)
+def test_project_named_maps_reject_non_profile_keys(
+    field: str,
+    mapping: dict[str, object],
+) -> None:
+    payload = _load_project_example("project-config.minimal.yaml")
+    payload[field] = mapping
+    with pytest.raises(ValidationError):
+        ProjectConfig.model_validate(payload)
+
+
+def test_project_named_maps_revalidate_prebuilt_values_against_requested_types() -> None:
+    payload = _load_project_example("project-config.minimal.yaml")
+    payload["signers"] = NamedMap({"not_a_signer": 1})
+    with pytest.raises(ValidationError):
+        ProjectConfig.model_validate(payload)
+
+    original = ProjectConfig.model_validate(_load_project_example("project-config.minimal.yaml"))
+    reused_wire = original.to_wire()
+    reused_wire["signers"] = original.signers
+    reused = ProjectConfig.model_validate(reused_wire)
+    assert reused.signers == original.signers
+
+
+def _repeated_named_map[T](value: T, count: int) -> NamedMap[T]:
+    return NamedMap({f"profile_{index}": value for index in range(count)})
+
+
+def test_project_collection_validators_cover_exact_minimum_and_maximum_boundaries() -> None:
+    model = ProjectConfig.model_validate(_load_project_example("project-config.minimal.yaml"))
+    fixture = model.fixtures[0]
+    scenario = model.scenarios[0]
+    signer = next(iter(model.signers.values()))
+    observer = next(iter(model.observers.values()))
+    lifecycle = LifecycleProfile.model_validate(_lifecycle_payload())
+
+    assert len(ProjectConfig.validate_fixtures((fixture,))) == 1
+    assert len(ProjectConfig.validate_fixtures((fixture,) * 1000)) == 1000
+    with pytest.raises(ValueError, match="fixtures must contain"):
+        ProjectConfig.validate_fixtures(())
+    with pytest.raises(ValueError, match="fixtures must contain"):
+        ProjectConfig.validate_fixtures((fixture,) * 1001)
+
+    assert len(ProjectConfig.validate_signers(_repeated_named_map(signer, 1))) == 1
+    assert len(ProjectConfig.validate_signers(_repeated_named_map(signer, 32))) == 32
+    with pytest.raises(ValueError, match="signers must contain"):
+        ProjectConfig.validate_signers(_repeated_named_map(signer, 0))
+    with pytest.raises(ValueError, match="signers must contain"):
+        ProjectConfig.validate_signers(_repeated_named_map(signer, 33))
+
+    assert len(ProjectConfig.validate_observers(_repeated_named_map(observer, 0))) == 0
+    assert len(ProjectConfig.validate_observers(_repeated_named_map(observer, 16))) == 16
+    with pytest.raises(ValueError, match="observers cannot contain"):
+        ProjectConfig.validate_observers(_repeated_named_map(observer, 17))
+
+    assert len(ProjectConfig.validate_lifecycles(_repeated_named_map(lifecycle, 0))) == 0
+    assert len(ProjectConfig.validate_lifecycles(_repeated_named_map(lifecycle, 16))) == 16
+    with pytest.raises(ValueError, match="lifecycles cannot contain"):
+        ProjectConfig.validate_lifecycles(_repeated_named_map(lifecycle, 17))
+
+    assert len(ProjectConfig.validate_scenarios((scenario,))) == 1
+    assert len(ProjectConfig.validate_scenarios((scenario,) * 256)) == 256
+    with pytest.raises(ValueError, match="scenarios must contain"):
+        ProjectConfig.validate_scenarios(())
+    with pytest.raises(ValueError, match="scenarios must contain"):
+        ProjectConfig.validate_scenarios((scenario,) * 257)
+
+
+def _project_with_restart(*, lifecycle_mode: str) -> dict[str, object]:
+    payload = _load_project_example("project-config.minimal.yaml")
+    scenarios = cast("list[dict[str, object]]", payload["scenarios"])
+    steps = cast("list[object]", scenarios[0]["steps"])
+    steps.append({"restart": "unresolved_profile"})
+    if lifecycle_mode == "absent":
+        payload.pop("lifecycles", None)
+    elif lifecycle_mode == "empty":
+        payload["lifecycles"] = {}
+    elif lifecycle_mode == "nonempty":
+        payload["lifecycles"] = {"some_other_profile": _lifecycle_payload()}
+    return payload
+
+
+@pytest.mark.parametrize("lifecycle_mode", ["absent", "empty"])
+def test_restart_step_requires_a_structurally_nonempty_lifecycle_map(
+    lifecycle_mode: str,
+) -> None:
+    with pytest.raises(ValidationError, match="requires at least one lifecycle"):
+        ProjectConfig.model_validate(_project_with_restart(lifecycle_mode=lifecycle_mode))
+
+
+def test_restart_structure_does_not_absorb_later_reference_semantics() -> None:
+    model = ProjectConfig.model_validate(_project_with_restart(lifecycle_mode="nonempty"))
+    assert "some_other_profile" in model.lifecycles
+    assert "unresolved_profile" not in model.lifecycles
+
+    no_restart = _load_project_example("project-config.minimal.yaml")
+    no_restart.pop("lifecycles", None)
+    assert ProjectConfig.model_validate(no_restart).lifecycles == {}
+
+
+def test_project_config_concurrency_effective_snapshot_and_hard_limit_are_exact() -> None:
+    payload = _load_project_example("project-config.minimal.yaml")
+    default_wire = ProjectConfig.model_validate(payload).to_wire()
+    default_limits = cast("dict[str, object]", default_wire["limits"])
+    assert default_limits["max_concurrency"] == 10
+
+    configured = deepcopy(payload)
+    configured_limits = cast("dict[str, object]", configured["limits"])
+    configured_limits["max_concurrency"] = 50
+    configured_wire = ProjectConfig.model_validate(configured).to_wire()
+    emitted_limits = cast("dict[str, object]", configured_wire["limits"])
+    assert emitted_limits["max_concurrency"] == 50
+
+    configured_limits["max_concurrency"] = 51
+    with pytest.raises(ValidationError):
+        ProjectConfig.model_validate(configured)
+
+
+def test_preflight_exact_resource_boundaries_and_version_precedence_snapshot() -> None:
+    assert (
+        resource_limit_diagnostic(
+            {"schema_version": 1},
+            encoded_byte_length=MAX_CONFIG_BYTES,
+        )
+        is None
+    )
+    byte_error = resource_limit_diagnostic(
+        {"schema_version": 1},
+        encoded_byte_length=MAX_CONFIG_BYTES + 1,
+    )
+    assert byte_error is not None
+    assert byte_error.code == DiagnosticCode("CFG_RESOURCE_LIMIT")
+    assert byte_error.safe_details == {
+        "limit": "MAX_CONFIG_BYTES",
+        "maximum": MAX_CONFIG_BYTES,
+    }
+
+    at_node_limit: list[object] = [None] * (MAX_CONFIG_NODES - 1)
+    assert resource_limit_diagnostic(at_node_limit) is None
+    node_error = resource_limit_diagnostic([None] * MAX_CONFIG_NODES)
+    assert node_error is not None
+    assert node_error.safe_details == {
+        "limit": "MAX_CONFIG_NODES",
+        "maximum": MAX_CONFIG_NODES,
+    }
+
+    precedence = preflight_config(
+        {"schema_version": 2},
+        encoded_byte_length=MAX_CONFIG_BYTES + 1,
+    )
+    assert precedence is not None
+    assert precedence.category is ErrorCategory.RESOURCE_LIMIT
+    assert precedence.code == DiagnosticCode("CFG_RESOURCE_LIMIT")
+    assert precedence.safe_details["limit"] == "MAX_CONFIG_BYTES"
+
+    unsupported = preflight_config({"schema_version": 2})
+    assert unsupported is not None
+    assert unsupported.category is ErrorCategory.UNSUPPORTED_SCHEMA
+    assert unsupported.code == DiagnosticCode("CFG_SCHEMA_VERSION_UNSUPPORTED")
+    assert unsupported.safe_details == {
+        "supported_minimum": 1,
+        "supported_maximum": 1,
+        "configuration_schema": "1.0",
+    }
+
+
 def test_schema_constants_match_version_metadata_and_schema_annotations() -> None:
     assert PROJECT_CONFIG_SCHEMA_MAJOR == 1
     assert PROJECT_CONFIG_SCHEMA_VERSION == VERSION_METADATA.configuration_schema == "1.0"
@@ -2841,22 +3283,24 @@ def test_schema_constants_match_version_metadata_and_schema_annotations() -> Non
 
 
 @pytest.mark.parametrize(
-    "document",
+    ("document", "expected_code"),
     [
-        {},
-        [],
-        {"schema_version": "1"},
-        {"schema_version": True},
-        {"schema_version": False},
-        {"schema_version": 0},
-        {"schema_version": None},
+        ({}, DiagnosticCode("CFG_SCHEMA_VERSION_REQUIRED")),
+        ([], DiagnosticCode("CFG_SCHEMA_VERSION_REQUIRED")),
+        ({"schema_version": "1"}, DiagnosticCode("CFG_SCHEMA_VERSION_INVALID")),
+        ({"schema_version": True}, DiagnosticCode("CFG_SCHEMA_VERSION_INVALID")),
+        ({"schema_version": False}, DiagnosticCode("CFG_SCHEMA_VERSION_INVALID")),
+        ({"schema_version": 0}, DiagnosticCode("CFG_SCHEMA_VERSION_INVALID")),
+        ({"schema_version": None}, DiagnosticCode("CFG_SCHEMA_VERSION_INVALID")),
     ],
 )
 def test_missing_or_invalid_schema_version_is_invalid_input(
     document: object,
+    expected_code: DiagnosticCode,
 ) -> None:
     diagnostic = schema_version_diagnostic(document)
     assert diagnostic is not None
+    assert diagnostic.code == expected_code
     assert diagnostic.category is ErrorCategory.CONFIGURATION_ERROR
     assert diagnostic.result_category is ResultCategory.INVALID_INPUT
     assert exit_for_result(diagnostic.result_category)[1] is ExitCode.INVALID_INPUT
@@ -2869,6 +3313,7 @@ def test_missing_or_invalid_schema_version_is_invalid_input(
 def test_other_integer_schema_versions_are_unsupported(version: int) -> None:
     diagnostic = schema_version_diagnostic({"schema_version": version})
     assert diagnostic is not None
+    assert diagnostic.code == DiagnosticCode("CFG_SCHEMA_VERSION_UNSUPPORTED")
     assert diagnostic.category is ErrorCategory.UNSUPPORTED_SCHEMA
     assert diagnostic.result_category is ResultCategory.UNSUPPORTED
     assert exit_for_result(diagnostic.result_category)[1] is ExitCode.UNSUPPORTED
@@ -2900,6 +3345,7 @@ def test_resource_overflow_maps_to_bounded_invalid_input_diagnostic(
         encoded_byte_length=encoded_byte_length,
     )
     assert diagnostic is not None
+    assert diagnostic.code == DiagnosticCode("CFG_RESOURCE_LIMIT")
     assert diagnostic.category is ErrorCategory.RESOURCE_LIMIT
     assert diagnostic.result_category is ResultCategory.INVALID_INPUT
     assert exit_for_result(diagnostic.result_category)[1] is ExitCode.INVALID_INPUT
