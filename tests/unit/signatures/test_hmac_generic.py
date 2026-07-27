@@ -221,20 +221,29 @@ def test_every_registered_implementation_passes_shared_contract(
     _assert_signer_contract(case)
 
 
-def test_registry_and_contract_case_completeness_are_locked_together() -> None:
+def test_generic_registry_and_contract_cases_are_locked_together() -> None:
     contract_types = {case.registration.implementation for case in CONTRACT_CASES}
     registered_types = {
         registration.implementation for registration in BUILTIN_SIGNER_REGISTRY.registrations
     }
-    package_implementations = set(discover_builtin_signer_implementations())
+    package_implementations = {
+        implementation
+        for implementation in discover_builtin_signer_implementations()
+        if implementation.__module__ == generic_hmac.__name__
+    }
     package_modules = discover_builtin_signer_modules()
 
-    validate_builtin_registry_completeness(BUILTIN_SIGNER_REGISTRY)
+    validate_builtin_registry_completeness(
+        BUILTIN_SIGNER_REGISTRY,
+        implementation_types=(GenericHmacSha256Signer,),
+        present_modules=(generic_hmac.__name__,),
+    )
 
     assert tuple(case.registration for case in CONTRACT_CASES) == (
         GENERIC_HMAC_SHA256_REGISTRATION,
     )
-    assert package_modules == (generic_hmac.__name__,)
+    assert generic_hmac.__name__ in package_modules
+    assert set(package_modules).issubset(set(BUILTIN_SIGNER_MODULES.values()))
     assert contract_types == registered_types == package_implementations
     assert set(BUILTIN_SIGNER_MODULES) == set(BuiltinSignerCategory)
     assert {

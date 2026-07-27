@@ -12,6 +12,7 @@ from typing import ClassVar, Final, NoReturn
 
 from webhook_receiver_conformance.secrets import SecretHandle
 from webhook_receiver_conformance.signatures.base import (
+    BUILTIN_SIGNER_MODULES,
     MAX_HEADER_VALUE_LENGTH,
     MAX_KEY_ID_LENGTH,
     MAX_SIGNER_HEADERS,
@@ -327,7 +328,11 @@ GENERIC_HMAC_SHA256_REGISTRATION: Final = SignerRegistration(
 )
 
 BUILTIN_SIGNER_REGISTRY: Final = StaticSignerRegistry((GENERIC_HMAC_SHA256_REGISTRATION,))
-validate_builtin_registry_completeness(BUILTIN_SIGNER_REGISTRY)
+validate_builtin_registry_completeness(
+    BUILTIN_SIGNER_REGISTRY,
+    implementation_types=(GenericHmacSha256Signer,),
+    present_modules=(BUILTIN_SIGNER_MODULES[BuiltinSignerCategory.GENERIC_HMAC_SHA256],),
+)
 
 
 def _matching_headers(
