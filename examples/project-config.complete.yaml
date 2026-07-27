@@ -78,13 +78,21 @@ scenarios:
   assertions:
   - id: accepted
     type: http-status
+    attempt:
+      event: payment
+      mode: all-terminal
     expected:
-    - 200
-    - 204
+      codes:
+      - 200
+      - 204
   - id: processed_once
     type: processing-count
-    observer: receiver_state
-    event: payment
+    query:
+      observer: receiver_state
+      key: processing_count
+      parameters:
+        event: payment
+    comparator: eq
     expected: 1
     within: 2s
     poll_interval: 50ms
@@ -109,16 +117,38 @@ scenarios:
   assertions:
   - id: processed_once_after_retry
     type: processing-count
-    observer: receiver_state
-    event: payment_retry
+    query:
+      observer: receiver_state
+      key: processing_count
+      parameters:
+        event: payment_retry
+    comparator: eq
     expected: 1
     within: 5s
     poll_interval: 50ms
   - id: no_partial
     type: no-partial-side-effect
-    observer: receiver_state
-    event: payment_retry
-    expected: true
+    predicates:
+    - name: processing_record
+      query:
+        observer: receiver_state
+        key: processing_count
+        parameters:
+          event: payment_retry
+      comparator: eq
+      expected:
+        value_type: integer
+        value: 1
+    - name: journal_record
+      query:
+        observer: receiver_state
+        key: journal_count
+        parameters:
+          event: payment_retry
+      comparator: eq
+      expected:
+        value_type: integer
+        value: 1
   failure_policy: continue-scenario
 reports:
   formats:

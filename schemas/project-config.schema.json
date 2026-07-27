@@ -227,7 +227,7 @@
             "$ref": "#/$defs/configured_header_name"
           },
           "replay_window": {
-            "$ref": "#/$defs/duration"
+            "$ref": "#/$defs/positive_duration"
           },
           "key_id": {
             "type": "string",
@@ -257,27 +257,22 @@
                 "const": "command"
               },
               "argv": {
-                "type": "array",
-                "minItems": 1,
-                "maxItems": 64,
-                "items": {
-                  "type": "string",
-                  "maxLength": 4096
-                }
+                "$ref": "#/$defs/argv"
               },
               "timeout": {
-                "$ref": "#/$defs/duration"
+                "$ref": "#/$defs/positive_duration"
               },
               "environment_allowlist": {
                 "type": "array",
                 "items": {
                   "type": "string",
-                  "pattern": "^[A-Z][A-Z0-9_]*$"
+                  "pattern": "^[A-Z][A-Z0-9_]{0,127}$"
                 },
-                "uniqueItems": true
+                "uniqueItems": true,
+                "maxItems": 64
               },
               "working_directory": {
-                "type": "string"
+                "$ref": "#/$defs/path"
               }
             },
             "additionalProperties": false
@@ -288,7 +283,7 @@
               "type",
               "base_url",
               "token",
-              "timeout"
+              "timeouts"
             ],
             "properties": {
               "type": {
@@ -297,13 +292,14 @@
               "base_url": {
                 "type": "string",
                 "format": "uri",
-                "pattern": "^https?://"
+                "pattern": "^https?://",
+                "maxLength": 2048
               },
               "token": {
                 "$ref": "#/$defs/secret_ref"
               },
-              "timeout": {
-                "$ref": "#/$defs/duration"
+              "timeouts": {
+                "$ref": "#/$defs/observer_http_timeouts"
               }
             },
             "additionalProperties": false
@@ -673,17 +669,45 @@
       "type": "array",
       "minItems": 1,
       "maxItems": 64,
-      "prefixItems": [
-        {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 4096
-        }
-      ],
       "items": {
-        "type": "string",
-        "maxLength": 4096
+        "$ref": "#/$defs/nonempty_string"
       }
+    },
+    "observer_http_timeouts": {
+      "$comment": "Observer HTTP connect, read, and total timeouts are positive physical monotonic durations.",
+      "type": "object",
+      "required": [
+        "connect",
+        "read",
+        "total"
+      ],
+      "properties": {
+        "connect": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/positive_duration"
+            }
+          ],
+          "default": "5s"
+        },
+        "read": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/positive_duration"
+            }
+          ],
+          "default": "5s"
+        },
+        "total": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/positive_duration"
+            }
+          ],
+          "default": "30s"
+        }
+      },
+      "additionalProperties": false
     },
     "lifecycle_profile": {
       "type": "object",
@@ -1234,7 +1258,340 @@
       ],
       "unevaluatedProperties": false
     },
-    "assertion": {
+    "attempt_selector": {
+      "type": "object",
+      "required": [
+        "event",
+        "mode"
+      ],
+      "properties": {
+        "event": {
+          "$ref": "#/$defs/name"
+        },
+        "mode": {
+          "enum": [
+            "all-terminal",
+            "last-terminal"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "observer_query": {
+      "type": "object",
+      "required": [
+        "observer",
+        "key"
+      ],
+      "properties": {
+        "observer": {
+          "$ref": "#/$defs/name"
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "parameters": {
+          "type": "object",
+          "maxProperties": 128,
+          "propertyNames": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/canonical_json_value"
+          },
+          "default": {}
+        }
+      },
+      "additionalProperties": false
+    },
+    "typed_value": {
+      "$comment": "The assertion value profile exactly mirrors the nine observer evidence types; values are never coerced between branches.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "value_type",
+            "value"
+          ],
+          "properties": {
+            "value_type": {
+              "const": "null"
+            },
+            "value": {
+              "type": "null"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "value_type",
+            "value"
+          ],
+          "properties": {
+            "value_type": {
+              "const": "boolean"
+            },
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "value_type",
+            "value"
+          ],
+          "properties": {
+            "value_type": {
+              "const": "integer"
+            },
+            "value": {
+              "$ref": "#/$defs/safe_integer"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "value_type",
+            "value"
+          ],
+          "properties": {
+            "value_type": {
+              "const": "decimal-string"
+            },
+            "value": {
+              "type": "string",
+              "maxLength": 4096,
+              "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "value_type",
+            "value"
+          ],
+          "properties": {
+            "value_type": {
+              "const": "string"
+            },
+            "value": {
+              "$ref": "#/$defs/bounded_string"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "value_type",
+            "value"
+          ],
+          "properties": {
+            "value_type": {
+              "const": "bytes-digest"
+            },
+            "value": {
+              "type": "object",
+              "required": [
+                "sha256",
+                "byte_length"
+              ],
+              "properties": {
+                "sha256": {
+                  "$ref": "#/$defs/sha256"
+                },
+                "byte_length": {
+                  "$ref": "#/$defs/safe_integer",
+                  "minimum": 0
+                },
+                "media_type": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 255
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "value_type",
+            "value"
+          ],
+          "properties": {
+            "value_type": {
+              "const": "timestamp"
+            },
+            "value": {
+              "$ref": "#/$defs/utc"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "value_type",
+            "value"
+          ],
+          "properties": {
+            "value_type": {
+              "const": "array"
+            },
+            "value": {
+              "type": "array",
+              "maxItems": 1000,
+              "items": {
+                "$ref": "#/$defs/canonical_json_value"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "value_type",
+            "value"
+          ],
+          "properties": {
+            "value_type": {
+              "const": "object"
+            },
+            "value": {
+              "type": "object",
+              "maxProperties": 1000,
+              "propertyNames": {
+                "type": "string",
+                "maxLength": 256
+              },
+              "additionalProperties": {
+                "$ref": "#/$defs/canonical_json_value"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "comparator": {
+      "enum": [
+        "eq",
+        "ne",
+        "lt",
+        "lte",
+        "gt",
+        "gte"
+      ]
+    },
+    "missing_pointer": {
+      "enum": [
+        "fail",
+        "error"
+      ],
+      "default": "error"
+    },
+    "on_unsupported": {
+      "enum": [
+        "unsupported",
+        "skip"
+      ],
+      "default": "unsupported"
+    },
+    "predicate": {
+      "type": "object",
+      "required": [
+        "name",
+        "query",
+        "comparator",
+        "expected"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "query": {
+          "$ref": "#/$defs/observer_query"
+        },
+        "path": {
+          "$ref": "#/$defs/json_pointer"
+        },
+        "comparator": {
+          "$ref": "#/$defs/comparator"
+        },
+        "expected": {
+          "$ref": "#/$defs/typed_value"
+        },
+        "missing_pointer": {
+          "$ref": "#/$defs/missing_pointer"
+        }
+      },
+      "dependentRequired": {
+        "missing_pointer": [
+          "path"
+        ]
+      },
+      "additionalProperties": false
+    },
+    "status_expectation": {
+      "type": "object",
+      "properties": {
+        "codes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 599
+          }
+        },
+        "classes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "2xx",
+              "3xx",
+              "4xx",
+              "5xx"
+            ]
+          }
+        }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "codes"
+          ]
+        },
+        {
+          "required": [
+            "classes"
+          ]
+        }
+      ],
+      "additionalProperties": false
+    },
+    "assertion_common": {
       "type": "object",
       "required": [
         "id",
@@ -1242,49 +1599,413 @@
       ],
       "properties": {
         "id": {
-          "type": "string",
-          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+          "$ref": "#/$defs/name"
         },
         "type": {
-          "enum": [
-            "http-status",
-            "acknowledgement-deadline",
-            "processing-count",
-            "resource-exists",
-            "resource-absent",
-            "resource-field",
-            "ordered-transition",
-            "callback-count",
-            "journal-count",
-            "no-partial-side-effect",
-            "eventual-state",
-            "custom"
-          ]
-        },
-        "observer": {
           "type": "string"
-        },
-        "event": {
-          "type": "string"
-        },
-        "expected": {},
-        "path": {
-          "type": "string"
-        },
-        "within": {
-          "$ref": "#/$defs/duration"
-        },
-        "poll_interval": {
-          "$ref": "#/$defs/poll_duration"
-        },
-        "on_unsupported": {
-          "enum": [
-            "error",
-            "skip"
-          ]
         }
-      },
-      "additionalProperties": false
+      }
+    },
+    "observer_assertion_common": {
+      "$comment": "When polling is configured, model validation additionally requires poll_interval <= within after exact duration parsing.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/assertion_common"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "on_unsupported": {
+              "$ref": "#/$defs/on_unsupported"
+            },
+            "within": {
+              "$ref": "#/$defs/positive_duration"
+            },
+            "poll_interval": {
+              "$ref": "#/$defs/poll_duration"
+            }
+          },
+          "dependentRequired": {
+            "within": [
+              "poll_interval"
+            ],
+            "poll_interval": [
+              "within"
+            ]
+          }
+        }
+      ]
+    },
+    "assertion_http_status": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/assertion_common"
+        },
+        {
+          "type": "object",
+          "required": [
+            "attempt",
+            "expected"
+          ],
+          "properties": {
+            "type": {
+              "const": "http-status"
+            },
+            "attempt": {
+              "$ref": "#/$defs/attempt_selector"
+            },
+            "expected": {
+              "$ref": "#/$defs/status_expectation"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "assertion_acknowledgement_deadline": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/assertion_common"
+        },
+        {
+          "type": "object",
+          "required": [
+            "attempt",
+            "within"
+          ],
+          "properties": {
+            "type": {
+              "const": "acknowledgement-deadline"
+            },
+            "attempt": {
+              "$ref": "#/$defs/attempt_selector"
+            },
+            "within": {
+              "$ref": "#/$defs/positive_duration"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "assertion_processing_count": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/observer_assertion_common"
+        },
+        {
+          "type": "object",
+          "required": [
+            "query",
+            "comparator",
+            "expected"
+          ],
+          "properties": {
+            "type": {
+              "const": "processing-count"
+            },
+            "query": {
+              "$ref": "#/$defs/observer_query"
+            },
+            "comparator": {
+              "$ref": "#/$defs/comparator"
+            },
+            "expected": {
+              "$ref": "#/$defs/safe_integer"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "assertion_callback_count": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/observer_assertion_common"
+        },
+        {
+          "type": "object",
+          "required": [
+            "query",
+            "comparator",
+            "expected"
+          ],
+          "properties": {
+            "type": {
+              "const": "callback-count"
+            },
+            "query": {
+              "$ref": "#/$defs/observer_query"
+            },
+            "comparator": {
+              "$ref": "#/$defs/comparator"
+            },
+            "expected": {
+              "$ref": "#/$defs/safe_integer"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "assertion_journal_count": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/observer_assertion_common"
+        },
+        {
+          "type": "object",
+          "required": [
+            "query",
+            "comparator",
+            "expected"
+          ],
+          "properties": {
+            "type": {
+              "const": "journal-count"
+            },
+            "query": {
+              "$ref": "#/$defs/observer_query"
+            },
+            "comparator": {
+              "$ref": "#/$defs/comparator"
+            },
+            "expected": {
+              "$ref": "#/$defs/safe_integer"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "assertion_resource_exists": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/observer_assertion_common"
+        },
+        {
+          "type": "object",
+          "required": [
+            "query"
+          ],
+          "properties": {
+            "type": {
+              "const": "resource-exists"
+            },
+            "query": {
+              "$ref": "#/$defs/observer_query"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "assertion_resource_absent": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/observer_assertion_common"
+        },
+        {
+          "type": "object",
+          "required": [
+            "query"
+          ],
+          "properties": {
+            "type": {
+              "const": "resource-absent"
+            },
+            "query": {
+              "$ref": "#/$defs/observer_query"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "assertion_resource_field": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/observer_assertion_common"
+        },
+        {
+          "type": "object",
+          "required": [
+            "query",
+            "path",
+            "comparator",
+            "expected"
+          ],
+          "properties": {
+            "type": {
+              "const": "resource-field"
+            },
+            "query": {
+              "$ref": "#/$defs/observer_query"
+            },
+            "path": {
+              "$ref": "#/$defs/json_pointer"
+            },
+            "comparator": {
+              "$ref": "#/$defs/comparator"
+            },
+            "expected": {
+              "$ref": "#/$defs/typed_value"
+            },
+            "missing_pointer": {
+              "$ref": "#/$defs/missing_pointer"
+            }
+          },
+          "dependentRequired": {
+            "missing_pointer": [
+              "path"
+            ]
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "assertion_ordered_transition": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/observer_assertion_common"
+        },
+        {
+          "type": "object",
+          "required": [
+            "query",
+            "states"
+          ],
+          "properties": {
+            "type": {
+              "const": "ordered-transition"
+            },
+            "query": {
+              "$ref": "#/$defs/observer_query"
+            },
+            "states": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 64,
+              "items": {
+                "$ref": "#/$defs/bounded_string"
+              }
+            },
+            "allow_intermediate": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "assertion_no_partial_side_effect": {
+      "$comment": "Model validation additionally requires predicate names to be unique within this assertion.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/observer_assertion_common"
+        },
+        {
+          "type": "object",
+          "required": [
+            "predicates"
+          ],
+          "properties": {
+            "type": {
+              "const": "no-partial-side-effect"
+            },
+            "predicates": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 64,
+              "items": {
+                "$ref": "#/$defs/predicate"
+              }
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "assertion_eventual_state": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/observer_assertion_common"
+        },
+        {
+          "type": "object",
+          "required": [
+            "query",
+            "comparator",
+            "expected",
+            "within",
+            "poll_interval"
+          ],
+          "properties": {
+            "type": {
+              "const": "eventual-state"
+            },
+            "query": {
+              "$ref": "#/$defs/observer_query"
+            },
+            "path": {
+              "$ref": "#/$defs/json_pointer"
+            },
+            "comparator": {
+              "$ref": "#/$defs/comparator"
+            },
+            "expected": {
+              "$ref": "#/$defs/typed_value"
+            },
+            "missing_pointer": {
+              "$ref": "#/$defs/missing_pointer"
+            }
+          },
+          "dependentRequired": {
+            "missing_pointer": [
+              "path"
+            ]
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "assertion": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/assertion_http_status"
+        },
+        {
+          "$ref": "#/$defs/assertion_acknowledgement_deadline"
+        },
+        {
+          "$ref": "#/$defs/assertion_processing_count"
+        },
+        {
+          "$ref": "#/$defs/assertion_callback_count"
+        },
+        {
+          "$ref": "#/$defs/assertion_journal_count"
+        },
+        {
+          "$ref": "#/$defs/assertion_resource_exists"
+        },
+        {
+          "$ref": "#/$defs/assertion_resource_absent"
+        },
+        {
+          "$ref": "#/$defs/assertion_resource_field"
+        },
+        {
+          "$ref": "#/$defs/assertion_ordered_transition"
+        },
+        {
+          "$ref": "#/$defs/assertion_no_partial_side_effect"
+        },
+        {
+          "$ref": "#/$defs/assertion_eventual_state"
+        }
+      ]
     },
     "step": {
       "oneOf": [

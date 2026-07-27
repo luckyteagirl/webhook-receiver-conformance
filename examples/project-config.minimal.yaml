@@ -59,13 +59,21 @@ scenarios:
   assertions:
   - id: accepted
     type: http-status
+    attempt:
+      event: payment
+      mode: all-terminal
     expected:
-    - 200
-    - 204
+      codes:
+      - 200
+      - 204
   - id: processed_once
     type: processing-count
-    observer: receiver_state
-    event: payment
+    query:
+      observer: receiver_state
+      key: processing_count
+      parameters:
+        event: payment
+    comparator: eq
     expected: 1
     within: 2s
     poll_interval: 50ms
