@@ -16,10 +16,12 @@ from pydantic import (
     ConfigDict,
     Field,
     GetCoreSchemaHandler,
+    SerializerFunctionWrapHandler,
     StrictInt,
     StrictStr,
     StringConstraints,
     field_validator,
+    model_serializer,
     model_validator,
 )
 from pydantic_core import CoreSchema, core_schema
@@ -46,6 +48,13 @@ MAX_MUTATIONS_PER_DELIVERY = 16
 MAX_SCENARIO_EVENTS = 1000
 MAX_SCENARIO_STEPS = 10_000
 MAX_SCENARIO_BASELINES = 64
+MAX_OBSERVER_PARAMETERS = 128
+MAX_STATUS_CODES = 64
+MAX_STATUS_CLASSES = 4
+MAX_ASSERTION_STATES = 64
+MAX_PARTIAL_PREDICATES = 64
+MAX_SCENARIO_ASSERTIONS = 256
+MIN_COMPOSITE_ASSERTION_ITEMS = 2
 CONTROL_CHARACTER_LIMIT = 32
 DELETE_CHARACTER_CODEPOINT = 127
 MINIMUM_SCALE = Fraction(1, 1000)
@@ -65,6 +74,12 @@ _HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
 _CHALLENGE_PATH = re.compile(r"/[^\r\n]*")
 _ENVIRONMENT_NAME = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
 _PROFILE_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+_DECIMAL_STRING = re.compile(r"^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$")
+_SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
+_UTC_TIMESTAMP = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+    r"(?:\.[0-9]{1,9})?Z$"
+)
 _FORBIDDEN_HEADER_NAMES = frozenset(
     {
         "host",
@@ -1198,6 +1213,420 @@ class EventConfig(ConfigModel):
         return _require_unique(value, field_name="depends_on")
 
 
+class AttemptMode(StrEnum):
+    ALL_TERMINAL = "all-terminal"
+    LAST_TERMINAL = "last-terminal"
+
+
+def _attempt_mode_from_wire(value: object) -> object:
+    if isinstance(value, str):
+        return AttemptMode(value)
+    return value
+
+
+class AttemptSelector(ConfigModel):
+    event: ProfileName
+    mode: Annotated[AttemptMode, BeforeValidator(_attempt_mode_from_wire)]
+
+
+class ObserverQuery(ConfigModel):
+    observer: ProfileName
+    key: Annotated[StrictStr, StringConstraints(min_length=1, max_length=256)]
+    parameters: CanonicalJsonValue = CanonicalJsonValue(FrozenDict[FrozenJsonValue]({}))
+
+    @field_validator("parameters")
+    @classmethod
+    def validate_parameters(cls, value: CanonicalJsonValue) -> CanonicalJsonValue:
+        if not isinstance(value.value, FrozenDict):
+            msg = "observer query parameters must be a JSON object"
+            raise ValueError(msg)  # noqa: TRY004
+        if len(value.value) > MAX_OBSERVER_PARAMETERS:
+            msg = "observer query parameters cannot contain more than 128 properties"
+            raise ValueError(msg)
+        return value
+
+
+class Comparator(StrEnum):
+    EQ = "eq"
+    NE = "ne"
+    LT = "lt"
+    LTE = "lte"
+    GT = "gt"
+    GTE = "gte"
+
+
+class MissingPointer(StrEnum):
+    FAIL = "fail"
+    ERROR = "error"
+
+
+class OnUnsupported(StrEnum):
+    UNSUPPORTED = "unsupported"
+    SKIP = "skip"
+
+
+def _comparator_from_wire(value: object) -> object:
+    if isinstance(value, str):
+        return Comparator(value)
+    return value
+
+
+def _missing_pointer_from_wire(value: object) -> object:
+    if isinstance(value, str):
+        return MissingPointer(value)
+    return value
+
+
+def _on_unsupported_from_wire(value: object) -> object:
+    if isinstance(value, str):
+        return OnUnsupported(value)
+    return value
+
+
+class NullTypedValue(ConfigModel):
+    explicit_null_fields = frozenset({"value"})
+
+    value_type: Literal["null"]
+    value: None
+
+    @model_serializer(mode="wrap")
+    def serialize_model(
+        self,
+        handler: SerializerFunctionWrapHandler,
+    ) -> dict[str, object]:
+        serialized = cast("dict[str, object]", handler(self))
+        serialized["value"] = None
+        return serialized
+
+
+class BooleanTypedValue(ConfigModel):
+    value_type: Literal["boolean"]
+    value: bool
+
+
+class IntegerTypedValue(ConfigModel):
+    value_type: Literal["integer"]
+    value: SafeInteger
+
+
+class DecimalStringTypedValue(ConfigModel):
+    value_type: Literal["decimal-string"]
+    value: Annotated[
+        StrictStr,
+        StringConstraints(max_length=4096, pattern=_DECIMAL_STRING.pattern),
+    ]
+
+
+class StringTypedValue(ConfigModel):
+    value_type: Literal["string"]
+    value: BoundedString
+
+
+class BytesDigestValue(ConfigModel):
+    sha256: Annotated[StrictStr, StringConstraints(pattern=_SHA256.pattern)]
+    byte_length: Annotated[SafeInteger, Field(ge=0)]
+    media_type: MediaType | None = None
+
+
+class BytesDigestTypedValue(ConfigModel):
+    value_type: Literal["bytes-digest"]
+    value: BytesDigestValue
+
+
+class TimestampTypedValue(ConfigModel):
+    value_type: Literal["timestamp"]
+    value: Annotated[StrictStr, StringConstraints(pattern=_UTC_TIMESTAMP.pattern)]
+
+
+class ArrayTypedValue(ConfigModel):
+    value_type: Literal["array"]
+    value: FrozenSequence[CanonicalJsonValue]
+
+    @field_validator("value")
+    @classmethod
+    def validate_value(
+        cls,
+        value: tuple[CanonicalJsonValue, ...],
+    ) -> tuple[CanonicalJsonValue, ...]:
+        if len(value) > MAX_CANONICAL_COLLECTION_ITEMS:
+            msg = "typed array cannot contain more than 1000 items"
+            raise ValueError(msg)
+        return value
+
+
+class ObjectTypedValue(ConfigModel):
+    value_type: Literal["object"]
+    value: CanonicalJsonValue
+
+    @field_validator("value")
+    @classmethod
+    def validate_value(cls, value: CanonicalJsonValue) -> CanonicalJsonValue:
+        if not isinstance(value.value, FrozenDict):
+            msg = "typed object value must be a JSON object"
+            raise ValueError(msg)  # noqa: TRY004
+        return value
+
+
+type TypedValue = Annotated[
+    NullTypedValue
+    | BooleanTypedValue
+    | IntegerTypedValue
+    | DecimalStringTypedValue
+    | StringTypedValue
+    | BytesDigestTypedValue
+    | TimestampTypedValue
+    | ArrayTypedValue
+    | ObjectTypedValue,
+    Field(discriminator="value_type"),
+]
+
+
+class Predicate(ConfigModel):
+    name: ProfileName
+    query: ObserverQuery
+    path: JsonPointer | None = None
+    comparator: Annotated[Comparator, BeforeValidator(_comparator_from_wire)]
+    expected: TypedValue
+    missing_pointer: Annotated[
+        MissingPointer,
+        BeforeValidator(_missing_pointer_from_wire),
+    ] = MissingPointer.ERROR
+
+    @model_validator(mode="after")
+    def validate_missing_pointer_dependency(self) -> Predicate:
+        if "missing_pointer" in self.model_fields_set and self.path is None:
+            msg = "missing_pointer requires path"
+            raise ValueError(msg)
+        return self
+
+    @model_serializer(mode="wrap")
+    def serialize_model(
+        self,
+        handler: SerializerFunctionWrapHandler,
+    ) -> dict[str, object]:
+        serialized = cast("dict[str, object]", handler(self))
+        if self.path is None:
+            serialized.pop("missing_pointer", None)
+        return serialized
+
+
+class StatusExpectation(ConfigModel):
+    codes: FrozenSequence[Annotated[StrictInt, Field(ge=100, le=599)]] | None = None
+    classes: (
+        FrozenSequence[Annotated[HttpStatusClass, BeforeValidator(_http_status_class_from_wire)]]
+        | None
+    ) = None
+
+    @field_validator("codes")
+    @classmethod
+    def validate_codes(
+        cls,
+        value: tuple[int, ...] | None,
+    ) -> tuple[int, ...] | None:
+        if value is None:
+            return None
+        if not 1 <= len(value) <= MAX_STATUS_CODES:
+            msg = "codes must contain between 1 and 64 values"
+            raise ValueError(msg)
+        return _require_unique(value, field_name="codes")
+
+    @field_validator("classes")
+    @classmethod
+    def validate_classes(
+        cls,
+        value: tuple[HttpStatusClass, ...] | None,
+    ) -> tuple[HttpStatusClass, ...] | None:
+        if value is None:
+            return None
+        if not 1 <= len(value) <= MAX_STATUS_CLASSES:
+            msg = "classes must contain between 1 and 4 values"
+            raise ValueError(msg)
+        return _require_unique(value, field_name="classes")
+
+    @model_validator(mode="after")
+    def validate_at_least_one_selector(self) -> StatusExpectation:
+        if self.codes is None and self.classes is None:
+            msg = "status expectation requires codes, classes, or both"
+            raise ValueError(msg)
+        return self
+
+
+class _AssertionCommon(ConfigModel):
+    id: ProfileName
+
+
+class _ObserverAssertionCommon(_AssertionCommon):
+    on_unsupported: Annotated[
+        OnUnsupported,
+        BeforeValidator(_on_unsupported_from_wire),
+    ] = OnUnsupported.UNSUPPORTED
+    within: PositiveDuration | None = None
+    poll_interval: PollDuration | None = None
+
+    @model_validator(mode="after")
+    def validate_polling(self) -> _ObserverAssertionCommon:
+        if (self.within is None) != (self.poll_interval is None):
+            msg = "within and poll_interval must be configured together"
+            raise ValueError(msg)
+        if (
+            self.within is not None
+            and self.poll_interval is not None
+            and self.poll_interval.nanoseconds > self.within.nanoseconds
+        ):
+            msg = "poll_interval cannot exceed within"
+            raise ValueError(msg)
+        return self
+
+
+class _RequiredPollingAssertionCommon(_AssertionCommon):
+    on_unsupported: Annotated[
+        OnUnsupported,
+        BeforeValidator(_on_unsupported_from_wire),
+    ] = OnUnsupported.UNSUPPORTED
+    within: PositiveDuration
+    poll_interval: PollDuration
+
+    @model_validator(mode="after")
+    def validate_polling(self) -> _RequiredPollingAssertionCommon:
+        if self.poll_interval.nanoseconds > self.within.nanoseconds:
+            msg = "poll_interval cannot exceed within"
+            raise ValueError(msg)
+        return self
+
+
+class HttpStatusAssertion(_AssertionCommon):
+    type: Literal["http-status"]
+    attempt: AttemptSelector
+    expected: StatusExpectation
+
+
+class AcknowledgementDeadlineAssertion(_AssertionCommon):
+    type: Literal["acknowledgement-deadline"]
+    attempt: AttemptSelector
+    within: PositiveDuration
+
+
+class ProcessingCountAssertion(_ObserverAssertionCommon):
+    type: Literal["processing-count"]
+    query: ObserverQuery
+    comparator: Annotated[Comparator, BeforeValidator(_comparator_from_wire)]
+    expected: SafeInteger
+
+
+class CallbackCountAssertion(_ObserverAssertionCommon):
+    type: Literal["callback-count"]
+    query: ObserverQuery
+    comparator: Annotated[Comparator, BeforeValidator(_comparator_from_wire)]
+    expected: SafeInteger
+
+
+class JournalCountAssertion(_ObserverAssertionCommon):
+    type: Literal["journal-count"]
+    query: ObserverQuery
+    comparator: Annotated[Comparator, BeforeValidator(_comparator_from_wire)]
+    expected: SafeInteger
+
+
+class ResourceExistsAssertion(_ObserverAssertionCommon):
+    type: Literal["resource-exists"]
+    query: ObserverQuery
+
+
+class ResourceAbsentAssertion(_ObserverAssertionCommon):
+    type: Literal["resource-absent"]
+    query: ObserverQuery
+
+
+class ResourceFieldAssertion(_ObserverAssertionCommon):
+    type: Literal["resource-field"]
+    query: ObserverQuery
+    path: JsonPointer
+    comparator: Annotated[Comparator, BeforeValidator(_comparator_from_wire)]
+    expected: TypedValue
+    missing_pointer: Annotated[
+        MissingPointer,
+        BeforeValidator(_missing_pointer_from_wire),
+    ] = MissingPointer.ERROR
+
+
+class EventualStateAssertion(_RequiredPollingAssertionCommon):
+    type: Literal["eventual-state"]
+    query: ObserverQuery
+    path: JsonPointer | None = None
+    comparator: Annotated[Comparator, BeforeValidator(_comparator_from_wire)]
+    expected: TypedValue
+    missing_pointer: Annotated[
+        MissingPointer,
+        BeforeValidator(_missing_pointer_from_wire),
+    ] = MissingPointer.ERROR
+
+    @model_validator(mode="after")
+    def validate_missing_pointer_dependency(self) -> EventualStateAssertion:
+        if "missing_pointer" in self.model_fields_set and self.path is None:
+            msg = "missing_pointer requires path"
+            raise ValueError(msg)
+        return self
+
+    @model_serializer(mode="wrap")
+    def serialize_model(
+        self,
+        handler: SerializerFunctionWrapHandler,
+    ) -> dict[str, object]:
+        serialized = cast("dict[str, object]", handler(self))
+        if self.path is None:
+            serialized.pop("missing_pointer", None)
+        return serialized
+
+
+class OrderedTransitionAssertion(_ObserverAssertionCommon):
+    type: Literal["ordered-transition"]
+    query: ObserverQuery
+    states: FrozenSequence[BoundedString]
+    allow_intermediate: bool = False
+
+    @field_validator("states")
+    @classmethod
+    def validate_states(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if not MIN_COMPOSITE_ASSERTION_ITEMS <= len(value) <= MAX_ASSERTION_STATES:
+            msg = "states must contain between 2 and 64 values"
+            raise ValueError(msg)
+        return value
+
+
+class NoPartialSideEffectAssertion(_ObserverAssertionCommon):
+    type: Literal["no-partial-side-effect"]
+    predicates: FrozenSequence[Predicate]
+
+    @field_validator("predicates")
+    @classmethod
+    def validate_predicates(
+        cls,
+        value: tuple[Predicate, ...],
+    ) -> tuple[Predicate, ...]:
+        if not MIN_COMPOSITE_ASSERTION_ITEMS <= len(value) <= MAX_PARTIAL_PREDICATES:
+            msg = "predicates must contain between 2 and 64 values"
+            raise ValueError(msg)
+        names = tuple(predicate.name for predicate in value)
+        _require_unique(names, field_name="predicate names")
+        return value
+
+
+type AssertionConfig = Annotated[
+    HttpStatusAssertion
+    | AcknowledgementDeadlineAssertion
+    | ProcessingCountAssertion
+    | CallbackCountAssertion
+    | JournalCountAssertion
+    | ResourceExistsAssertion
+    | ResourceAbsentAssertion
+    | ResourceFieldAssertion
+    | EventualStateAssertion
+    | OrderedTransitionAssertion
+    | NoPartialSideEffectAssertion,
+    Field(discriminator="type"),
+]
+
+
 class FailurePolicy(StrEnum):
     """Closed scenario failure-propagation vocabulary."""
 
@@ -1212,7 +1641,7 @@ def _failure_policy_from_wire(value: object) -> object:
     return value
 
 
-class _ScenarioConfigBase(ConfigModel):  # pyright: ignore[reportUnusedClass]
+class _ScenarioConfigBase(ConfigModel):
     """Stage B1 scenario structure completed by typed assertions in Stage B2."""
 
     id: ProfileName
@@ -1252,6 +1681,21 @@ class _ScenarioConfigBase(ConfigModel):  # pyright: ignore[reportUnusedClass]
             raise ValueError(msg)
         fault_classes = tuple(item.fault_class for item in value)
         _require_unique(fault_classes, field_name="baseline fault_class")
+        return value
+
+
+class ScenarioConfig(_ScenarioConfigBase):
+    assertions: FrozenSequence[AssertionConfig]
+
+    @field_validator("assertions")
+    @classmethod
+    def validate_assertions(
+        cls,
+        value: tuple[AssertionConfig, ...],
+    ) -> tuple[AssertionConfig, ...]:
+        if not 1 <= len(value) <= MAX_SCENARIO_ASSERTIONS:
+            msg = "assertions must contain between 1 and 256 entries"
+            raise ValueError(msg)
         return value
 
 

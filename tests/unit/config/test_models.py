@@ -8,7 +8,7 @@ import json
 from collections import UserDict
 from copy import deepcopy
 from fractions import Fraction
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic import TypeAdapter, ValidationError
@@ -17,20 +17,31 @@ from webhook_receiver_conformance.config import models as config_models
 from webhook_receiver_conformance.config.models import (
     MAX_DURATION_NANOSECONDS,
     MAX_SAFE_INTEGER,
+    AcknowledgementDeadlineAssertion,
     AddJsonFieldMutation,
     AlterAfterSigningMutation,
+    ArrayTypedValue,
+    AssertionConfig,
+    AttemptSelector,
     BarrierStep,
     BaselineConfig,
+    BooleanTypedValue,
+    BytesDigestTypedValue,
+    BytesDigestValue,
+    CallbackCountAssertion,
     CanonicalJsonValue,
     ChangeEventIdFieldMutation,
     ChangeEventTypeFieldMutation,
     CommandObserverConfig,
+    Comparator,
     ConfigModel,
     ContentTypeMismatchMutation,
+    DecimalStringTypedValue,
     DeliverStep,
     Duration,
     EnvironmentSecretRef,
     EventConfig,
+    EventualStateAssertion,
     FaultClass,
     FileSecretRef,
     FixtureConfig,
@@ -38,18 +49,28 @@ from webhook_receiver_conformance.config.models import (
     GeneratedSecretRef,
     GenericHmacSha256SignerConfig,
     HttpObserverConfig,
+    HttpStatusAssertion,
+    IntegerTypedValue,
     InvalidJsonMutation,
+    JournalCountAssertion,
     LifecycleProfile,
     LimitsConfig,
     MalformedSignatureMutation,
     MissingSignatureMutation,
     MutationConfig,
+    NoPartialSideEffectAssertion,
+    NullTypedValue,
+    ObjectTypedValue,
     ObserverConfig,
     ObserverHttpTimeouts,
+    ObserverQuery,
     ObserveStep,
+    OrderedTransitionAssertion,
     OversizedBodyMutation,
     PollDuration,
     PositiveDuration,
+    Predicate,
+    ProcessingCountAssertion,
     ProjectSettings,
     RealClockConfig,
     ReceiverConfig,
@@ -59,17 +80,25 @@ from webhook_receiver_conformance.config.models import (
     ReplaceJsonTypeMutation,
     ReplaceJsonValueMutation,
     ReportsConfig,
+    ResourceAbsentAssertion,
+    ResourceExistsAssertion,
+    ResourceFieldAssertion,
     RestartStep,
     RetryConfig,
     Scale,
     ScaledClockConfig,
+    ScenarioConfig,
     SecretRef,
     SignerConfig,
     StaleSignatureTimestampMutation,
     StandardWebhooksHmacSignerConfig,
+    StatusExpectation,
     StepConfig,
+    StringTypedValue,
     StripeV1SignerConfig,
+    TimestampTypedValue,
     TruncateBytesMutation,
+    TypedValue,
     WaitStep,
     WrongSigningKeyMutation,
     thaw_canonical_json,
@@ -1573,6 +1602,391 @@ def test_baseline_is_closed_and_requires_both_fields() -> None:
             BaselineConfig.model_validate(payload)
 
 
+TYPED_VALUE_CASES: tuple[tuple[dict[str, object], type[ConfigModel]], ...] = (
+    ({"value_type": "null", "value": None}, NullTypedValue),
+    ({"value_type": "boolean", "value": True}, BooleanTypedValue),
+    ({"value_type": "integer", "value": MAX_SAFE_INTEGER}, IntegerTypedValue),
+    (
+        {"value_type": "decimal-string", "value": "-1.25e+2"},
+        DecimalStringTypedValue,
+    ),
+    ({"value_type": "string", "value": ""}, StringTypedValue),
+    (
+        {
+            "value_type": "bytes-digest",
+            "value": {
+                "sha256": f"sha256:{'0' * 64}",
+                "byte_length": 0,
+                "media_type": "application/octet-stream",
+            },
+        },
+        BytesDigestTypedValue,
+    ),
+    (
+        {"value_type": "timestamp", "value": "2026-07-27T12:34:56.123456789Z"},
+        TimestampTypedValue,
+    ),
+    (
+        {"value_type": "array", "value": [None, 1, {"enabled": True}]},
+        ArrayTypedValue,
+    ),
+    (
+        {"value_type": "object", "value": {"nested": [None, "value"]}},
+        ObjectTypedValue,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected_type"),
+    TYPED_VALUE_CASES,
+    ids=[str(case[0]["value_type"]) for case in TYPED_VALUE_CASES],
+)
+def test_all_nine_typed_value_branches_are_exact_and_round_trip(
+    payload: dict[str, object],
+    expected_type: type[ConfigModel],
+) -> None:
+    adapter: TypeAdapter[TypedValue] = TypeAdapter(TypedValue)
+    model = adapter.validate_python(deepcopy(payload))
+    assert type(model) is expected_type
+    wire = model.to_wire()
+    assert wire == payload
+    assert adapter.validate_python(json.loads(json.dumps(wire))) == model
+
+
+@pytest.mark.parametrize(
+    ("payload", "_expected_type"),
+    TYPED_VALUE_CASES,
+    ids=[str(case[0]["value_type"]) for case in TYPED_VALUE_CASES],
+)
+def test_every_typed_value_branch_requires_both_fields_and_is_closed(
+    payload: dict[str, object],
+    _expected_type: type[ConfigModel],
+) -> None:
+    adapter: TypeAdapter[TypedValue] = TypeAdapter(TypedValue)
+    for field in ("value_type", "value"):
+        missing = deepcopy(payload)
+        del missing[field]
+        with pytest.raises(ValidationError):
+            adapter.validate_python(missing)
+    with pytest.raises(ValidationError):
+        adapter.validate_python({**deepcopy(payload), "extra": True})
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"value_type": "null", "value": False},
+        {"value_type": "boolean", "value": 1},
+        {"value_type": "boolean", "value": "true"},
+        {"value_type": "integer", "value": True},
+        {"value_type": "integer", "value": 1.0},
+        {"value_type": "integer", "value": MAX_SAFE_INTEGER + 1},
+        {"value_type": "decimal-string", "value": "+1"},
+        {"value_type": "decimal-string", "value": "01"},
+        {"value_type": "decimal-string", "value": "1."},
+        {"value_type": "decimal-string", "value": "NaN"},
+        {"value_type": "decimal-string", "value": "\u0661"},
+        {"value_type": "decimal-string", "value": b"1"},
+        {"value_type": "decimal-string", "value": "1" * 4097},
+        {"value_type": "string", "value": b"value"},
+        {"value_type": "string", "value": "x" * 4097},
+        {
+            "value_type": "bytes-digest",
+            "value": {"sha256": "sha256:bad", "byte_length": 0},
+        },
+        {
+            "value_type": "bytes-digest",
+            "value": {"sha256": f"sha256:{'A' * 64}", "byte_length": 0},
+        },
+        {
+            "value_type": "bytes-digest",
+            "value": {"sha256": f"sha256:{'0' * 64}", "byte_length": -1},
+        },
+        {
+            "value_type": "bytes-digest",
+            "value": {"sha256": f"sha256:{'0' * 64}", "byte_length": True},
+        },
+        {
+            "value_type": "bytes-digest",
+            "value": {
+                "sha256": f"sha256:{'0' * 64}",
+                "byte_length": 0,
+                "media_type": "",
+            },
+        },
+        {"value_type": "timestamp", "value": "2026-07-27T12:34:56+00:00"},
+        {"value_type": "timestamp", "value": "2026-07-27T12:34:56.1234567890Z"},
+        {"value_type": "timestamp", "value": "\u0662\u0660\u0662\u0666-07-27T12:34:56Z"},
+        {"value_type": "timestamp", "value": b"2026-07-27T12:34:56Z"},
+        {"value_type": "array", "value": ()},
+        {"value_type": "array", "value": (1,)},
+        {"value_type": "array", "value": [1.0]},
+        {"value_type": "array", "value": [None] * 1001},
+        {"value_type": "object", "value": []},
+        {"value_type": "object", "value": {"number": 1.0}},
+        {"value_type": "object", "value": {"x" * 257: None}},
+        {
+            "value_type": "object",
+            "value": {str(index): None for index in range(1001)},
+        },
+        {"value_type": "unknown", "value": None},
+        {"value_type": b"integer", "value": 1},
+    ],
+)
+def test_typed_values_reject_cross_branch_coercion_and_schema_overflow(
+    payload: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        TypeAdapter(TypedValue).validate_python(payload)
+
+
+def test_typed_collection_values_are_deeply_immutable_and_copy_safe() -> None:
+    array_source: list[object] = [None, {"enabled": True}]
+    array_model = ArrayTypedValue.model_validate({"value_type": "array", "value": array_source})
+    array_source.append("changed")
+    cast_mapping = array_source[1]
+    assert isinstance(cast_mapping, dict)
+    cast_mapping["enabled"] = False
+    assert array_model.to_wire()["value"] == [None, {"enabled": True}]
+
+    object_source: dict[str, object] = {"nested": [None, 1]}
+    object_model = ObjectTypedValue.model_validate({"value_type": "object", "value": object_source})
+    object_source["nested"] = ["changed"]
+    assert object_model.to_wire()["value"] == {"nested": [None, 1]}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"value_type": "boolean", "value": None},
+        {"value_type": "integer", "value": None},
+        {"value_type": "decimal-string", "value": None},
+        {"value_type": "string", "value": None},
+        {"value_type": "bytes-digest", "value": None},
+        {"value_type": "timestamp", "value": None},
+        {"value_type": "array", "value": None},
+        {"value_type": "object", "value": None},
+    ],
+)
+def test_only_null_typed_value_authorizes_direct_explicit_null(
+    payload: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError, match="cannot be null"):
+        TypeAdapter(TypedValue).validate_python(payload)
+
+
+def test_bytes_digest_value_is_strict_closed_and_copy_safe() -> None:
+    model = BytesDigestValue.model_validate(
+        {"sha256": f"sha256:{'f' * 64}", "byte_length": MAX_SAFE_INTEGER}
+    )
+    assert model.media_type is None
+    _assert_model_wire_round_trip(model, BytesDigestValue)
+    with pytest.raises(ValidationError):
+        BytesDigestValue.model_validate(
+            {
+                "sha256": f"sha256:{'f' * 64}",
+                "byte_length": 0,
+                "extra": True,
+            }
+        )
+
+
+def _observer_query_payload() -> dict[str, object]:
+    return {
+        "observer": "receiver_state",
+        "key": "processing_count",
+        "parameters": {"event": "payment", "nullable": None},
+    }
+
+
+def _integer_typed_value(value: int = 1) -> dict[str, object]:
+    return {"value_type": "integer", "value": value}
+
+
+def test_attempt_selector_modes_are_exact_required_and_closed() -> None:
+    for mode in ("all-terminal", "last-terminal"):
+        model = AttemptSelector.model_validate({"event": "payment", "mode": mode})
+        assert model.mode.value == mode
+        _assert_model_wire_round_trip(model, AttemptSelector)
+
+    for payload in (
+        {"event": "payment"},
+        {"mode": "all-terminal"},
+        {"event": "Payment", "mode": "all-terminal"},
+        {"event": "payment", "mode": "all"},
+        {"event": "payment", "mode": b"all-terminal"},
+        {"event": "payment", "mode": "all-terminal", "extra": True},
+    ):
+        with pytest.raises(ValidationError):
+            AttemptSelector.model_validate(payload)
+
+
+def test_observer_query_defaults_and_parameters_are_deeply_immutable() -> None:
+    default = ObserverQuery.model_validate(
+        {"observer": "receiver_state", "key": "processing_count"}
+    )
+    assert default.parameters.to_wire() == {}
+    _assert_model_wire_round_trip(default, ObserverQuery)
+
+    parameters: dict[str, object] = {"event": "payment", "nullable": None}
+    model = ObserverQuery.model_validate(
+        {
+            "observer": "receiver_state",
+            "key": "processing_count",
+            "parameters": parameters,
+        }
+    )
+    parameters["event"] = "changed"
+    assert model.parameters.to_wire() == {"event": "payment", "nullable": None}
+    _assert_model_wire_round_trip(model, ObserverQuery)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"observer": "Receiver", "key": "count"},
+        {"observer": "receiver", "key": ""},
+        {"observer": "receiver", "key": "x" * 257},
+        {"observer": "receiver", "key": "count", "parameters": None},
+        {"observer": "receiver", "key": "count", "parameters": []},
+        {"observer": "receiver", "key": "count", "parameters": ()},
+        {"observer": "receiver", "key": "count", "parameters": {"nested": ()}},
+        {"observer": "receiver", "key": "count", "parameters": {"value": 1.0}},
+        {
+            "observer": "receiver",
+            "key": "count",
+            "parameters": {str(index): None for index in range(129)},
+        },
+        {
+            "observer": "receiver",
+            "key": "count",
+            "parameters": {"x" * 257: None},
+        },
+        {"observer": "receiver", "key": "count", "extra": True},
+    ],
+)
+def test_observer_query_rejects_non_object_unbounded_and_coerced_parameters(
+    payload: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        ObserverQuery.model_validate(payload)
+
+
+def test_status_expectation_accepts_codes_classes_or_both() -> None:
+    payloads = (
+        {"codes": [100, 599]},
+        {"classes": ["2xx", "3xx", "4xx", "5xx"]},
+        {"codes": [200], "classes": ["2xx"]},
+    )
+    for payload in payloads:
+        model = StatusExpectation.model_validate(payload)
+        _assert_model_wire_round_trip(model, StatusExpectation)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"codes": []},
+        {"classes": []},
+        {"codes": [99]},
+        {"codes": [600]},
+        {"codes": [200, 200]},
+        {"codes": [True]},
+        {"codes": [200.0]},
+        {"codes": (200,)},
+        {"codes": list(range(100, 165))},
+        {"classes": ["1xx"]},
+        {"classes": ["2xx", "2xx"]},
+        {"classes": ("2xx",)},
+        {"classes": [b"2xx"]},
+        {"codes": None},
+        {"classes": None},
+        {"codes": [200], "extra": True},
+    ],
+)
+def test_status_expectation_rejects_empty_duplicate_invalid_and_coerced_forms(
+    payload: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        StatusExpectation.model_validate(payload)
+
+
+def test_predicate_comparators_defaults_dependencies_and_round_trip() -> None:
+    for comparator in ("eq", "ne", "lt", "lte", "gt", "gte"):
+        model = Predicate.model_validate(
+            {
+                "name": "processed",
+                "query": _observer_query_payload(),
+                "comparator": comparator,
+                "expected": _integer_typed_value(),
+            }
+        )
+        assert isinstance(model.comparator, Comparator)
+        assert model.missing_pointer.value == "error"
+        assert "missing_pointer" not in model.to_wire()
+        _assert_model_wire_round_trip(model, Predicate)
+
+    with_path = Predicate.model_validate(
+        {
+            "name": "processed",
+            "query": _observer_query_payload(),
+            "path": "/count",
+            "comparator": "eq",
+            "expected": _integer_typed_value(),
+            "missing_pointer": "fail",
+        }
+    )
+    assert with_path.to_wire()["missing_pointer"] == "fail"
+    _assert_model_wire_round_trip(with_path, Predicate)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "name": "processed",
+            "query": _observer_query_payload(),
+            "comparator": "eq",
+            "expected": _integer_typed_value(),
+            "missing_pointer": "fail",
+        },
+        {
+            "name": "processed",
+            "query": _observer_query_payload(),
+            "path": "invalid",
+            "comparator": "eq",
+            "expected": _integer_typed_value(),
+        },
+        {
+            "name": "processed",
+            "query": _observer_query_payload(),
+            "comparator": "equals",
+            "expected": _integer_typed_value(),
+        },
+        {
+            "name": "processed",
+            "query": _observer_query_payload(),
+            "comparator": b"eq",
+            "expected": _integer_typed_value(),
+        },
+        {
+            "name": "processed",
+            "query": _observer_query_payload(),
+            "comparator": "eq",
+            "expected": _integer_typed_value(),
+            "extra": True,
+        },
+    ],
+)
+def test_predicate_rejects_invalid_pointer_dependencies_and_fields(
+    payload: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        Predicate.model_validate(payload)
+
+
 STEP_CASES: tuple[tuple[dict[str, object], type[ConfigModel]], ...] = (
     (
         {
@@ -1720,12 +2134,512 @@ def test_event_config_is_closed_frozen_unique_and_round_trips() -> None:
             EventConfig.model_validate(payload)
 
 
+ASSERTION_CASES: tuple[
+    tuple[dict[str, object], type[ConfigModel], tuple[str, ...]],
+    ...,
+] = (
+    (
+        {
+            "id": "accepted",
+            "type": "http-status",
+            "attempt": {"event": "payment", "mode": "all-terminal"},
+            "expected": {"codes": [200, 204]},
+        },
+        HttpStatusAssertion,
+        ("id", "type", "attempt", "expected"),
+    ),
+    (
+        {
+            "id": "acknowledged",
+            "type": "acknowledgement-deadline",
+            "attempt": {"event": "payment", "mode": "last-terminal"},
+            "within": "500ms",
+        },
+        AcknowledgementDeadlineAssertion,
+        ("id", "type", "attempt", "within"),
+    ),
+    (
+        {
+            "id": "processed_once",
+            "type": "processing-count",
+            "query": _observer_query_payload(),
+            "comparator": "eq",
+            "expected": 1,
+        },
+        ProcessingCountAssertion,
+        ("id", "type", "query", "comparator", "expected"),
+    ),
+    (
+        {
+            "id": "callback_once",
+            "type": "callback-count",
+            "query": _observer_query_payload(),
+            "comparator": "eq",
+            "expected": 1,
+        },
+        CallbackCountAssertion,
+        ("id", "type", "query", "comparator", "expected"),
+    ),
+    (
+        {
+            "id": "journal_once",
+            "type": "journal-count",
+            "query": _observer_query_payload(),
+            "comparator": "eq",
+            "expected": 1,
+        },
+        JournalCountAssertion,
+        ("id", "type", "query", "comparator", "expected"),
+    ),
+    (
+        {
+            "id": "resource_present",
+            "type": "resource-exists",
+            "query": _observer_query_payload(),
+        },
+        ResourceExistsAssertion,
+        ("id", "type", "query"),
+    ),
+    (
+        {
+            "id": "resource_missing",
+            "type": "resource-absent",
+            "query": _observer_query_payload(),
+        },
+        ResourceAbsentAssertion,
+        ("id", "type", "query"),
+    ),
+    (
+        {
+            "id": "field_matches",
+            "type": "resource-field",
+            "query": _observer_query_payload(),
+            "path": "/status",
+            "comparator": "eq",
+            "expected": {"value_type": "string", "value": "processed"},
+        },
+        ResourceFieldAssertion,
+        ("id", "type", "query", "path", "comparator", "expected"),
+    ),
+    (
+        {
+            "id": "eventually_processed",
+            "type": "eventual-state",
+            "query": _observer_query_payload(),
+            "comparator": "eq",
+            "expected": {"value_type": "null", "value": None},
+            "within": "2s",
+            "poll_interval": "50ms",
+        },
+        EventualStateAssertion,
+        (
+            "id",
+            "type",
+            "query",
+            "comparator",
+            "expected",
+            "within",
+            "poll_interval",
+        ),
+    ),
+    (
+        {
+            "id": "transitioned",
+            "type": "ordered-transition",
+            "query": _observer_query_payload(),
+            "states": ["received", "processed"],
+        },
+        OrderedTransitionAssertion,
+        ("id", "type", "query", "states"),
+    ),
+    (
+        {
+            "id": "all_or_none",
+            "type": "no-partial-side-effect",
+            "predicates": [
+                {
+                    "name": "processing_record",
+                    "query": _observer_query_payload(),
+                    "comparator": "eq",
+                    "expected": _integer_typed_value(),
+                },
+                {
+                    "name": "journal_record",
+                    "query": _observer_query_payload(),
+                    "comparator": "eq",
+                    "expected": _integer_typed_value(),
+                },
+            ],
+        },
+        NoPartialSideEffectAssertion,
+        ("id", "type", "predicates"),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected_type", "_required_fields"),
+    ASSERTION_CASES,
+    ids=[str(case[0]["type"]) for case in ASSERTION_CASES],
+)
+def test_all_eleven_assertion_branches_are_discriminated_and_round_trip(
+    payload: dict[str, object],
+    expected_type: type[ConfigModel],
+    _required_fields: tuple[str, ...],
+) -> None:
+    adapter: TypeAdapter[AssertionConfig] = TypeAdapter(AssertionConfig)
+    model = adapter.validate_python(deepcopy(payload))
+    assert type(model) is expected_type
+    wire = model.to_wire()
+    assert adapter.validate_python(json.loads(json.dumps(wire))) == model
+    if payload["type"] == "eventual-state":
+        expected = wire["expected"]
+        assert isinstance(expected, dict)
+        assert "value" in expected
+        assert expected["value"] is None
+
+
+@pytest.mark.parametrize(
+    ("payload", "_expected_type", "required_fields"),
+    ASSERTION_CASES,
+    ids=[str(case[0]["type"]) for case in ASSERTION_CASES],
+)
+def test_every_assertion_branch_requires_schema_fields_and_rejects_extras(
+    payload: dict[str, object],
+    _expected_type: type[ConfigModel],
+    required_fields: tuple[str, ...],
+) -> None:
+    adapter: TypeAdapter[AssertionConfig] = TypeAdapter(AssertionConfig)
+    for field in required_fields:
+        missing = deepcopy(payload)
+        del missing[field]
+        with pytest.raises(ValidationError):
+            adapter.validate_python(missing)
+    with pytest.raises(ValidationError):
+        adapter.validate_python({**deepcopy(payload), "extra": True})
+
+
+@pytest.mark.parametrize(
+    "type_tag",
+    ["custom", "http_status", "no-partial-side-effect-v1", b"http-status", None],
+)
+def test_assertion_union_rejects_unknown_and_non_string_tags(type_tag: object) -> None:
+    with pytest.raises(ValidationError):
+        TypeAdapter(AssertionConfig).validate_python({"id": "assertion", "type": type_tag})
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "id": "Invalid",
+            "type": "resource-exists",
+            "query": _observer_query_payload(),
+        },
+        {
+            "id": "resource",
+            "type": "resource-exists",
+            "query": _observer_query_payload(),
+            "on_unsupported": "ignore",
+        },
+        {
+            "id": "resource",
+            "type": "resource-exists",
+            "query": _observer_query_payload(),
+            "on_unsupported": b"skip",
+        },
+        {
+            "id": "resource",
+            "type": "resource-exists",
+            "query": _observer_query_payload(),
+            "on_unsupported": None,
+        },
+        {
+            "id": "accepted",
+            "type": "http-status",
+            "attempt": None,
+            "expected": {"codes": [200]},
+        },
+        {
+            "id": "accepted",
+            "type": "http-status",
+            "attempt": {"event": "payment", "mode": "all-terminal"},
+            "expected": None,
+        },
+        {
+            "id": "ack",
+            "type": "acknowledgement-deadline",
+            "attempt": {"event": "payment", "mode": "all-terminal"},
+            "within": "0s",
+        },
+        {
+            "id": "ack",
+            "type": "acknowledgement-deadline",
+            "attempt": {"event": "payment", "mode": "all-terminal"},
+            "within": "1s",
+            "poll_interval": "10ms",
+        },
+    ],
+)
+def test_assertion_common_fields_reject_null_coercion_and_wrong_family_fields(
+    payload: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        TypeAdapter(AssertionConfig).validate_python(payload)
+
+
+@pytest.mark.parametrize(
+    "assertion_type",
+    [
+        "processing-count",
+        "callback-count",
+        "journal-count",
+        "resource-exists",
+        "resource-absent",
+        "resource-field",
+        "ordered-transition",
+        "no-partial-side-effect",
+    ],
+)
+def test_optional_observer_polling_pair_and_defaults_are_exact(
+    assertion_type: str,
+) -> None:
+    adapter: TypeAdapter[AssertionConfig] = TypeAdapter(AssertionConfig)
+    payload = next(
+        deepcopy(case[0]) for case in ASSERTION_CASES if case[0]["type"] == assertion_type
+    )
+    model = adapter.validate_python(payload)
+    assert model.to_wire()["on_unsupported"] == "unsupported"
+
+    payload["on_unsupported"] = "skip"
+    payload["within"] = "1s"
+    payload["poll_interval"] = "10ms"
+    polled = adapter.validate_python(payload)
+    assert polled.to_wire()["on_unsupported"] == "skip"
+
+
+@pytest.mark.parametrize(
+    ("within", "poll_interval"),
+    [
+        ("1s", None),
+        (None, "10ms"),
+        ("1s", "9ms"),
+        ("10ms", "11ms"),
+        ("0s", "10ms"),
+        ("1s", "1.0s"),
+    ],
+)
+def test_observer_assertions_reject_invalid_polling_pairs_and_bounds(
+    within: object,
+    poll_interval: object,
+) -> None:
+    payload: dict[str, object] = {
+        "id": "processed_once",
+        "type": "processing-count",
+        "query": _observer_query_payload(),
+        "comparator": "eq",
+        "expected": 1,
+    }
+    if within is not None:
+        payload["within"] = within
+    if poll_interval is not None:
+        payload["poll_interval"] = poll_interval
+    with pytest.raises(ValidationError):
+        TypeAdapter(AssertionConfig).validate_python(payload)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "id": "eventual",
+            "type": "eventual-state",
+            "query": _observer_query_payload(),
+            "comparator": "eq",
+            "expected": _integer_typed_value(),
+            "within": "1s",
+        },
+        {
+            "id": "eventual",
+            "type": "eventual-state",
+            "query": _observer_query_payload(),
+            "comparator": "eq",
+            "expected": _integer_typed_value(),
+            "poll_interval": "10ms",
+        },
+        {
+            "id": "eventual",
+            "type": "eventual-state",
+            "query": _observer_query_payload(),
+            "comparator": "eq",
+            "expected": _integer_typed_value(),
+            "within": "10ms",
+            "poll_interval": "11ms",
+        },
+        {
+            "id": "eventual",
+            "type": "eventual-state",
+            "query": _observer_query_payload(),
+            "comparator": "eq",
+            "expected": _integer_typed_value(),
+            "within": "1s",
+            "poll_interval": "10ms",
+            "missing_pointer": "fail",
+        },
+    ],
+)
+def test_eventual_state_requires_valid_polling_and_pointer_dependencies(
+    payload: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        TypeAdapter(AssertionConfig).validate_python(payload)
+
+
+def test_eventual_state_omits_implicit_missing_pointer_without_path() -> None:
+    payload = next(
+        deepcopy(case[0]) for case in ASSERTION_CASES if case[0]["type"] == "eventual-state"
+    )
+    model = EventualStateAssertion.model_validate(payload)
+    assert model.missing_pointer.value == "error"
+    assert "missing_pointer" not in model.to_wire()
+    _assert_model_wire_round_trip(model, EventualStateAssertion)
+
+
+def test_resource_and_eventual_pointer_policies_accept_exact_declared_values() -> None:
+    resource = ResourceFieldAssertion.model_validate(
+        {
+            "id": "field",
+            "type": "resource-field",
+            "query": _observer_query_payload(),
+            "path": "/status",
+            "comparator": "eq",
+            "expected": {"value_type": "string", "value": "processed"},
+            "missing_pointer": "fail",
+        }
+    )
+    assert resource.to_wire()["missing_pointer"] == "fail"
+    _assert_model_wire_round_trip(resource, ResourceFieldAssertion)
+
+    eventual = EventualStateAssertion.model_validate(
+        {
+            "id": "eventual",
+            "type": "eventual-state",
+            "query": _observer_query_payload(),
+            "path": "",
+            "comparator": "eq",
+            "expected": {"value_type": "object", "value": {"ready": True}},
+            "missing_pointer": "error",
+            "within": "1s",
+            "poll_interval": "10ms",
+        }
+    )
+    assert eventual.path == ""
+    _assert_model_wire_round_trip(eventual, EventualStateAssertion)
+
+
+@pytest.mark.parametrize("states", [[], ["received"], ["state"] * 65, (), ("a", "b")])
+def test_ordered_transition_enforces_list_shape_and_state_bounds(
+    states: object,
+) -> None:
+    with pytest.raises(ValidationError):
+        OrderedTransitionAssertion.model_validate(
+            {
+                "id": "transition",
+                "type": "ordered-transition",
+                "query": _observer_query_payload(),
+                "states": states,
+            }
+        )
+
+
+def test_ordered_transition_defaults_and_strict_boolean() -> None:
+    model = OrderedTransitionAssertion.model_validate(
+        {
+            "id": "transition",
+            "type": "ordered-transition",
+            "query": _observer_query_payload(),
+            "states": ["received", "processed"],
+        }
+    )
+    assert model.allow_intermediate is False
+    with pytest.raises(ValidationError):
+        OrderedTransitionAssertion.model_validate({**model.to_wire(), "allow_intermediate": 1})
+
+
+def _predicate_payload(name: str) -> dict[str, object]:
+    return {
+        "name": name,
+        "query": _observer_query_payload(),
+        "comparator": "eq",
+        "expected": _integer_typed_value(),
+    }
+
+
+@pytest.mark.parametrize(
+    "predicates",
+    [
+        [_predicate_payload("only")],
+        [_predicate_payload(f"predicate_{index}") for index in range(65)],
+        [_predicate_payload("same"), _predicate_payload("same")],
+        (_predicate_payload("first"), _predicate_payload("second")),
+    ],
+)
+def test_no_partial_side_effect_bounds_shape_and_unique_names(
+    predicates: object,
+) -> None:
+    with pytest.raises(ValidationError):
+        NoPartialSideEffectAssertion.model_validate(
+            {
+                "id": "all_or_none",
+                "type": "no-partial-side-effect",
+                "predicates": predicates,
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    ("assertion_type", "expected"),
+    [
+        ("processing-count", True),
+        ("callback-count", 1.0),
+        ("journal-count", MAX_SAFE_INTEGER + 1),
+    ],
+)
+def test_count_assertions_reject_boolean_float_and_overflow(
+    assertion_type: str,
+    expected: object,
+) -> None:
+    with pytest.raises(ValidationError):
+        TypeAdapter(AssertionConfig).validate_python(
+            {
+                "id": "count",
+                "type": assertion_type,
+                "query": _observer_query_payload(),
+                "comparator": "eq",
+                "expected": expected,
+            }
+        )
+
+
 def _minimal_scenario_payload() -> dict[str, object]:
     return {
         "id": "happy_path",
         "events": [{"id": "payment", "fixture": "payment_created"}],
         "steps": [{"deliver": {"event": "payment"}}],
     }
+
+
+def _minimal_public_scenario_payload() -> dict[str, object]:
+    payload = _minimal_scenario_payload()
+    payload["assertions"] = [
+        {
+            "id": "accepted",
+            "type": "http-status",
+            "attempt": {"event": "payment", "mode": "all-terminal"},
+            "expected": {"classes": ["2xx"]},
+        }
+    ]
+    return payload
 
 
 def test_stage_b1_scenario_support_is_private_bounded_and_round_trips() -> None:
@@ -1735,12 +2649,89 @@ def test_stage_b1_scenario_support_is_private_bounded_and_round_trips() -> None:
     assert model.failure_policy.value == "continue-scenario"
     assert model.baselines == ()
     _assert_model_wire_round_trip(model, scenario_type)
-    assert not hasattr(config_models, "ScenarioConfig")
 
     for policy in ("continue-scenario", "stop-scenario", "stop-run"):
         candidate = _minimal_scenario_payload()
         candidate["failure_policy"] = policy
         assert scenario_type.model_validate(candidate).failure_policy.value == policy
+
+
+def test_public_scenario_requires_typed_assertions_and_round_trips() -> None:
+    assertions: list[object] = [
+        {
+            "id": "accepted",
+            "type": "http-status",
+            "attempt": {"event": "payment", "mode": "all-terminal"},
+            "expected": {"classes": ["2xx"]},
+        }
+    ]
+    payload = _minimal_scenario_payload()
+    payload["assertions"] = assertions
+    model = ScenarioConfig.model_validate(payload)
+    assertions.append(
+        {
+            "id": "changed",
+            "type": "http-status",
+            "attempt": {"event": "payment", "mode": "all-terminal"},
+            "expected": {"codes": [500]},
+        }
+    )
+    assert len(model.assertions) == 1
+    assert isinstance(model.assertions[0], HttpStatusAssertion)
+    _assert_model_wire_round_trip(model, ScenarioConfig)
+
+
+def test_public_scenario_preserves_nested_typed_null_on_wire() -> None:
+    payload = _minimal_scenario_payload()
+    payload["assertions"] = [
+        next(deepcopy(case[0]) for case in ASSERTION_CASES if case[0]["type"] == "eventual-state")
+    ]
+    model = ScenarioConfig.model_validate(payload)
+    wire = model.to_wire()
+    assertions = cast("list[object]", wire["assertions"])
+    assertion = cast("dict[str, object]", assertions[0])
+    expected = cast("dict[str, object]", assertion["expected"])
+    assert expected["value"] is None
+    _assert_model_wire_round_trip(model, ScenarioConfig)
+
+
+@pytest.mark.parametrize(
+    "assertions",
+    [
+        [],
+        [
+            {
+                "id": "accepted",
+                "type": "http-status",
+                "attempt": {"event": "payment", "mode": "all-terminal"},
+                "expected": {"codes": [200]},
+            }
+        ]
+        * 257,
+        (
+            {
+                "id": "accepted",
+                "type": "http-status",
+                "attempt": {"event": "payment", "mode": "all-terminal"},
+                "expected": {"codes": [200]},
+            },
+        ),
+    ],
+)
+def test_public_scenario_enforces_assertion_bounds_and_json_list_shape(
+    assertions: object,
+) -> None:
+    payload = _minimal_scenario_payload()
+    payload["assertions"] = assertions
+    with pytest.raises(ValidationError):
+        ScenarioConfig.model_validate(payload)
+
+
+def test_public_scenario_rejects_missing_assertions_and_unknown_fields() -> None:
+    with pytest.raises(ValidationError):
+        ScenarioConfig.model_validate(_minimal_scenario_payload())
+    with pytest.raises(ValidationError):
+        ScenarioConfig.model_validate({**_minimal_public_scenario_payload(), "unknown": True})
 
 
 @pytest.mark.parametrize(
