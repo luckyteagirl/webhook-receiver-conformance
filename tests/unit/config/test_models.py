@@ -13,24 +13,41 @@ from typing import Any
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
+from webhook_receiver_conformance.config import models as config_models
 from webhook_receiver_conformance.config.models import (
     MAX_DURATION_NANOSECONDS,
     MAX_SAFE_INTEGER,
+    AddJsonFieldMutation,
+    AlterAfterSigningMutation,
+    BarrierStep,
+    BaselineConfig,
     CanonicalJsonValue,
+    ChangeEventIdFieldMutation,
+    ChangeEventTypeFieldMutation,
     CommandObserverConfig,
     ConfigModel,
+    ContentTypeMismatchMutation,
+    DeliverStep,
     Duration,
     EnvironmentSecretRef,
+    EventConfig,
+    FaultClass,
     FileSecretRef,
     FixtureConfig,
     FrozenDict,
     GeneratedSecretRef,
     GenericHmacSha256SignerConfig,
     HttpObserverConfig,
+    InvalidJsonMutation,
     LifecycleProfile,
     LimitsConfig,
+    MalformedSignatureMutation,
+    MissingSignatureMutation,
+    MutationConfig,
     ObserverConfig,
     ObserverHttpTimeouts,
+    ObserveStep,
+    OversizedBodyMutation,
     PollDuration,
     PositiveDuration,
     ProjectSettings,
@@ -38,13 +55,23 @@ from webhook_receiver_conformance.config.models import (
     ReceiverConfig,
     ReceiverTimeouts,
     RedactionConfig,
+    RemoveJsonPointerMutation,
+    ReplaceJsonTypeMutation,
+    ReplaceJsonValueMutation,
     ReportsConfig,
+    RestartStep,
+    RetryConfig,
     Scale,
     ScaledClockConfig,
     SecretRef,
     SignerConfig,
+    StaleSignatureTimestampMutation,
     StandardWebhooksHmacSignerConfig,
+    StepConfig,
     StripeV1SignerConfig,
+    TruncateBytesMutation,
+    WaitStep,
+    WrongSigningKeyMutation,
     thaw_canonical_json,
 )
 from webhook_receiver_conformance.config.schema import (
@@ -181,25 +208,47 @@ def test_canonical_json_and_frozen_mapping_reject_direct_slot_mutation() -> None
 def test_frozen_mapping_hash_matches_order_insensitive_equality() -> None:
     first = FrozenDict({"alpha": 1, "beta": 2})
     second = FrozenDict({"beta": 2, "alpha": 1})
+    from_iterator = FrozenDict(iter([("alpha", 1), ("beta", 2)]))
 
-    assert first == second
-    assert hash(first) == hash(second)
-    assert len({first, second}) == 1
+    assert first == second == from_iterator
+    assert hash(first) == hash(second) == hash(from_iterator)
+    assert len({first, second, from_iterator}) == 1
+
+
+@pytest.mark.parametrize("duplicate_value", [1, 2])
+def test_frozen_mapping_rejects_duplicate_key_iterables_deterministically(
+    duplicate_value: int,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"FrozenDict keys must be unique; duplicate key: 'alpha'",
+    ):
+        FrozenDict(
+            iter(
+                [
+                    ("alpha", 1),
+                    ("beta", 2),
+                    ("alpha", duplicate_value),
+                ]
+            )
+        )
 
 
 def test_external_collections_require_json_list_and_dict_shapes() -> None:
-    with pytest.raises(ValidationError, match="provided as lists"):
-        ProjectSettings.model_validate(
-            {
-                "name": "project",
-                "artifact_directory": ".artifacts",
-                "secret_roots": (".secrets",),
-            }
-        )
+    for roots in ((), (".secrets",)):
+        with pytest.raises(ValidationError, match="provided as lists"):
+            ProjectSettings.model_validate(
+                {
+                    "name": "project",
+                    "artifact_directory": ".artifacts",
+                    "secret_roots": roots,
+                }
+            )
     with pytest.raises(ValidationError, match="provided as dictionaries"):
         _ProbeModel.model_validate(UserDict({"value": 1}))
-    with pytest.raises(TypeError, match="provided as lists"):
-        CanonicalJsonValue((1,))
+    for array in ((), (1,)):
+        with pytest.raises(TypeError, match="provided as lists"):
+            CanonicalJsonValue(array)
     with pytest.raises(TypeError, match="provided as dictionaries"):
         CanonicalJsonValue(UserDict({"value": 1}))
 
@@ -212,8 +261,173 @@ def test_external_collections_require_json_list_and_dict_shapes() -> None:
     )
     internal = FrozenDict({"value": CanonicalJsonValue([1]).value})
     assert CanonicalJsonValue(internal).to_wire() == {"value": [1]}
+    empty_source: list[object] = []
+    nested_empty: list[object] = []
+    nested_values: list[object] = [2]
+    nested_mapping: dict[str, object] = {"nested": nested_values}
+    complex_source: list[object] = [1, nested_empty, nested_mapping]
+    internal_sources: tuple[object, ...] = (empty_source, complex_source)
+    for source in internal_sources:
+        validated = CanonicalJsonValue(source)
+        assert CanonicalJsonValue(validated.value) == validated
     existing = CanonicalJsonValue([1])
     assert TypeAdapter(CanonicalJsonValue).validate_python(existing) is existing
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"nested": ()},
+        {"nested": (1,)},
+        [()],
+        [(1,)],
+        FrozenDict({"nested": ()}),
+        FrozenDict({"nested": (1,)}),
+    ],
+)
+def test_canonical_json_rejects_nested_external_tuples(value: object) -> None:
+    with pytest.raises(TypeError, match="provided as lists"):
+        CanonicalJsonValue(value)
+
+
+@pytest.mark.parametrize("value", [(), (1,), {"nested": ()}, [{"nested": (1,)}]])
+def test_mutation_canonical_json_boundary_rejects_external_tuples(
+    value: object,
+) -> None:
+    with pytest.raises(ValidationError, match="provided as lists"):
+        ReplaceJsonValueMutation.model_validate(
+            {
+                "type": "replace-json-value-v1",
+                "pointer": "/data",
+                "value": value,
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    ("model_type", "payload"),
+    [
+        (
+            ReceiverConfig,
+            {
+                "url": "http://127.0.0.1:8000/webhooks",
+                "target_profile": "loopback",
+                "allowed_hosts": (),
+                "timeouts": {
+                    "connect": "1s",
+                    "write": "1s",
+                    "read": "1s",
+                    "pool": "1s",
+                    "total": "1s",
+                },
+            },
+        ),
+        (
+            ReceiverConfig,
+            {
+                "url": "http://127.0.0.1:8000/webhooks",
+                "target_profile": "loopback",
+                "allowed_ports": (8000,),
+                "timeouts": {
+                    "connect": "1s",
+                    "write": "1s",
+                    "read": "1s",
+                    "pool": "1s",
+                    "total": "1s",
+                },
+            },
+        ),
+        (
+            CommandObserverConfig,
+            {"type": "command", "argv": (), "timeout": "1s"},
+        ),
+        (
+            CommandObserverConfig,
+            {
+                "type": "command",
+                "argv": ["observer"],
+                "timeout": "1s",
+                "environment_allowlist": ("PATH",),
+            },
+        ),
+        (
+            LifecycleProfile,
+            {
+                "stop_argv": (),
+                "start_argv": ["control", "start"],
+                "restart_argv": ["control", "restart"],
+                "working_directory": ".",
+                "environment_allowlist": ["PATH"],
+                "timeout": "1s",
+                "readiness_observer": "receiver_state",
+            },
+        ),
+        (
+            RedactionConfig,
+            {
+                "headers": (),
+                "json_pointers": [],
+                "retain_raw_payloads": False,
+            },
+        ),
+        (
+            ReportsConfig,
+            {
+                "formats": ("json",),
+                "redaction": {
+                    "headers": [],
+                    "json_pointers": [],
+                    "retain_raw_payloads": False,
+                },
+            },
+        ),
+        (
+            RetryConfig,
+            {"max_attempts": 1, "backoff": (), "retry_on": []},
+        ),
+        (
+            RetryConfig,
+            {"max_attempts": 1, "backoff": [], "retry_on": ()},
+        ),
+        (
+            RetryConfig,
+            {
+                "max_attempts": 2,
+                "backoff": ["1s"],
+                "retry_on": ["retryable_status"],
+                "retryable_statuses": (500,),
+            },
+        ),
+        (
+            DeliverStep,
+            {"deliver": {"event": "payment", "mutations": ()}},
+        ),
+        (
+            EventConfig,
+            {"id": "payment", "fixture": "payment_created", "depends_on": ()},
+        ),
+    ],
+    ids=[
+        "receiver-empty-hosts",
+        "receiver-ports",
+        "command-empty-argv",
+        "command-environment",
+        "lifecycle-empty-stop",
+        "redaction-empty-headers",
+        "report-formats",
+        "retry-empty-backoff",
+        "retry-empty-predicates",
+        "retry-statuses",
+        "deliver-empty-mutations",
+        "event-empty-dependencies",
+    ],
+)
+def test_all_configuration_sequence_boundaries_reject_external_tuples(
+    model_type: type[ConfigModel],
+    payload: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError, match="provided as lists"):
+        model_type.model_validate(payload)
 
 
 @pytest.mark.parametrize(
@@ -374,6 +588,12 @@ def test_secret_reference_union_rejects_invalid_or_ambiguous_shapes(
 ) -> None:
     with pytest.raises(ValidationError):
         TypeAdapter(SecretRef).validate_python(payload)
+
+
+@pytest.mark.parametrize("name", ["xPATH", "PATHx", "xPATHy", " PATH"])
+def test_environment_secret_names_require_a_whole_schema_match(name: str) -> None:
+    with pytest.raises(ValidationError):
+        EnvironmentSecretRef.model_validate({"env": name})
 
 
 def test_project_settings_defaults_are_immutable_and_copy_safe() -> None:
@@ -588,6 +808,21 @@ def test_command_observer_is_copy_safe_closed_and_round_trips() -> None:
     _assert_model_wire_round_trip(model, CommandObserverConfig)
 
 
+@pytest.mark.parametrize("name", ["xPATH", "PATHx", "xPATHy", " PATH"])
+def test_command_observer_environment_names_require_a_whole_schema_match(
+    name: str,
+) -> None:
+    with pytest.raises(ValidationError):
+        CommandObserverConfig.model_validate(
+            {
+                "type": "command",
+                "argv": ["observer"],
+                "timeout": "1s",
+                "environment_allowlist": [name],
+            }
+        )
+
+
 def test_http_observer_and_observer_union_round_trip() -> None:
     adapter: TypeAdapter[ObserverConfig] = TypeAdapter(ObserverConfig)
     model = adapter.validate_python(
@@ -601,6 +836,21 @@ def test_http_observer_and_observer_union_round_trip() -> None:
     assert isinstance(model, HttpObserverConfig)
     assert model.timeouts == ObserverHttpTimeouts.model_validate(_observer_timeouts())
     _assert_adapter_wire_round_trip(model, adapter)
+
+
+@pytest.mark.parametrize("name", ["xPATH", "PATHx", "xPATHy", " PATH"])
+def test_http_observer_token_environment_name_requires_a_whole_schema_match(
+    name: str,
+) -> None:
+    with pytest.raises(ValidationError):
+        HttpObserverConfig.model_validate(
+            {
+                "type": "http",
+                "base_url": "https://observer.test/api",
+                "token": {"env": name},
+                "timeouts": _observer_timeouts(),
+            }
+        )
 
 
 @pytest.mark.parametrize(
@@ -786,6 +1036,806 @@ def test_report_format_accepts_exact_strings_but_rejects_bytes() -> None:
                 },
             }
         )
+
+
+MUTATION_CASES: tuple[
+    tuple[dict[str, object], type[ConfigModel], tuple[str, ...]],
+    ...,
+] = (
+    (
+        {"type": "remove-json-pointer-v1", "pointer": "/data/obsolete"},
+        RemoveJsonPointerMutation,
+        ("type", "pointer"),
+    ),
+    (
+        {
+            "type": "replace-json-value-v1",
+            "pointer": "/data/value",
+            "value": {"nested": [None, True, MAX_SAFE_INTEGER]},
+        },
+        ReplaceJsonValueMutation,
+        ("type", "pointer", "value"),
+    ),
+    (
+        {
+            "type": "replace-json-type-v1",
+            "pointer": "/data/value",
+            "target_type": "string",
+        },
+        ReplaceJsonTypeMutation,
+        ("type", "pointer", "target_type"),
+    ),
+    (
+        {
+            "type": "add-json-field-v1",
+            "pointer": "/data",
+            "name": "new_field",
+            "value": {"enabled": True},
+        },
+        AddJsonFieldMutation,
+        ("type", "pointer", "name", "value"),
+    ),
+    (
+        {"type": "change-event-id-field-v1", "value": "evt_changed"},
+        ChangeEventIdFieldMutation,
+        ("type", "value"),
+    ),
+    (
+        {"type": "change-event-type-field-v1", "value": "payment.changed"},
+        ChangeEventTypeFieldMutation,
+        ("type", "value"),
+    ),
+    (
+        {"type": "truncate-bytes-v1", "length": 0},
+        TruncateBytesMutation,
+        ("type", "length"),
+    ),
+    (
+        {"type": "invalid-json-v1", "strategy": "truncated-object"},
+        InvalidJsonMutation,
+        ("type", "strategy"),
+    ),
+    (
+        {"type": "content-type-mismatch-v1", "media_type": "text/plain"},
+        ContentTypeMismatchMutation,
+        ("type", "media_type"),
+    ),
+    (
+        {"type": "alter-after-signing-v1", "offset": 0, "xor": 1},
+        AlterAfterSigningMutation,
+        ("type", "offset", "xor"),
+    ),
+    (
+        {"type": "stale-signature-timestamp-v1", "age": "6m"},
+        StaleSignatureTimestampMutation,
+        ("type", "age"),
+    ),
+    (
+        {"type": "wrong-signing-key-v1", "context": "negative-test"},
+        WrongSigningKeyMutation,
+        ("type", "context"),
+    ),
+    (
+        {"type": "missing-signature-v1"},
+        MissingSignatureMutation,
+        ("type",),
+    ),
+    (
+        {"type": "malformed-signature-v1", "case": "invalid-encoding"},
+        MalformedSignatureMutation,
+        ("type", "case"),
+    ),
+    (
+        {
+            "type": "oversized-body-v1",
+            "target_bytes": 1_048_577,
+            "fill": "ascii-space",
+        },
+        OversizedBodyMutation,
+        ("type", "target_bytes", "fill"),
+    ),
+)
+
+STRUCTURAL_MUTATION_TYPES = frozenset(
+    {
+        "remove-json-pointer-v1",
+        "replace-json-value-v1",
+        "replace-json-type-v1",
+        "add-json-field-v1",
+        "change-event-id-field-v1",
+        "change-event-type-field-v1",
+    }
+)
+
+FAULT_CLASS_VALUES = frozenset(
+    {
+        "mutation:remove-json-pointer-v1",
+        "mutation:replace-json-value-v1",
+        "mutation:replace-json-type-v1",
+        "mutation:add-json-field-v1",
+        "mutation:change-event-id-field-v1",
+        "mutation:change-event-type-field-v1",
+        "mutation:truncate-bytes-v1",
+        "mutation:invalid-json-v1",
+        "mutation:content-type-mismatch-v1",
+        "mutation:alter-after-signing-v1",
+        "mutation:stale-signature-timestamp-v1",
+        "mutation:wrong-signing-key-v1",
+        "mutation:missing-signature-v1",
+        "mutation:malformed-signature-v1",
+        "mutation:oversized-body-v1",
+        "delivery:duplicate",
+        "delivery:concurrent",
+        "delivery:dependency-order-reversal",
+        "retry:timed_out",
+        "retry:connection_failed",
+        "retry:retryable_status",
+        "lifecycle:restart",
+    }
+)
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected_type", "_required_fields"),
+    MUTATION_CASES,
+    ids=[str(case[0]["type"]) for case in MUTATION_CASES],
+)
+def test_every_mutation_branch_is_strictly_tagged_and_round_trips(
+    payload: dict[str, object],
+    expected_type: type[ConfigModel],
+    _required_fields: tuple[str, ...],
+) -> None:
+    adapter: TypeAdapter[MutationConfig] = TypeAdapter(MutationConfig)
+    model = adapter.validate_python(deepcopy(payload))
+    assert type(model) is expected_type
+    _assert_adapter_wire_round_trip(model, adapter)
+
+
+@pytest.mark.parametrize(
+    ("payload", "_expected_type", "required_fields"),
+    MUTATION_CASES,
+    ids=[str(case[0]["type"]) for case in MUTATION_CASES],
+)
+def test_every_mutation_branch_rejects_missing_required_and_extra_fields(
+    payload: dict[str, object],
+    _expected_type: type[ConfigModel],
+    required_fields: tuple[str, ...],
+) -> None:
+    adapter: TypeAdapter[MutationConfig] = TypeAdapter(MutationConfig)
+    for field in required_fields:
+        missing = deepcopy(payload)
+        del missing[field]
+        with pytest.raises(ValidationError):
+            adapter.validate_python(missing)
+
+    extra = deepcopy(payload)
+    extra["selector"] = "not-a-mutation-field"
+    with pytest.raises(ValidationError):
+        adapter.validate_python(extra)
+
+
+@pytest.mark.parametrize(
+    "tag",
+    [
+        "remove-json-pointer",
+        "invalid-utf8-v1",
+        "duplicate-json-key-v1",
+        "custom-v1",
+        b"missing-signature-v1",
+        None,
+    ],
+)
+def test_mutation_union_rejects_unknown_deferred_and_non_string_tags(tag: object) -> None:
+    adapter: TypeAdapter[MutationConfig] = TypeAdapter(MutationConfig)
+    with pytest.raises(ValidationError):
+        adapter.validate_python({"type": tag})
+
+
+@pytest.mark.parametrize(
+    ("payload", "_expected_type", "_required_fields"),
+    MUTATION_CASES,
+    ids=[str(case[0]["type"]) for case in MUTATION_CASES],
+)
+def test_accept_prior_mutation_is_only_available_for_structural_mutations(
+    payload: dict[str, object],
+    _expected_type: type[ConfigModel],
+    _required_fields: tuple[str, ...],
+) -> None:
+    adapter: TypeAdapter[MutationConfig] = TypeAdapter(MutationConfig)
+    candidate = deepcopy(payload)
+    candidate["accept_prior_mutation"] = True
+    if payload["type"] in STRUCTURAL_MUTATION_TYPES:
+        model = adapter.validate_python(candidate)
+        assert model.to_wire()["accept_prior_mutation"] is True
+    else:
+        with pytest.raises(ValidationError):
+            adapter.validate_python(candidate)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"type": "replace-json-value-v1", "pointer": "/data/value", "value": None},
+        {"type": "add-json-field-v1", "pointer": "/data", "name": "value", "value": None},
+    ],
+)
+def test_mutation_value_fields_preserve_explicit_canonical_json_null(
+    payload: dict[str, object],
+) -> None:
+    adapter: TypeAdapter[MutationConfig] = TypeAdapter(MutationConfig)
+    model = adapter.validate_python(payload)
+    assert model.to_wire()["value"] is None
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"type": "remove-json-pointer-v1", "pointer": None},
+        {"type": "replace-json-type-v1", "pointer": "/data", "target_type": None},
+        {"type": "truncate-bytes-v1", "length": None},
+        {"type": "invalid-json-v1", "strategy": None},
+        {"type": "missing-signature-v1", "accept_prior_mutation": None},
+    ],
+)
+def test_non_value_mutation_fields_reject_explicit_null(payload: dict[str, object]) -> None:
+    adapter: TypeAdapter[MutationConfig] = TypeAdapter(MutationConfig)
+    with pytest.raises(ValidationError):
+        adapter.validate_python(payload)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"type": "remove-json-pointer-v1", "pointer": "not/a/pointer"},
+        {
+            "type": "replace-json-type-v1",
+            "pointer": "/data",
+            "target_type": "number",
+        },
+        {"type": "invalid-json-v1", "strategy": "invalid-utf8"},
+        {"type": "alter-after-signing-v1", "offset": -1, "xor": 1},
+        {"type": "alter-after-signing-v1", "offset": 16_777_216, "xor": 1},
+        {"type": "alter-after-signing-v1", "offset": 0, "xor": 0},
+        {"type": "alter-after-signing-v1", "offset": 0, "xor": 256},
+        {"type": "truncate-bytes-v1", "length": -1},
+        {"type": "truncate-bytes-v1", "length": 16_777_217},
+        {"type": "truncate-bytes-v1", "length": True},
+        {"type": "truncate-bytes-v1", "length": 1.0},
+        {"type": "malformed-signature-v1", "case": "bad"},
+        {"type": "oversized-body-v1", "target_bytes": 0, "fill": "ascii-space"},
+        {"type": "oversized-body-v1", "target_bytes": 16_777_217, "fill": "ascii-space"},
+        {"type": "oversized-body-v1", "target_bytes": 1, "fill": "zero"},
+        {"type": "stale-signature-timestamp-v1", "age": "0s"},
+        {"type": "wrong-signing-key-v1", "context": ""},
+    ],
+)
+def test_mutation_branch_catalogs_bounds_and_scalar_types_are_exact(
+    payload: dict[str, object],
+) -> None:
+    adapter: TypeAdapter[MutationConfig] = TypeAdapter(MutationConfig)
+    with pytest.raises(ValidationError):
+        adapter.validate_python(payload)
+
+
+@pytest.mark.parametrize(
+    ("model_type", "field", "values", "base_payload"),
+    [
+        (
+            RemoveJsonPointerMutation,
+            "if_missing",
+            ("error", "ignore"),
+            {"type": "remove-json-pointer-v1", "pointer": "/data"},
+        ),
+        (
+            ReplaceJsonTypeMutation,
+            "target_type",
+            ("null", "boolean", "integer", "string", "array", "object"),
+            {"type": "replace-json-type-v1", "pointer": "/data"},
+        ),
+        (
+            InvalidJsonMutation,
+            "strategy",
+            ("truncated-object", "bad-escape", "trailing-comma"),
+            {"type": "invalid-json-v1"},
+        ),
+        (
+            MalformedSignatureMutation,
+            "case",
+            (
+                "invalid-encoding",
+                "missing-component",
+                "invalid-delimiter",
+                "duplicate-component",
+            ),
+            {"type": "malformed-signature-v1"},
+        ),
+    ],
+)
+def test_mutation_closed_subcatalogs_accept_every_exact_value(
+    model_type: type[ConfigModel],
+    field: str,
+    values: tuple[str, ...],
+    base_payload: dict[str, object],
+) -> None:
+    for value in values:
+        payload = {**base_payload, field: value}
+        model = model_type.model_validate(payload)
+        assert model.to_wire()[field] == value
+
+
+@pytest.mark.parametrize("length", [0, 16_777_216])
+def test_truncate_byte_boundaries_are_accepted(length: int) -> None:
+    model = TruncateBytesMutation.model_validate({"type": "truncate-bytes-v1", "length": length})
+    assert model.length == length
+
+
+@pytest.mark.parametrize("target_bytes", [1, 16_777_216])
+def test_oversized_body_boundaries_are_accepted(target_bytes: int) -> None:
+    model = OversizedBodyMutation.model_validate(
+        {
+            "type": "oversized-body-v1",
+            "target_bytes": target_bytes,
+            "fill": "ascii-space",
+        }
+    )
+    assert model.target_bytes == target_bytes
+
+
+def test_mutation_canonical_json_is_deeply_immutable_copy_safe_and_integer_only() -> None:
+    source: dict[str, object] = {"items": [1, {"allowed": True}]}
+    model = ReplaceJsonValueMutation.model_validate(
+        {"type": "replace-json-value-v1", "pointer": "/data", "value": source}
+    )
+    source["items"] = ["changed"]
+    source["later"] = False
+    assert model.to_wire()["value"] == {"items": [1, {"allowed": True}]}
+
+    for invalid_value in (1.5, b"bytes", MAX_SAFE_INTEGER + 1):
+        with pytest.raises(ValidationError):
+            ReplaceJsonValueMutation.model_validate(
+                {
+                    "type": "replace-json-value-v1",
+                    "pointer": "/data",
+                    "value": invalid_value,
+                }
+            )
+
+
+def test_retry_policy_valid_forms_are_frozen_copy_safe_and_round_trip() -> None:
+    one_attempt = RetryConfig.model_validate({"max_attempts": 1, "backoff": [], "retry_on": []})
+    assert one_attempt.jitter == Duration("0ns")
+    _assert_model_wire_round_trip(one_attempt, RetryConfig)
+
+    backoff = ["100ms", "1s"]
+    retry_on = ["timed_out", "retryable_status"]
+    selectors: list[object] = [408, 429, "5xx"]
+    model = RetryConfig.model_validate(
+        {
+            "max_attempts": 3,
+            "backoff": backoff,
+            "retry_on": retry_on,
+            "retryable_statuses": selectors,
+            "jitter": "10ms",
+        }
+    )
+    backoff.append("2s")
+    retry_on.clear()
+    selectors.append(503)
+    assert model.backoff == (Duration("100ms"), Duration("1s"))
+    assert tuple(str(item) for item in model.retry_on) == (
+        "timed_out",
+        "retryable_status",
+    )
+    assert len(model.retryable_statuses or ()) == 3
+    _assert_model_wire_round_trip(model, RetryConfig)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"max_attempts": 0, "backoff": [], "retry_on": []},
+        {"max_attempts": 33, "backoff": [], "retry_on": []},
+        {"max_attempts": True, "backoff": [], "retry_on": []},
+        {"max_attempts": 2, "backoff": [], "retry_on": ["timed_out"]},
+        {
+            "max_attempts": 2,
+            "backoff": ["1s", "2s"],
+            "retry_on": ["timed_out"],
+        },
+        {"max_attempts": 1, "backoff": [], "retry_on": ["timed_out"]},
+        {"max_attempts": 2, "backoff": ["1s"], "retry_on": []},
+        {
+            "max_attempts": 2,
+            "backoff": ["1s"],
+            "retry_on": ["timed_out", "timed_out"],
+        },
+        {
+            "max_attempts": 2,
+            "backoff": ["1s"],
+            "retry_on": ["retryable_status"],
+        },
+        {
+            "max_attempts": 2,
+            "backoff": ["1s"],
+            "retry_on": ["timed_out"],
+            "retryable_statuses": [500],
+        },
+        {
+            "max_attempts": 2,
+            "backoff": ["1s"],
+            "retry_on": ["retryable_status"],
+            "retryable_statuses": [],
+        },
+        {
+            "max_attempts": 2,
+            "backoff": ["1s"],
+            "retry_on": ["retryable_status"],
+            "retryable_statuses": [500, 500],
+        },
+        {
+            "max_attempts": 2,
+            "backoff": ["1s"],
+            "retry_on": ["retryable_status"],
+            "retryable_statuses": [99],
+        },
+        {
+            "max_attempts": 2,
+            "backoff": ["1s"],
+            "retry_on": ["retryable_status"],
+            "retryable_statuses": [600],
+        },
+        {
+            "max_attempts": 2,
+            "backoff": ["1s"],
+            "retry_on": ["retryable_status"],
+            "retryable_statuses": ["1xx"],
+        },
+        {
+            "max_attempts": 2,
+            "backoff": ["1s"],
+            "retry_on": ["retryable_status"],
+            "retryable_statuses": [True],
+        },
+        {
+            "max_attempts": 2,
+            "backoff": ["1s"],
+            "retry_on": ["retryable_status"],
+            "retryable_statuses": [b"5xx"],
+        },
+        {"max_attempts": 2, "backoff": ("1s",), "retry_on": ["timed_out"]},
+        {"max_attempts": 2, "backoff": ["1s"], "retry_on": ("timed_out",)},
+    ],
+)
+def test_retry_policy_rejects_invalid_cardinality_dependencies_and_types(
+    payload: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        RetryConfig.model_validate(payload)
+
+
+@pytest.mark.parametrize("missing", ["max_attempts", "backoff", "retry_on"])
+def test_retry_policy_requires_all_core_fields(missing: str) -> None:
+    payload: dict[str, object] = {
+        "max_attempts": 1,
+        "backoff": [],
+        "retry_on": [],
+    }
+    del payload[missing]
+    with pytest.raises(ValidationError):
+        RetryConfig.model_validate(payload)
+
+
+@pytest.mark.parametrize("selector", [100, 599, "2xx", "3xx", "4xx", "5xx"])
+def test_retry_status_selector_boundaries_and_classes_are_accepted(
+    selector: int | str,
+) -> None:
+    model = RetryConfig.model_validate(
+        {
+            "max_attempts": 2,
+            "backoff": ["1s"],
+            "retry_on": ["retryable_status"],
+            "retryable_statuses": [selector],
+        }
+    )
+    assert len(model.retryable_statuses or ()) == 1
+
+
+@pytest.mark.parametrize("fault_class", sorted(FAULT_CLASS_VALUES))
+def test_every_fault_class_is_exact_and_round_trips(fault_class: str) -> None:
+    model = BaselineConfig.model_validate({"fault_class": fault_class, "scenario": "one_fault"})
+    assert isinstance(model.fault_class, FaultClass)
+    assert model.fault_class.value == fault_class
+    _assert_model_wire_round_trip(model, BaselineConfig)
+
+
+@pytest.mark.parametrize(
+    "fault_class",
+    ["mutation:remove-json-pointer", "retry:timeout", "custom", b"delivery:duplicate", None],
+)
+def test_baseline_rejects_unknown_or_non_string_fault_classes(
+    fault_class: object,
+) -> None:
+    with pytest.raises(ValidationError):
+        BaselineConfig.model_validate({"fault_class": fault_class, "scenario": "one_fault"})
+
+
+def test_baseline_is_closed_and_requires_both_fields() -> None:
+    for payload in (
+        {"fault_class": "delivery:duplicate"},
+        {"scenario": "one_fault"},
+        {
+            "fault_class": "delivery:duplicate",
+            "scenario": "one_fault",
+            "extra": True,
+        },
+    ):
+        with pytest.raises(ValidationError):
+            BaselineConfig.model_validate(payload)
+
+
+STEP_CASES: tuple[tuple[dict[str, object], type[ConfigModel]], ...] = (
+    (
+        {
+            "deliver": {
+                "event": "payment",
+                "mutations": [
+                    {"type": "missing-signature-v1"},
+                    {
+                        "type": "replace-json-value-v1",
+                        "pointer": "/data/status",
+                        "value": "changed",
+                    },
+                ],
+                "timeout": "5s",
+                "retry": {
+                    "max_attempts": 2,
+                    "backoff": ["100ms"],
+                    "retry_on": ["connection_failed"],
+                },
+            }
+        },
+        DeliverStep,
+    ),
+    ({"wait": "1s"}, WaitStep),
+    ({"barrier": "release"}, BarrierStep),
+    (
+        {"observe": {"observer": "receiver_state", "checkpoint": "after"}},
+        ObserveStep,
+    ),
+    ({"restart": "receiver_process"}, RestartStep),
+)
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected_type"),
+    STEP_CASES,
+    ids=["deliver", "wait", "barrier", "observe", "restart"],
+)
+def test_all_five_step_families_are_closed_immutable_and_round_trip(
+    payload: dict[str, object],
+    expected_type: type[ConfigModel],
+) -> None:
+    adapter: TypeAdapter[StepConfig] = TypeAdapter(StepConfig)
+    model = adapter.validate_python(deepcopy(payload))
+    assert type(model) is expected_type
+    _assert_adapter_wire_round_trip(model, adapter)
+    with pytest.raises(ValidationError):
+        adapter.validate_python({**deepcopy(payload), "extra": True})
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"custom": {}},
+        {"deliver": {"event": "payment"}, "wait": "1s"},
+        {"deliver": {}},
+        {"wait": None},
+        {"wait": "1.0s"},
+        {"barrier": ""},
+        {"barrier": b"release"},
+        {"observe": {"observer": "receiver_state"}},
+        {"observe": {"checkpoint": "after"}},
+        {
+            "observe": {
+                "observer": "receiver_state",
+                "checkpoint": "after",
+                "extra": True,
+            }
+        },
+        {"restart": "Receiver"},
+    ],
+)
+def test_step_union_rejects_ambiguous_malformed_and_coerced_forms(
+    payload: dict[str, object],
+) -> None:
+    adapter: TypeAdapter[StepConfig] = TypeAdapter(StepConfig)
+    with pytest.raises(ValidationError):
+        adapter.validate_python(payload)
+
+
+@pytest.mark.parametrize("count", [1, 128])
+def test_deliver_count_boundaries_are_accepted(count: int) -> None:
+    model = DeliverStep.model_validate({"deliver": {"event": "payment", "count": count}})
+    assert model.deliver.count == count
+
+
+@pytest.mark.parametrize("count", [0, 129, True, 1.0, "1"])
+def test_deliver_count_out_of_range_and_coerced_forms_are_rejected(
+    count: object,
+) -> None:
+    with pytest.raises(ValidationError):
+        DeliverStep.model_validate({"deliver": {"event": "payment", "count": count}})
+
+
+def test_deliver_mutations_are_bounded_frozen_and_copy_safe() -> None:
+    mutations: list[dict[str, object]] = [{"type": "missing-signature-v1"}]
+    model = DeliverStep.model_validate({"deliver": {"event": "payment", "mutations": mutations}})
+    mutations.append({"type": "missing-signature-v1"})
+    assert len(model.deliver.mutations or ()) == 1
+    assert model.deliver.count == 1
+
+    with pytest.raises(ValidationError):
+        DeliverStep.model_validate(
+            {
+                "deliver": {
+                    "event": "payment",
+                    "mutations": [{"type": "missing-signature-v1"}] * 17,
+                }
+            }
+        )
+    with pytest.raises(ValidationError):
+        DeliverStep.model_validate(
+            {
+                "deliver": {
+                    "event": "payment",
+                    "mutations": ({"type": "missing-signature-v1"},),
+                }
+            }
+        )
+
+
+def test_event_config_is_closed_frozen_unique_and_round_trips() -> None:
+    dependencies = ["created", "authorized"]
+    model = EventConfig.model_validate(
+        {"id": "captured", "fixture": "payment", "depends_on": dependencies}
+    )
+    dependencies.append("changed")
+    assert model.depends_on == ("created", "authorized")
+    _assert_model_wire_round_trip(model, EventConfig)
+
+    for payload in (
+        {"id": "captured"},
+        {"fixture": "payment"},
+        {"id": "Captured", "fixture": "payment"},
+        {
+            "id": "captured",
+            "fixture": "payment",
+            "depends_on": ["created", "created"],
+        },
+        {"id": "captured", "fixture": "payment", "depends_on": ("created",)},
+        {"id": "captured", "fixture": "payment", "extra": True},
+    ):
+        with pytest.raises(ValidationError):
+            EventConfig.model_validate(payload)
+
+
+def _minimal_scenario_payload() -> dict[str, object]:
+    return {
+        "id": "happy_path",
+        "events": [{"id": "payment", "fixture": "payment_created"}],
+        "steps": [{"deliver": {"event": "payment"}}],
+    }
+
+
+def test_stage_b1_scenario_support_is_private_bounded_and_round_trips() -> None:
+    scenario_type = config_models._ScenarioConfigBase  # pyright: ignore[reportPrivateUsage]  # noqa: SLF001
+    payload = _minimal_scenario_payload()
+    model = scenario_type.model_validate(payload)
+    assert model.failure_policy.value == "continue-scenario"
+    assert model.baselines == ()
+    _assert_model_wire_round_trip(model, scenario_type)
+    assert not hasattr(config_models, "ScenarioConfig")
+
+    for policy in ("continue-scenario", "stop-scenario", "stop-run"):
+        candidate = _minimal_scenario_payload()
+        candidate["failure_policy"] = policy
+        assert scenario_type.model_validate(candidate).failure_policy.value == policy
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("events", ()),
+        ("events", ({"id": "payment", "fixture": "payment_created"},)),
+        ("steps", ()),
+        ("steps", ({"wait": "1s"},)),
+        ("baselines", ()),
+        (
+            "baselines",
+            ({"fault_class": "delivery:duplicate", "scenario": "duplicate_once"},),
+        ),
+    ],
+)
+def test_stage_b1_scenario_sequence_boundaries_reject_all_external_tuples(
+    field: str,
+    value: tuple[object, ...],
+) -> None:
+    scenario_type = config_models._ScenarioConfigBase  # pyright: ignore[reportPrivateUsage]  # noqa: SLF001
+    payload = _minimal_scenario_payload()
+    payload[field] = value
+    with pytest.raises(ValidationError, match="provided as lists"):
+        scenario_type.model_validate(payload)
+
+
+def test_stage_b1_scenario_bounds_uniqueness_and_exact_types() -> None:
+    scenario_type = config_models._ScenarioConfigBase  # pyright: ignore[reportPrivateUsage]  # noqa: SLF001
+    duplicate_baseline = _minimal_scenario_payload()
+    duplicate_baseline["baselines"] = [
+        {"fault_class": "delivery:duplicate", "scenario": "duplicate_once"},
+        {"fault_class": "delivery:duplicate", "scenario": "duplicate_twice"},
+    ]
+
+    invalid_payloads = (
+        {"id": "empty_events", "events": [], "steps": [{"wait": "1s"}]},
+        {
+            "id": "empty_steps",
+            "events": [{"id": "payment", "fixture": "payment_created"}],
+            "steps": [],
+        },
+        duplicate_baseline,
+        {
+            "id": "bad_policy",
+            "events": [{"id": "payment", "fixture": "payment_created"}],
+            "steps": [{"wait": "1s"}],
+            "failure_policy": "continue",
+        },
+        {
+            "id": "bad_policy",
+            "events": [{"id": "payment", "fixture": "payment_created"}],
+            "steps": [{"wait": "1s"}],
+            "failure_policy": b"continue-scenario",
+        },
+        {
+            "id": "tuple_events",
+            "events": ({"id": "payment", "fixture": "payment_created"},),
+            "steps": [{"wait": "1s"}],
+        },
+        {
+            "id": "tuple_steps",
+            "events": [{"id": "payment", "fixture": "payment_created"}],
+            "steps": ({"wait": "1s"},),
+        },
+    )
+    for payload in invalid_payloads:
+        with pytest.raises(ValidationError):
+            scenario_type.model_validate(payload)
+
+
+def test_stage_b1_scenario_maximum_collection_bounds() -> None:
+    scenario_type = config_models._ScenarioConfigBase  # pyright: ignore[reportPrivateUsage]  # noqa: SLF001
+    payload = _minimal_scenario_payload()
+    payload["events"] = [
+        {"id": f"event_{index}", "fixture": "payment_created"} for index in range(1001)
+    ]
+    with pytest.raises(ValidationError):
+        scenario_type.model_validate(payload)
+
+    payload = _minimal_scenario_payload()
+    payload["steps"] = [{"wait": "1ns"}] * 10_001
+    with pytest.raises(ValidationError):
+        scenario_type.model_validate(payload)
+
+    payload = _minimal_scenario_payload()
+    payload["baselines"] = [
+        {
+            "fault_class": fault_class,
+            "scenario": "one_fault",
+        }
+        for fault_class in sorted(FAULT_CLASS_VALUES)
+    ] * 3
+    with pytest.raises(ValidationError):
+        scenario_type.model_validate(payload)
 
 
 def test_schema_constants_match_version_metadata_and_schema_annotations() -> None:

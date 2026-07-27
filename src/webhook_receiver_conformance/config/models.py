@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from enum import StrEnum
 from fractions import Fraction
 from typing import Annotated, Any, ClassVar, Literal, Self, cast
@@ -39,6 +39,13 @@ MAX_ALLOWED_HOSTS = 64
 MAX_ARGV_ITEMS = 64
 MAX_ENVIRONMENT_NAMES = 64
 MAX_HTTP_PORT = 65_535
+MAX_RETRY_BACKOFFS = 31
+MAX_RETRY_PREDICATES = 3
+MAX_RETRY_STATUS_SELECTORS = 64
+MAX_MUTATIONS_PER_DELIVERY = 16
+MAX_SCENARIO_EVENTS = 1000
+MAX_SCENARIO_STEPS = 10_000
+MAX_SCENARIO_BASELINES = 64
 CONTROL_CHARACTER_LIMIT = 32
 DELETE_CHARACTER_CODEPOINT = 127
 MINIMUM_SCALE = Fraction(1, 1000)
@@ -56,8 +63,8 @@ _PROJECT_RELATIVE_PATH = re.compile(
 _JSON_POINTER = re.compile(r"(?:/(?:[^~/]|~0|~1)*)*")
 _HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
 _CHALLENGE_PATH = re.compile(r"/[^\r\n]*")
-_ENVIRONMENT_NAME = re.compile(r"[A-Z][A-Z0-9_]{0,127}")
-_PROFILE_NAME = re.compile(r"[a-z][a-z0-9_-]{0,63}")
+_ENVIRONMENT_NAME = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
+_PROFILE_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 _FORBIDDEN_HEADER_NAMES = frozenset(
     {
         "host",
@@ -77,15 +84,37 @@ _DURATION_MULTIPLIERS: Mapping[str, int] = {
 }
 
 
+class _InternalFrozenSequence:
+    """Private provenance wrapper for trusted immutable sequence defaults."""
+
+    values: tuple[object, ...]
+    __slots__ = ("values",)
+
+    def __init__(self, values: tuple[object, ...]) -> None:
+        object.__setattr__(self, "values", values)
+
+    def __setattr__(self, _name: str, _value: object) -> None:
+        msg = "internal frozen sequence provenance is immutable"
+        raise AttributeError(msg)
+
+    def __delattr__(self, _name: str) -> None:
+        msg = "internal frozen sequence provenance is immutable"
+        raise AttributeError(msg)
+
+
+def _internal_frozen_sequence[T](*values: T) -> tuple[T, ...]:
+    return cast("tuple[T, ...]", _InternalFrozenSequence(cast("tuple[object, ...]", values)))
+
+
 def _sequence_to_tuple(value: object) -> object:
     if isinstance(value, list):
         return tuple(cast("list[object]", value))
+    if isinstance(value, _InternalFrozenSequence):
+        return value.values
     if isinstance(value, tuple):
-        sequence = cast("tuple[object, ...]", value)
-        if sequence:
-            msg = "configuration arrays must be provided as lists"
-            raise ValueError(msg)
-        return sequence
+        msg = "configuration arrays must be provided as lists"
+        # Pydantic deliberately does not convert TypeError into a ValidationError.
+        raise ValueError(msg)  # noqa: TRY004
     return value
 
 
@@ -98,9 +127,19 @@ class FrozenDict[T](Mapping[str, T]):
     __items: tuple[tuple[str, T], ...]
     __slots__ = ("__items",)
 
-    def __init__(self, values: Mapping[str, T] | Iterator[tuple[str, T]]) -> None:
-        items = values.items() if isinstance(values, Mapping) else values
-        object.__setattr__(self, "_FrozenDict__items", tuple(items))
+    def __init__(self, values: Mapping[str, T] | Iterable[tuple[str, T]]) -> None:
+        if isinstance(values, Mapping):
+            mapping = cast("Mapping[str, T]", values)
+            materialized: tuple[tuple[str, T], ...] = tuple(mapping.items())
+        else:
+            materialized = tuple(values)
+        seen: set[str] = set()
+        for key, _value in materialized:
+            if key in seen:
+                msg = f"FrozenDict keys must be unique; duplicate key: {key!r}"
+                raise ValueError(msg)
+            seen.add(key)
+        object.__setattr__(self, "_FrozenDict__items", materialized)
 
     def __setattr__(self, _name: str, _value: object) -> None:
         msg = "FrozenDict is immutable"
@@ -135,6 +174,12 @@ class FrozenDict[T](Mapping[str, T]):
         return NotImplemented
 
 
+class _FrozenJsonArray(tuple["FrozenJsonValue", ...]):
+    """Private provenance marker for a validated canonical JSON array."""
+
+    __slots__ = ()
+
+
 type FrozenJsonScalar = bool | int | str | None
 type FrozenJsonValue = (
     FrozenJsonScalar | tuple["FrozenJsonValue", ...] | FrozenDict["FrozenJsonValue"]
@@ -143,10 +188,10 @@ type FrozenJsonValue = (
 
 def freeze_canonical_json(value: object) -> FrozenJsonValue:
     """Validate and deeply freeze the bounded integer-only canonical JSON profile."""
-    stack: list[tuple[object, int, bool]] = [(value, 1, isinstance(value, FrozenDict))]
+    stack: list[tuple[object, int]] = [(value, 1)]
     nodes = 0
     while stack:
-        current, depth, internal = stack.pop()
+        current, depth = stack.pop()
         nodes += 1
         if nodes > MAX_CANONICAL_NODES:
             msg = "canonical JSON exceeds the node limit"
@@ -171,16 +216,16 @@ def freeze_canonical_json(value: object) -> FrozenJsonValue:
             if len(sequence) > MAX_CANONICAL_COLLECTION_ITEMS:
                 msg = "canonical JSON array exceeds the item limit"
                 raise ValueError(msg)
-            stack.extend((item, depth + 1, False) for item in reversed(sequence))
+            stack.extend((item, depth + 1) for item in reversed(sequence))
+            continue
+        if isinstance(current, _FrozenJsonArray):
+            sequence = cast("tuple[object, ...]", current)
+            stack.extend((item, depth + 1) for item in reversed(sequence))
             continue
         if isinstance(current, tuple):
-            sequence = cast("tuple[object, ...]", current)
-            if sequence and not internal:
-                msg = "canonical JSON arrays must be provided as lists"
-                raise TypeError(msg)
-            stack.extend((item, depth + 1, True) for item in reversed(sequence))
-            continue
-        if isinstance(current, (dict, FrozenDict)):
+            msg = "canonical JSON arrays must be provided as lists"
+            raise TypeError(msg)
+        if isinstance(current, FrozenDict):
             mapping = cast("Mapping[object, object]", current)
             if len(mapping) > MAX_CANONICAL_COLLECTION_ITEMS:
                 msg = "canonical JSON object exceeds the property limit"
@@ -192,7 +237,21 @@ def freeze_canonical_json(value: object) -> FrozenJsonValue:
                 if len(key) > MAX_CANONICAL_OBJECT_KEY_LENGTH:
                     msg = "canonical JSON object key exceeds the length limit"
                     raise ValueError(msg)
-                stack.append((item, depth + 1, isinstance(current, FrozenDict)))
+                stack.append((item, depth + 1))
+            continue
+        if isinstance(current, dict):
+            mapping = cast("Mapping[object, object]", current)
+            if len(mapping) > MAX_CANONICAL_COLLECTION_ITEMS:
+                msg = "canonical JSON object exceeds the property limit"
+                raise ValueError(msg)
+            for key, item in reversed(tuple(mapping.items())):
+                if not isinstance(key, str):
+                    msg = "canonical JSON object keys must be strings"
+                    raise TypeError(msg)
+                if len(key) > MAX_CANONICAL_OBJECT_KEY_LENGTH:
+                    msg = "canonical JSON object key exceeds the length limit"
+                    raise ValueError(msg)
+                stack.append((item, depth + 1))
             continue
         if isinstance(current, Mapping):
             msg = "canonical JSON objects must be provided as dictionaries"
@@ -208,10 +267,10 @@ def _freeze_validated_json(value: object) -> FrozenJsonValue:
         return value
     if isinstance(value, list):
         sequence = cast("Sequence[object]", value)
-        return tuple(_freeze_validated_json(item) for item in sequence)
-    if isinstance(value, tuple):
+        return _FrozenJsonArray(_freeze_validated_json(item) for item in sequence)
+    if isinstance(value, _FrozenJsonArray):
         sequence = cast("tuple[object, ...]", value)
-        return tuple(_freeze_validated_json(item) for item in sequence)
+        return _FrozenJsonArray(_freeze_validated_json(item) for item in sequence)
     if isinstance(value, (dict, FrozenDict)):
         mapping = cast("Mapping[object, object]", value)
         return FrozenDict(
@@ -269,7 +328,10 @@ class CanonicalJsonValue:
     def _validate(cls, value: object) -> CanonicalJsonValue:
         if isinstance(value, cls):
             return value
-        return cls(value)
+        try:
+            return cls(value)
+        except TypeError as error:
+            raise ValueError(str(error)) from error
 
     @classmethod
     def __get_pydantic_core_schema__(
@@ -504,8 +566,11 @@ class ConfigModel(BaseModel):
         """Return a detached JSON-compatible object with absent optionals omitted."""
         dumped = cast(
             "dict[str, object]",
-            self.model_dump(mode="json", exclude_none=False),
+            self.model_dump(mode="json", exclude_none=True),
         )
+        for key in self.explicit_null_fields & self.model_fields_set:
+            if getattr(self, key) is None:
+                dumped[key] = None
         wire: dict[str, object] = {
             key: value
             for key, value in dumped.items()
@@ -540,7 +605,7 @@ class ProjectSettings(ConfigModel):
     name: ProjectName
     artifact_directory: NonEmptyString
     seed: Annotated[StrictStr, StringConstraints(min_length=1, max_length=1024)] | None = None
-    secret_roots: FrozenSequence[ProjectRelativePath] = ()
+    secret_roots: FrozenSequence[ProjectRelativePath] = _internal_frozen_sequence()
 
     @field_validator("secret_roots")
     @classmethod
@@ -579,8 +644,12 @@ def _target_profile_from_wire(value: object) -> object:
 class ReceiverConfig(ConfigModel):
     url: StrictStr
     target_profile: Annotated[TargetProfile, BeforeValidator(_target_profile_from_wire)]
-    allowed_hosts: FrozenSequence[Annotated[StrictStr, StringConstraints(min_length=1)]] = ()
-    allowed_ports: FrozenSequence[Annotated[StrictInt, Field(ge=1, le=65535)]] = ()
+    allowed_hosts: FrozenSequence[Annotated[StrictStr, StringConstraints(min_length=1)]] = (
+        _internal_frozen_sequence()
+    )
+    allowed_ports: FrozenSequence[Annotated[StrictInt, Field(ge=1, le=65535)]] = (
+        _internal_frozen_sequence()
+    )
     public_challenge_path: StrictStr = "/.well-known/webhook-conformance-challenge"
     test_ca_file: Annotated[StrictStr, StringConstraints(min_length=1, max_length=4096)] | None = (
         None
@@ -809,6 +878,381 @@ class ReportsConfig(ConfigModel):
             msg = "formats must contain at least one value"
             raise ValueError(msg)
         return _require_unique(value, field_name="formats")
+
+
+class RetryOn(StrEnum):
+    """Closed retry-eligibility predicate vocabulary."""
+
+    TIMED_OUT = "timed_out"
+    CONNECTION_FAILED = "connection_failed"
+    RETRYABLE_STATUS = "retryable_status"
+
+
+class HttpStatusClass(StrEnum):
+    """Closed HTTP status-class selector vocabulary."""
+
+    SUCCESS = "2xx"
+    REDIRECTION = "3xx"
+    CLIENT_ERROR = "4xx"
+    SERVER_ERROR = "5xx"
+
+
+def _retry_on_from_wire(value: object) -> object:
+    if isinstance(value, str):
+        return RetryOn(value)
+    return value
+
+
+def _http_status_class_from_wire(value: object) -> object:
+    if isinstance(value, str):
+        return HttpStatusClass(value)
+    return value
+
+
+type RetryStatusSelector = (
+    Annotated[StrictInt, Field(ge=100, le=599)]
+    | Annotated[HttpStatusClass, BeforeValidator(_http_status_class_from_wire)]
+)
+
+
+class RetryConfig(ConfigModel):
+    """Bounded explicit retry policy with exact logical delays."""
+
+    max_attempts: Annotated[StrictInt, Field(ge=1, le=32)]
+    backoff: FrozenSequence[Duration]
+    retry_on: FrozenSequence[Annotated[RetryOn, BeforeValidator(_retry_on_from_wire)]]
+    retryable_statuses: FrozenSequence[RetryStatusSelector] | None = None
+    jitter: Duration = Duration("0ns")
+
+    @field_validator("backoff")
+    @classmethod
+    def validate_backoff(cls, value: tuple[Duration, ...]) -> tuple[Duration, ...]:
+        if len(value) > MAX_RETRY_BACKOFFS:
+            msg = "backoff cannot contain more than 31 delays"
+            raise ValueError(msg)
+        return value
+
+    @field_validator("retry_on")
+    @classmethod
+    def validate_retry_on(cls, value: tuple[RetryOn, ...]) -> tuple[RetryOn, ...]:
+        if len(value) > MAX_RETRY_PREDICATES:
+            msg = "retry_on cannot contain more than 3 predicates"
+            raise ValueError(msg)
+        return _require_unique(value, field_name="retry_on")
+
+    @field_validator("retryable_statuses")
+    @classmethod
+    def validate_retryable_statuses(
+        cls,
+        value: tuple[int | HttpStatusClass, ...] | None,
+    ) -> tuple[int | HttpStatusClass, ...] | None:
+        if value is None:
+            return None
+        if not 1 <= len(value) <= MAX_RETRY_STATUS_SELECTORS:
+            msg = "retryable_statuses must contain between 1 and 64 selectors"
+            raise ValueError(msg)
+        return _require_unique(value, field_name="retryable_statuses")
+
+    @model_validator(mode="after")
+    def validate_retry_relationships(self) -> RetryConfig:
+        expected_backoffs = self.max_attempts - 1
+        if len(self.backoff) != expected_backoffs:
+            msg = "backoff length must equal max_attempts minus one"
+            raise ValueError(msg)
+        if self.max_attempts == 1 and self.retry_on:
+            msg = "retry_on must be empty when max_attempts is one"
+            raise ValueError(msg)
+        if self.max_attempts > 1 and not self.retry_on:
+            msg = "retry_on must be nonempty when max_attempts exceeds one"
+            raise ValueError(msg)
+        uses_status = RetryOn.RETRYABLE_STATUS in self.retry_on
+        if uses_status != (self.retryable_statuses is not None):
+            msg = "retryable_statuses must be present exactly when retryable_status is selected"
+            raise ValueError(msg)
+        return self
+
+
+class FaultClass(StrEnum):
+    """Finite v0.1 one-fault baseline vocabulary."""
+
+    MUTATION_REMOVE_JSON_POINTER = "mutation:remove-json-pointer-v1"
+    MUTATION_REPLACE_JSON_VALUE = "mutation:replace-json-value-v1"
+    MUTATION_REPLACE_JSON_TYPE = "mutation:replace-json-type-v1"
+    MUTATION_ADD_JSON_FIELD = "mutation:add-json-field-v1"
+    MUTATION_CHANGE_EVENT_ID_FIELD = "mutation:change-event-id-field-v1"
+    MUTATION_CHANGE_EVENT_TYPE_FIELD = "mutation:change-event-type-field-v1"
+    MUTATION_TRUNCATE_BYTES = "mutation:truncate-bytes-v1"
+    MUTATION_INVALID_JSON = "mutation:invalid-json-v1"
+    MUTATION_CONTENT_TYPE_MISMATCH = "mutation:content-type-mismatch-v1"
+    MUTATION_ALTER_AFTER_SIGNING = "mutation:alter-after-signing-v1"
+    MUTATION_STALE_SIGNATURE_TIMESTAMP = "mutation:stale-signature-timestamp-v1"
+    MUTATION_WRONG_SIGNING_KEY = "mutation:wrong-signing-key-v1"
+    MUTATION_MISSING_SIGNATURE = "mutation:missing-signature-v1"
+    MUTATION_MALFORMED_SIGNATURE = "mutation:malformed-signature-v1"
+    MUTATION_OVERSIZED_BODY = "mutation:oversized-body-v1"
+    DELIVERY_DUPLICATE = "delivery:duplicate"
+    DELIVERY_CONCURRENT = "delivery:concurrent"
+    DELIVERY_DEPENDENCY_ORDER_REVERSAL = "delivery:dependency-order-reversal"
+    RETRY_TIMED_OUT = "retry:timed_out"
+    RETRY_CONNECTION_FAILED = "retry:connection_failed"
+    RETRY_RETRYABLE_STATUS = "retry:retryable_status"
+    LIFECYCLE_RESTART = "lifecycle:restart"
+
+
+def _fault_class_from_wire(value: object) -> object:
+    if isinstance(value, str):
+        return FaultClass(value)
+    return value
+
+
+class BaselineConfig(ConfigModel):
+    """Mapping from one closed fault class to a one-fault scenario."""
+
+    fault_class: Annotated[FaultClass, BeforeValidator(_fault_class_from_wire)]
+    scenario: ProfileName
+
+
+class RemoveJsonPointerMutation(ConfigModel):
+    type: Literal["remove-json-pointer-v1"]
+    pointer: JsonPointer
+    if_missing: Literal["error", "ignore"] = "error"
+    accept_prior_mutation: bool = False
+
+
+class ReplaceJsonValueMutation(ConfigModel):
+    explicit_null_fields = frozenset({"value"})
+
+    type: Literal["replace-json-value-v1"]
+    pointer: JsonPointer
+    value: CanonicalJsonValue
+    accept_prior_mutation: bool = False
+
+
+class ReplaceJsonTypeMutation(ConfigModel):
+    type: Literal["replace-json-type-v1"]
+    pointer: JsonPointer
+    target_type: Literal["null", "boolean", "integer", "string", "array", "object"]
+    accept_prior_mutation: bool = False
+
+
+class AddJsonFieldMutation(ConfigModel):
+    explicit_null_fields = frozenset({"value"})
+
+    type: Literal["add-json-field-v1"]
+    pointer: JsonPointer
+    name: NonEmptyString
+    value: CanonicalJsonValue
+    overwrite: bool = False
+    accept_prior_mutation: bool = False
+
+
+class ChangeEventIdFieldMutation(ConfigModel):
+    type: Literal["change-event-id-field-v1"]
+    value: NonEmptyString
+    accept_prior_mutation: bool = False
+
+
+class ChangeEventTypeFieldMutation(ConfigModel):
+    type: Literal["change-event-type-field-v1"]
+    value: NonEmptyString
+    accept_prior_mutation: bool = False
+
+
+class TruncateBytesMutation(ConfigModel):
+    type: Literal["truncate-bytes-v1"]
+    length: Annotated[StrictInt, Field(ge=0, le=16_777_216)]
+
+
+class InvalidJsonMutation(ConfigModel):
+    type: Literal["invalid-json-v1"]
+    strategy: Literal["truncated-object", "bad-escape", "trailing-comma"]
+
+
+class ContentTypeMismatchMutation(ConfigModel):
+    type: Literal["content-type-mismatch-v1"]
+    media_type: MediaType
+
+
+class AlterAfterSigningMutation(ConfigModel):
+    type: Literal["alter-after-signing-v1"]
+    offset: Annotated[StrictInt, Field(ge=0, le=16_777_215)]
+    xor: Annotated[StrictInt, Field(ge=1, le=255)]
+
+
+class StaleSignatureTimestampMutation(ConfigModel):
+    type: Literal["stale-signature-timestamp-v1"]
+    age: PositiveDuration
+
+
+class WrongSigningKeyMutation(ConfigModel):
+    type: Literal["wrong-signing-key-v1"]
+    context: NonEmptyString
+
+
+class MissingSignatureMutation(ConfigModel):
+    type: Literal["missing-signature-v1"]
+
+
+class MalformedSignatureMutation(ConfigModel):
+    type: Literal["malformed-signature-v1"]
+    case: Literal[
+        "invalid-encoding",
+        "missing-component",
+        "invalid-delimiter",
+        "duplicate-component",
+    ]
+
+
+class OversizedBodyMutation(ConfigModel):
+    type: Literal["oversized-body-v1"]
+    target_bytes: Annotated[StrictInt, Field(ge=1, le=16_777_216)]
+    fill: Literal["ascii-space"]
+
+
+type MutationConfig = Annotated[
+    RemoveJsonPointerMutation
+    | ReplaceJsonValueMutation
+    | ReplaceJsonTypeMutation
+    | AddJsonFieldMutation
+    | ChangeEventIdFieldMutation
+    | ChangeEventTypeFieldMutation
+    | TruncateBytesMutation
+    | InvalidJsonMutation
+    | ContentTypeMismatchMutation
+    | AlterAfterSigningMutation
+    | StaleSignatureTimestampMutation
+    | WrongSigningKeyMutation
+    | MissingSignatureMutation
+    | MalformedSignatureMutation
+    | OversizedBodyMutation,
+    Field(discriminator="type"),
+]
+
+
+class DeliverAction(ConfigModel):
+    """One logical delivery action and its explicit attempt policy."""
+
+    event: StrictStr
+    count: Annotated[StrictInt, Field(ge=1, le=128)] = 1
+    concurrency_group: StrictStr | None = None
+    signer: StrictStr | None = None
+    mutations: FrozenSequence[MutationConfig] | None = None
+    timeout: Duration | None = None
+    retry: RetryConfig | None = None
+
+    @field_validator("mutations")
+    @classmethod
+    def validate_mutations(
+        cls,
+        value: tuple[MutationConfig, ...] | None,
+    ) -> tuple[MutationConfig, ...] | None:
+        if value is not None and len(value) > MAX_MUTATIONS_PER_DELIVERY:
+            msg = "mutations cannot contain more than 16 operators"
+            raise ValueError(msg)
+        return value
+
+
+class DeliverStep(ConfigModel):
+    deliver: DeliverAction
+
+
+class WaitStep(ConfigModel):
+    wait: Duration
+
+
+class BarrierStep(ConfigModel):
+    barrier: Annotated[StrictStr, StringConstraints(min_length=1)]
+
+
+class ObserveAction(ConfigModel):
+    observer: StrictStr
+    checkpoint: StrictStr
+
+
+class ObserveStep(ConfigModel):
+    observe: ObserveAction
+
+
+class RestartStep(ConfigModel):
+    restart: ProfileName
+
+
+type StepConfig = DeliverStep | WaitStep | BarrierStep | ObserveStep | RestartStep
+
+
+class EventConfig(ConfigModel):
+    """Scenario-local logical event and fixture reference."""
+
+    id: ProfileName
+    fixture: StrictStr
+    depends_on: FrozenSequence[StrictStr] | None = None
+
+    @field_validator("depends_on")
+    @classmethod
+    def validate_depends_on(
+        cls,
+        value: tuple[str, ...] | None,
+    ) -> tuple[str, ...] | None:
+        if value is None:
+            return None
+        return _require_unique(value, field_name="depends_on")
+
+
+class FailurePolicy(StrEnum):
+    """Closed scenario failure-propagation vocabulary."""
+
+    CONTINUE_SCENARIO = "continue-scenario"
+    STOP_SCENARIO = "stop-scenario"
+    STOP_RUN = "stop-run"
+
+
+def _failure_policy_from_wire(value: object) -> object:
+    if isinstance(value, str):
+        return FailurePolicy(value)
+    return value
+
+
+class _ScenarioConfigBase(ConfigModel):  # pyright: ignore[reportUnusedClass]
+    """Stage B1 scenario structure completed by typed assertions in Stage B2."""
+
+    id: ProfileName
+    description: Annotated[StrictStr, StringConstraints(max_length=2048)] | None = None
+    events: FrozenSequence[EventConfig]
+    steps: FrozenSequence[StepConfig]
+    baselines: FrozenSequence[BaselineConfig] = _internal_frozen_sequence()
+    failure_policy: Annotated[
+        FailurePolicy,
+        BeforeValidator(_failure_policy_from_wire),
+    ] = FailurePolicy.CONTINUE_SCENARIO
+
+    @field_validator("events")
+    @classmethod
+    def validate_events(cls, value: tuple[EventConfig, ...]) -> tuple[EventConfig, ...]:
+        if not 1 <= len(value) <= MAX_SCENARIO_EVENTS:
+            msg = "events must contain between 1 and 1000 entries"
+            raise ValueError(msg)
+        return value
+
+    @field_validator("steps")
+    @classmethod
+    def validate_steps(cls, value: tuple[StepConfig, ...]) -> tuple[StepConfig, ...]:
+        if not 1 <= len(value) <= MAX_SCENARIO_STEPS:
+            msg = "steps must contain between 1 and 10000 entries"
+            raise ValueError(msg)
+        return value
+
+    @field_validator("baselines")
+    @classmethod
+    def validate_baselines(
+        cls,
+        value: tuple[BaselineConfig, ...],
+    ) -> tuple[BaselineConfig, ...]:
+        if len(value) > MAX_SCENARIO_BASELINES:
+            msg = "baselines cannot contain more than 64 mappings"
+            raise ValueError(msg)
+        fault_classes = tuple(item.fault_class for item in value)
+        _require_unique(fault_classes, field_name="baseline fault_class")
+        return value
 
 
 def _validate_http_uri(value: str) -> None:
