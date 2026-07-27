@@ -1,0 +1,59 @@
+version: 2
+updates:
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      # Security-sensitive transport changes require focused review.
+      transport-http:
+        patterns:
+          - anyio
+          - certifi
+          - h11
+          - httpcore
+          - httpx
+          - idna
+      # Security-sensitive parsers and schema validators require focused review.
+      parser-schema:
+        patterns:
+          - jsonschema
+          - jsonschema-specifications
+          - pyyaml
+          - referencing
+          - rpds-py
+      # Reserved now so future signing dependencies cannot enter a routine group.
+      crypto-signing:
+        patterns:
+          - cffi
+          - cryptography
+          - pynacl
+          - pycryptodome
+      # Report/template boundaries require injection and escaping review.
+      template-report:
+        patterns:
+          - jinja2
+          - markupsafe
+          - pydantic
+          - pydantic-core
+          - rich
+          - typer
+      routine-development:
+        dependency-type: development
+        patterns:
+          - hatchling
+          - hypothesis
+          - pyright
+          - pytest
+          - ruff
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      ci-actions:
+        patterns:
+          - actions/*
+          - astral-sh/setup-uv
