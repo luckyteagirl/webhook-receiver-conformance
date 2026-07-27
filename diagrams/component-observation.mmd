@@ -1,0 +1,9 @@
+flowchart LR
+  CHECK[Observation Checkpoint] --> NEG[Capability Negotiation]
+  NEG --> CMD[Command Observer]
+  NEG --> PROBE[HTTP Probe Observer]
+  CMD --> POLL[Polling Controller]
+  PROBE --> POLL
+  POLL --> JOURNAL[Observation Samples]
+  JOURNAL --> ASSERT[Typed Assertion Engine]
+  ASSERT --> VERDICT[Scenario / Run Verdict Reducer]

@@ -1,0 +1,14 @@
+{
+  "schema_version": "0.1-experimental",
+  "adapter_id": "builtin.stripe-v1",
+  "category": "signer",
+  "api_version": "0.1-internal",
+  "implementation_version": "0.1.0",
+  "capabilities": [
+    "timestamped",
+    "multiple-signatures",
+    "invalid-cases"
+  ],
+  "trust": "built-in-only",
+  "public_compatibility_promise": false
+}

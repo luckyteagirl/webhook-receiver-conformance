@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "fixtures": [
+    {
+      "fixture_id": "payment_succeeded",
+      "blob_sha256": "sha256:cdcc7f0e4b266e14c8a2b93842d79286daa67a69652d0c6a636763568a9de67e",
+      "byte_length": 224,
+      "media_type": "application/json",
+      "source_path": "fixtures/payment_succeeded.json"
+    }
+  ]
+}

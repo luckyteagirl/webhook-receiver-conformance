@@ -1,0 +1,10 @@
+sequenceDiagram
+  participant N as Resumed Process
+  participant J as Journal
+  participant O as Observer
+  N->>J: load unknown_outcome attempt
+  N->>O: correlated business-state queries
+  O-->>N: snapshot proves processing_count=1 and effect correlation
+  N->>J: append reconciliation decision with evidence refs
+  Note over J: physical attempt remains unknown_outcome
+  N->>J: scenario may continue as reconciled

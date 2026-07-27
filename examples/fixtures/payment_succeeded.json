@@ -1,0 +1,11 @@
+{
+  "id": "evt_test_001",
+  "type": "payment.succeeded",
+  "created": 1785067200,
+  "data": {
+    "order_id": "ord_001",
+    "amount": 4200,
+    "currency": "USD",
+    "customer_email": "secret-canary@example.invalid"
+  }
+}

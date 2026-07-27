@@ -1,0 +1,12 @@
+sequenceDiagram
+  participant S as Scheduler
+  participant R as Receiver
+  participant O as Observer
+  S->>R: dependent event before prerequisite
+  R-->>S: accepted/staged/rejected by declared contract
+  S->>O: checkpoint: no corrupt partial state
+  O-->>S: normalized evidence
+  S->>R: prerequisite event
+  R-->>S: response
+  S->>O: eventual final state
+  O-->>S: allowed terminal state

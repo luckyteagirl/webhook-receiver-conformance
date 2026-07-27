@@ -1,0 +1,10 @@
+sequenceDiagram
+  participant C as Compiler
+  participant H as Executor
+  participant R as Receiver
+  participant O as Observer
+  C->>C: realize wrong-key/stale/malformed case
+  H->>R: exact body + invalid signature
+  R-->>H: 4xx
+  H->>O: processing_count(event_id)
+  O-->>H: 0

@@ -1,0 +1,14 @@
+flowchart TB
+  GH[GitHub Actions Job]
+  ACTION[Version-pinned Action Wrapper]
+  SERVICES[Receiver test services]
+  HARNESS[CLI / container]
+  ART[Sanitized artifacts]
+  CHECKS[JUnit + exit status]
+  GH --> ACTION
+  ACTION --> SERVICES
+  ACTION --> HARNESS
+  HARNESS --> SERVICES
+  HARNESS --> ART
+  HARNESS --> CHECKS
+  ART -->|upload after redaction gate| GH

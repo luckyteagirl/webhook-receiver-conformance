@@ -1,0 +1,752 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/webhook-receiver-conformance/v1/project-config.schema.json",
+  "title": "Webhook receiver conformance project configuration",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "project",
+    "receiver",
+    "fixtures",
+    "signers",
+    "observers",
+    "clock",
+    "limits",
+    "scenarios",
+    "reports"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "project": {
+      "type": "object",
+      "required": [
+        "name",
+        "artifact_directory"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "artifact_directory": {
+          "type": "string",
+          "minLength": 1
+        },
+        "seed": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        }
+      },
+      "additionalProperties": false
+    },
+    "receiver": {
+      "type": "object",
+      "required": [
+        "url",
+        "target_profile"
+      ],
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https?://"
+        },
+        "target_profile": {
+          "enum": [
+            "loopback",
+            "private-allowlist",
+            "public-authorized"
+          ]
+        },
+        "allowed_hosts": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true,
+          "maxItems": 64,
+          "default": []
+        },
+        "allowed_ports": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "uniqueItems": true,
+          "default": []
+        },
+        "public_challenge_path": {
+          "type": "string",
+          "pattern": "^/[^\\r\\n]*$",
+          "default": "/.well-known/webhook-conformance-challenge"
+        },
+        "tls_verify": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "fixtures": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "path",
+          "media_type"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "media_type": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "event_id_pointer": {
+            "type": "string",
+            "default": "/id"
+          },
+          "event_type_pointer": {
+            "type": "string",
+            "default": "/type"
+          },
+          "schema_path": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "signers": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 32,
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "profile",
+          "secret"
+        ],
+        "properties": {
+          "profile": {
+            "enum": [
+              "generic-hmac-sha256",
+              "stripe-v1",
+              "standard-webhooks-hmac"
+            ]
+          },
+          "secret": {
+            "$ref": "#/$defs/secret_ref"
+          },
+          "header_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "replay_window": {
+            "$ref": "#/$defs/duration"
+          },
+          "key_id": {
+            "type": "string",
+            "maxLength": 128
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "observers": {
+      "type": "object",
+      "maxProperties": 16,
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+      },
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "argv",
+              "timeout"
+            ],
+            "properties": {
+              "type": {
+                "const": "command"
+              },
+              "argv": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 64,
+                "items": {
+                  "type": "string",
+                  "maxLength": 4096
+                }
+              },
+              "timeout": {
+                "$ref": "#/$defs/duration"
+              },
+              "environment_allowlist": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Z][A-Z0-9_]*$"
+                },
+                "uniqueItems": true
+              },
+              "working_directory": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "base_url",
+              "token",
+              "timeout"
+            ],
+            "properties": {
+              "type": {
+                "const": "http"
+              },
+              "base_url": {
+                "type": "string",
+                "format": "uri",
+                "pattern": "^https?://"
+              },
+              "token": {
+                "$ref": "#/$defs/secret_ref"
+              },
+              "timeout": {
+                "$ref": "#/$defs/duration"
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "clock": {
+      "type": "object",
+      "required": [
+        "mode"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "real",
+            "scaled"
+          ]
+        },
+        "scale_numerator": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000,
+          "default": 1
+        },
+        "scale_denominator": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000,
+          "default": 1
+        },
+        "minimum_physical_wait": {
+          "$ref": "#/$defs/duration"
+        }
+      },
+      "additionalProperties": false
+    },
+    "limits": {
+      "type": "object",
+      "required": [
+        "max_events",
+        "max_attempts",
+        "max_concurrency",
+        "max_request_bytes",
+        "max_response_capture_bytes"
+      ],
+      "properties": {
+        "max_events": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000,
+          "default": 1000
+        },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5000,
+          "default": 5000
+        },
+        "max_concurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 128,
+          "default": 8
+        },
+        "max_request_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16777216,
+          "default": 1048576
+        },
+        "max_response_capture_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1048576,
+          "default": 65536
+        }
+      },
+      "additionalProperties": false
+    },
+    "scenarios": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": {
+        "$ref": "#/$defs/scenario"
+      }
+    },
+    "reports": {
+      "type": "object",
+      "required": [
+        "formats",
+        "redaction"
+      ],
+      "properties": {
+        "formats": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "json",
+              "jsonl",
+              "junit",
+              "html"
+            ]
+          }
+        },
+        "redaction": {
+          "type": "object",
+          "required": [
+            "headers",
+            "json_pointers",
+            "retain_raw_payloads"
+          ],
+          "properties": {
+            "headers": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "json_pointers": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "type": "string"
+              }
+            },
+            "retain_raw_payloads": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_[0-9A-HJKMNP-TV-Z]{26}$",
+      "maxLength": 96
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "utc": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?Z$"
+    },
+    "json_value": {},
+    "secret_ref": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "env"
+          ],
+          "properties": {
+            "env": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9_]{0,127}$"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "file"
+          ],
+          "properties": {
+            "file": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "generated"
+          ],
+          "properties": {
+            "generated": {
+              "enum": [
+                "hmac-256",
+                "ed25519-test"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "duration": {
+      "type": "string",
+      "pattern": "^(?:0|[1-9]\\d*)(?:ns|us|ms|s|m|h)$",
+      "description": "Non-negative integer duration with an explicit unit; floating-point durations are prohibited."
+    },
+    "mutation": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "remove-json-pointer",
+            "replace-json-value",
+            "replace-json-type",
+            "add-json-field",
+            "change-event-id",
+            "change-event-type",
+            "truncate-bytes",
+            "invalid-json",
+            "invalid-utf8",
+            "duplicate-json-key",
+            "content-type-mismatch",
+            "alter-after-signing",
+            "stale-signature-timestamp",
+            "wrong-signing-key",
+            "missing-signature",
+            "malformed-signature",
+            "oversized-body"
+          ]
+        },
+        "pointer": {
+          "type": "string"
+        },
+        "value": {},
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "age": {
+          "$ref": "#/$defs/duration"
+        },
+        "media_type": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "assertion": {
+      "type": "object",
+      "required": [
+        "id",
+        "type"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
+        "type": {
+          "enum": [
+            "http-status",
+            "acknowledgement-deadline",
+            "processing-count",
+            "resource-exists",
+            "resource-absent",
+            "resource-field",
+            "ordered-transition",
+            "callback-count",
+            "journal-count",
+            "no-partial-side-effect",
+            "eventual-state",
+            "custom"
+          ]
+        },
+        "observer": {
+          "type": "string"
+        },
+        "event": {
+          "type": "string"
+        },
+        "expected": {},
+        "path": {
+          "type": "string"
+        },
+        "within": {
+          "$ref": "#/$defs/duration"
+        },
+        "poll_interval": {
+          "$ref": "#/$defs/duration"
+        },
+        "on_unsupported": {
+          "enum": [
+            "error",
+            "skip"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "step": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "deliver"
+          ],
+          "properties": {
+            "deliver": {
+              "type": "object",
+              "required": [
+                "event"
+              ],
+              "properties": {
+                "event": {
+                  "type": "string"
+                },
+                "count": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 128,
+                  "default": 1
+                },
+                "concurrency_group": {
+                  "type": "string"
+                },
+                "signer": {
+                  "type": "string"
+                },
+                "mutations": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/mutation"
+                  },
+                  "maxItems": 16
+                },
+                "timeout": {
+                  "$ref": "#/$defs/duration"
+                },
+                "retry": {
+                  "type": "object",
+                  "properties": {
+                    "max_attempts": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 32
+                    },
+                    "backoff": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/duration"
+                      },
+                      "maxItems": 31
+                    },
+                    "jitter": {
+                      "$ref": "#/$defs/duration"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "wait"
+          ],
+          "properties": {
+            "wait": {
+              "$ref": "#/$defs/duration"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "barrier"
+          ],
+          "properties": {
+            "barrier": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "observe"
+          ],
+          "properties": {
+            "observe": {
+              "type": "object",
+              "required": [
+                "observer",
+                "checkpoint"
+              ],
+              "properties": {
+                "observer": {
+                  "type": "string"
+                },
+                "checkpoint": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "restart"
+          ],
+          "properties": {
+            "restart": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "scenario": {
+      "type": "object",
+      "required": [
+        "id",
+        "events",
+        "steps",
+        "assertions"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 2048
+        },
+        "events": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1000,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "fixture"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+              },
+              "fixture": {
+                "type": "string"
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10000,
+          "items": {
+            "$ref": "#/$defs/step"
+          }
+        },
+        "assertions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": {
+            "$ref": "#/$defs/assertion"
+          }
+        },
+        "failure_policy": {
+          "enum": [
+            "continue-scenario",
+            "stop-scenario",
+            "stop-run"
+          ],
+          "default": "continue-scenario"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

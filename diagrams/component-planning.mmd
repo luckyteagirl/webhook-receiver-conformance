@@ -1,0 +1,10 @@
+flowchart LR
+  YAML[Safe YAML Loader] --> MODELS[Strict Config Models]
+  MODELS --> SEM[Semantic Validator]
+  FIX[Fixture Loader] --> BLOBS[Content-addressed Blobs]
+  MODELS --> COMP[Scenario Compiler]
+  BLOBS --> COMP
+  PRNG[HMAC Context Generator] --> COMP
+  SIGNMETA[Signer Metadata] --> COMP
+  COMP --> MANIFEST[Canonical Immutable Manifest]
+  COMP --> PLANERR[Path-qualified Planning Errors]

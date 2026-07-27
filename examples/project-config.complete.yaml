@@ -1,0 +1,128 @@
+schema_version: '1.0'
+project:
+  name: minimal-local-receiver-test
+  artifact_directory: .webhook-conformance
+  seed: env:WEBHOOK_CONFORMANCE_SEED
+receiver:
+  url: http://127.0.0.1:8000/webhooks
+  target_profile: loopback
+  allowed_hosts: []
+  allowed_ports:
+  - 8000
+  public_challenge_path: /.well-known/webhook-conformance-challenge
+  tls_verify: true
+fixtures:
+- id: payment_succeeded
+  path: fixtures/payment_succeeded.json
+  media_type: application/json
+signers:
+  test_hmac:
+    profile: generic-hmac-sha256
+    secret:
+      env: WEBHOOK_TEST_SECRET
+    header_name: X-Test-Signature
+  stripe:
+    profile: stripe-v1
+    secret:
+      env: STRIPE_WEBHOOK_TEST_SECRET
+    replay_window: 5m
+  standard:
+    profile: standard-webhooks-hmac
+    secret:
+      file: .secrets/standard-webhooks.key
+    replay_window: 5m
+    key_id: test-key-2026-01
+observers:
+  receiver_state:
+    type: command
+    argv:
+    - python
+    - tests/observer.py
+    timeout: 2s
+    environment_allowlist:
+    - TEST_DATABASE_URL
+clock:
+  mode: scaled
+  scale_numerator: 1
+  scale_denominator: 100
+  minimum_physical_wait: 1ms
+limits:
+  max_events: 100
+  max_attempts: 500
+  max_concurrency: 8
+  max_request_bytes: 1048576
+  max_response_capture_bytes: 65536
+scenarios:
+- id: sequential_duplicate
+  events:
+  - id: payment
+    fixture: payment_succeeded
+  steps:
+  - deliver:
+      event: payment
+      count: 2
+      signer: test_hmac
+      retry:
+        max_attempts: 1
+        backoff: []
+  - observe:
+      observer: receiver_state
+      checkpoint: after_duplicate
+  assertions:
+  - id: accepted
+    type: http-status
+    expected:
+    - 200
+    - 204
+  - id: processed_once
+    type: processing-count
+    observer: receiver_state
+    event: payment
+    expected: 1
+    within: 2s
+    poll_interval: 50ms
+- id: timeout_then_retry
+  description: A timeout does not justify assuming that the first business effect failed.
+  events:
+  - id: payment_retry
+    fixture: payment_succeeded
+  steps:
+  - deliver:
+      event: payment_retry
+      signer: stripe
+      timeout: 250ms
+      retry:
+        max_attempts: 2
+        backoff:
+        - 2s
+        jitter: 100ms
+  - observe:
+      observer: receiver_state
+      checkpoint: after_retry
+  assertions:
+  - id: processed_once_after_retry
+    type: processing-count
+    observer: receiver_state
+    event: payment_retry
+    expected: 1
+    within: 5s
+    poll_interval: 50ms
+  - id: no_partial
+    type: no-partial-side-effect
+    observer: receiver_state
+    event: payment_retry
+    expected: true
+  failure_policy: continue-scenario
+reports:
+  formats:
+  - json
+  - jsonl
+  - junit
+  - html
+  redaction:
+    headers:
+    - authorization
+    - x-test-signature
+    json_pointers:
+    - /data/customer_email
+    retain_raw_payloads: false

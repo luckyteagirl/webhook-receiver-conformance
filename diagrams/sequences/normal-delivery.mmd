@@ -1,0 +1,17 @@
+sequenceDiagram
+  participant S as Scheduler
+  participant J as Journal
+  participant H as HTTP Executor
+  participant R as Receiver
+  participant O as Observer
+  participant A as Assertion Engine
+  S->>J: commit claim + sending intent
+  J-->>S: attempt_id durable
+  S->>H: exact bytes + pinned destination
+  H->>R: POST webhook
+  R-->>H: 204
+  H->>J: append acknowledged evidence
+  S->>O: observe checkpoint
+  O-->>J: append typed sample
+  J->>A: transport + state evidence
+  A->>J: append pass/fail evaluation

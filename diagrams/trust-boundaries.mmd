@@ -1,0 +1,11 @@
+flowchart LR
+  U[Untrusted config / fixtures / paths] -->|strict parse, bounds, containment| H[Harness trust zone]
+  S[Secrets] -->|late resolve, no persist| H
+  DNS[Untrusted URL / DNS] -->|allowlist, all-address validate, pin, challenge| H
+  H -->|exact authorized request| R[Untrusted receiver]
+  R -->|bounded sanitized response| H
+  H -->|argv or guarded HTTP| O[Configured observer]
+  O -->|bounded typed evidence| H
+  H -->|redact + escape| A[Artifacts]
+  A --> V[Untrusted CI/XML/browser viewers]
+  P[Signed/attested package dependencies] --> H

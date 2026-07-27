@@ -1,0 +1,13 @@
+erDiagram
+  RUN ||--|| MANIFEST : uses
+  RUN ||--o{ SCENARIO : contains
+  SCENARIO ||--o{ EVENT : contains
+  EVENT ||--o{ DELIVERY : receives
+  DELIVERY ||--o{ ATTEMPT : tries
+  SCENARIO ||--o{ OBSERVATION_SERIES : samples
+  OBSERVATION_SERIES ||--o{ OBSERVATION_SAMPLE : contains
+  SCENARIO ||--o{ ASSERTION : declares
+  ASSERTION ||--o{ ASSERTION_EVALUATION : evaluates
+  ASSERTION_EVALUATION }o--o{ EVIDENCE_RECORD : cites
+  RUN ||--o{ TRANSITION : journals
+  ATTEMPT ||--o{ RECOVERY_DECISION : reconciles

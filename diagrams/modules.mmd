@@ -1,0 +1,28 @@
+flowchart TB
+  CLI[CLI Adapter]
+  APP[Application Services]
+  DOM[Domain / Policies / State Machines]
+  PORTS[Ports: Journal Clock Generator Transport Observer Process Reporter]
+  CFG[Config + Secrets + Fixtures]
+  PLAN[Scenario Compiler + Manifest]
+  SCHED[Scheduler + Recovery]
+  HTTP[Target Policy + HTTP Executor]
+  SQLITE[SQLite Journal]
+  OBS[Command / HTTP Observer]
+  ASSERT[Assertion Engine]
+  REPORT[JSON / JUnit / HTML]
+  CLI --> APP
+  APP --> CFG
+  APP --> PLAN
+  APP --> SCHED
+  APP --> ASSERT
+  APP --> REPORT
+  PLAN --> DOM
+  SCHED --> DOM
+  ASSERT --> DOM
+  DOM --> PORTS
+  CFG -.implements.-> PORTS
+  HTTP -.implements.-> PORTS
+  SQLITE -.implements.-> PORTS
+  OBS -.implements.-> PORTS
+  REPORT -.implements.-> PORTS

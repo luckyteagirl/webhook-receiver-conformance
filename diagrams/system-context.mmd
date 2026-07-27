@@ -1,0 +1,15 @@
+flowchart LR
+  ENG[Backend / Integration Engineer]
+  QA[QA / CI]
+  HARNESS[Webhook Receiver Conformance Harness]
+  RECEIVER[Receiver Under Test]
+  OBS[Command or HTTP Observer]
+  FS[Local Run Bundle and SQLite Journal]
+  VIEWER[CI / Browser Report Viewer]
+  ENG -->|config, fixtures, secrets refs, commands| HARNESS
+  QA -->|workflow inputs| HARNESS
+  HARNESS -->|authorized exact-byte webhook attempts| RECEIVER
+  HARNESS -->|typed read-only observation requests| OBS
+  OBS -->|typed evidence| HARNESS
+  HARNESS <--> |manifest, blobs, journal, projections| FS
+  HARNESS -->|exit category, JUnit, JSON, static HTML| VIEWER

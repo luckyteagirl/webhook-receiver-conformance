@@ -1,0 +1,16 @@
+{
+  "protocol_version": "1.0",
+  "request_id": "request_01J00000000000000000000000",
+  "operation": "observe",
+  "run_id": "run_01J00000000000000000000000",
+  "scenario_id": "scenario_01J00000000000000000000000",
+  "event_id": "event_01J00000000000000000000000",
+  "checkpoint": "after_delivery",
+  "queries": [
+    {
+      "key": "processing_count",
+      "type": "integer",
+      "parameters": {}
+    }
+  ]
+}

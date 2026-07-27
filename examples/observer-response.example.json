@@ -1,0 +1,19 @@
+{
+  "protocol_version": "1.0",
+  "request_id": "request_01J00000000000000000000000",
+  "status": "ok",
+  "capabilities": [
+    "processing_count",
+    "resource"
+  ],
+  "snapshot_id": "snapshot-1",
+  "evidence": [
+    {
+      "key": "processing_count",
+      "value_type": "integer",
+      "value": 1,
+      "sensitive": false
+    }
+  ],
+  "error": null
+}

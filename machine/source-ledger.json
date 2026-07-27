@@ -1,0 +1,1926 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-07-26T23:59:59Z",
+  "sources": [
+    {
+      "source_id": "SRC-001",
+      "title": "HTTP Semantics",
+      "publisher_or_owner": "IETF",
+      "url": "https://www.rfc-editor.org/rfc/rfc9110",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "standard",
+      "version_or_commit": "RFC 9110",
+      "claims_supported": [
+        "HTTP method, response, timeout, and connection semantics"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Defines general or interoperable semantics; it does not by itself establish product scope, implementation suitability, or ecosystem adoption.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-002",
+      "title": "HMAC: Keyed-Hashing for Message Authentication",
+      "publisher_or_owner": "IETF",
+      "url": "https://www.rfc-editor.org/rfc/rfc2104",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "standard",
+      "version_or_commit": "RFC 2104",
+      "claims_supported": [
+        "HMAC construction and security properties"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Defines general or interoperable semantics; it does not by itself establish product scope, implementation suitability, or ecosystem adoption.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-003",
+      "title": "Edwards-Curve Digital Signature Algorithm (EdDSA)",
+      "publisher_or_owner": "IETF",
+      "url": "https://www.rfc-editor.org/rfc/rfc8032",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "standard",
+      "version_or_commit": "RFC 8032",
+      "claims_supported": [
+        "Ed25519 signature construction and test vectors"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Defines general or interoperable semantics; it does not by itself establish product scope, implementation suitability, or ecosystem adoption.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-004",
+      "title": "JSON Canonicalization Scheme",
+      "publisher_or_owner": "IETF",
+      "url": "https://www.rfc-editor.org/rfc/rfc8785",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "standard",
+      "version_or_commit": "RFC 8785",
+      "claims_supported": [
+        "Canonical JSON serialization for manifest identity, not payload rewriting"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Defines general or interoperable semantics; it does not by itself establish product scope, implementation suitability, or ecosystem adoption.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-005",
+      "title": "Key words for use in RFCs to Indicate Requirement Levels",
+      "publisher_or_owner": "IETF",
+      "url": "https://www.rfc-editor.org/rfc/rfc2119",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "standard",
+      "version_or_commit": "RFC 2119",
+      "claims_supported": [
+        "Normative keyword meanings"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Defines general or interoperable semantics; it does not by itself establish product scope, implementation suitability, or ecosystem adoption.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-006",
+      "title": "Ambiguity of Uppercase vs Lowercase in RFC 2119 Key Words",
+      "publisher_or_owner": "IETF",
+      "url": "https://www.rfc-editor.org/rfc/rfc8174",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "standard",
+      "version_or_commit": "RFC 8174",
+      "claims_supported": [
+        "BCP 14 uppercase applicability"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Defines general or interoperable semantics; it does not by itself establish product scope, implementation suitability, or ecosystem adoption.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-007",
+      "title": "Standard Webhooks Specification",
+      "publisher_or_owner": "Standard Webhooks",
+      "url": "https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "open-standard",
+      "version_or_commit": "1.0.0",
+      "claims_supported": [
+        "Webhook identifiers, timestamps, HMAC and Ed25519 signatures, replay windows, retries, SSRF guidance"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Defines general or interoperable semantics; it does not by itself establish product scope, implementation suitability, or ecosystem adoption.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-008",
+      "title": "JSON Schema Validation",
+      "publisher_or_owner": "JSON Schema",
+      "url": "https://json-schema.org/draft/2020-12/json-schema-validation",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "standard",
+      "version_or_commit": "2020-12",
+      "claims_supported": [
+        "JSON Schema validation vocabulary and compatibility"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Defines general or interoperable semantics; it does not by itself establish product scope, implementation suitability, or ecosystem adoption.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-009",
+      "title": "JSON Schema Core",
+      "publisher_or_owner": "JSON Schema",
+      "url": "https://json-schema.org/draft/2020-12/json-schema-core",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "standard",
+      "version_or_commit": "2020-12",
+      "claims_supported": [
+        "Schema identifiers, dialects, references, and annotations"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Defines general or interoperable semantics; it does not by itself establish product scope, implementation suitability, or ecosystem adoption.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-010",
+      "title": "OpenAPI Specification",
+      "publisher_or_owner": "OpenAPI Initiative",
+      "url": "https://spec.openapis.org/oas/v3.1.1.html",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "standard",
+      "version_or_commit": "3.1.1",
+      "claims_supported": [
+        "OpenAPI webhook objects and JSON Schema alignment"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Defines general or interoperable semantics; it does not by itself establish product scope, implementation suitability, or ecosystem adoption.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-011",
+      "title": "AsyncAPI Specification",
+      "publisher_or_owner": "AsyncAPI Initiative",
+      "url": "https://www.asyncapi.com/docs/reference/specification/v3.0.0",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "standard",
+      "version_or_commit": "3.0.0",
+      "claims_supported": [
+        "Event-driven interface descriptions and channel/message concepts"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Defines general or interoperable semantics; it does not by itself establish product scope, implementation suitability, or ecosystem adoption.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-012",
+      "title": "CloudEvents Specification",
+      "publisher_or_owner": "CNCF",
+      "url": "https://github.com/cloudevents/spec/tree/v1.0.2",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "standard",
+      "version_or_commit": "1.0.2",
+      "claims_supported": [
+        "Portable event metadata model"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Defines general or interoperable semantics; it does not by itself establish product scope, implementation suitability, or ecosystem adoption.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-013",
+      "title": "Static Analysis Results Interchange Format",
+      "publisher_or_owner": "OASIS",
+      "url": "https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "standard",
+      "version_or_commit": "2.1.0",
+      "claims_supported": [
+        "SARIF is primarily an interchange format for static-analysis results"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Defines general or interoperable semantics; it does not by itself establish product scope, implementation suitability, or ecosystem adoption.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-014",
+      "title": "Stripe Webhooks",
+      "publisher_or_owner": "Stripe",
+      "url": "https://docs.stripe.com/webhooks",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Automatic retries, duplicate delivery, non-guaranteed ordering, raw body signature verification"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-015",
+      "title": "Stripe Resolve webhook signature verification errors",
+      "publisher_or_owner": "Stripe",
+      "url": "https://docs.stripe.com/webhooks/signature",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Signature verification requires exact unmodified request body"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-016",
+      "title": "GitHub Webhook Best Practices",
+      "publisher_or_owner": "GitHub",
+      "url": "https://docs.github.com/en/webhooks/using-webhooks/best-practices-for-using-webhooks",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Delivery identifier, secret validation, rapid acknowledgment, asynchronous processing"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-017",
+      "title": "Redelivering Webhooks",
+      "publisher_or_owner": "GitHub",
+      "url": "https://docs.github.com/en/webhooks/testing-and-troubleshooting-webhooks/redelivering-webhooks",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Failed deliveries are not automatically redelivered; manual redelivery has a bounded window"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-018",
+      "title": "Validating Webhook Deliveries",
+      "publisher_or_owner": "GitHub",
+      "url": "https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "HMAC-SHA256 over raw payload and constant-time comparison guidance"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-019",
+      "title": "Shopify Webhook Best Practices",
+      "publisher_or_owner": "Shopify",
+      "url": "https://shopify.dev/docs/apps/build/webhooks/best-practices",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Webhook ID deduplication and ordering guidance"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-020",
+      "title": "Shopify Webhook Delivery",
+      "publisher_or_owner": "Shopify",
+      "url": "https://shopify.dev/docs/apps/build/webhooks/subscribe/https",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Acknowledgment timing and retry schedule"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-021",
+      "title": "Shopify CLI app webhook trigger",
+      "publisher_or_owner": "Shopify",
+      "url": "https://shopify.dev/docs/api/shopify-cli/app/app-webhook-trigger",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Provider test event limitations and non-retry behavior"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-022",
+      "title": "PayPal Webhooks",
+      "publisher_or_owner": "PayPal",
+      "url": "https://developer.paypal.com/api/rest/webhooks/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Webhook retries, transmission identifiers, timestamps, and verification"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-023",
+      "title": "PayPal Webhooks Simulator",
+      "publisher_or_owner": "PayPal",
+      "url": "https://developer.paypal.com/api/rest/webhooks/simulator/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Simulated events are mock events and cannot be resent"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-024",
+      "title": "GitLab Webhooks",
+      "publisher_or_owner": "GitLab",
+      "url": "https://docs.gitlab.com/user/project/integrations/webhooks/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": "GitLab 19.1 docs",
+      "claims_supported": [
+        "Webhook headers, timeout behavior, duplicate possibility, and Standard Webhooks support"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-025",
+      "title": "Verifying Slack Requests",
+      "publisher_or_owner": "Slack",
+      "url": "https://docs.slack.dev/authentication/verifying-requests-from-slack/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Timestamped HMAC input, replay-window check, and constant-time comparison"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-026",
+      "title": "Slack Events API",
+      "publisher_or_owner": "Slack",
+      "url": "https://docs.slack.dev/apis/events-api/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Three-second acknowledgment and retry headers/schedule"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-027",
+      "title": "Twilio Webhooks Security",
+      "publisher_or_owner": "Twilio",
+      "url": "https://www.twilio.com/docs/usage/security#validating-requests",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Twilio request-signature validation and proxy considerations"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-028",
+      "title": "Twilio Webhook Connection Overrides",
+      "publisher_or_owner": "Twilio",
+      "url": "https://www.twilio.com/docs/usage/webhooks/webhooks-connection-overrides",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Timeout, retry, and idempotency token controls"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-029",
+      "title": "Discord Interactions",
+      "publisher_or_owner": "Discord",
+      "url": "https://discord.com/developers/docs/interactions/receiving-and-responding",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Ed25519 verification and response deadline"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-030",
+      "title": "Azure OpenAI Webhooks",
+      "publisher_or_owner": "Microsoft",
+      "url": "https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/webhooks",
+      "publication_or_release_date": "2026",
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Standard Webhooks identifiers and signature compatibility"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-031",
+      "title": "Carbon Layer",
+      "publisher_or_owner": "Carbon Layer maintainers",
+      "url": "https://pypi.org/project/carbon-layer/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "package-documentation",
+      "version_or_commit": "0.6.1",
+      "claims_supported": [
+        "Payment-focused duplicate, ordering, signature, replay, CI, and HTML capabilities"
+      ],
+      "reliability_tier": "tier-2-project-primary",
+      "limitations": "Alpha project; capabilities are maintainer-documented.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-032",
+      "title": "PaperTiger",
+      "publisher_or_owner": "PaperTiger maintainers",
+      "url": "https://hexdocs.pm/paper_tiger/readme.html",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "package-documentation",
+      "version_or_commit": "1.2.2",
+      "claims_supported": [
+        "Stateful Stripe mock, deterministic tests, controlled time, retries, duplicates, and reordering"
+      ],
+      "reliability_tier": "tier-2-project-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-033",
+      "title": "FetchSandbox Webhook Sandbox",
+      "publisher_or_owner": "FetchSandbox",
+      "url": "https://fetchsandbox.com/webhook-sandbox",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "vendor-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Stateful hosted provider sandboxes, webhook failure scenarios, and invariant claims"
+      ],
+      "reliability_tier": "tier-3-vendor-claim",
+      "limitations": "Hosted product capabilities were not independently inspected.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-034",
+      "title": "MockCard",
+      "publisher_or_owner": "MockCard",
+      "url": "https://www.mockcard.io/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "vendor-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Payment-specific duplicate, latency, retry, and signed-webhook scenarios"
+      ],
+      "reliability_tier": "tier-3-vendor-claim",
+      "limitations": "Vendor-authored capability description; claims were not independently performance-tested and may change.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-035",
+      "title": "Hookdeck Documentation",
+      "publisher_or_owner": "Hookdeck",
+      "url": "https://hookdeck.com/docs",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "vendor-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Webhook gateway, capture, forwarding, observability, and replay"
+      ],
+      "reliability_tier": "tier-2-vendor-primary",
+      "limitations": "Vendor-authored capability description; claims were not independently performance-tested and may change.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-036",
+      "title": "Svix Documentation",
+      "publisher_or_owner": "Svix",
+      "url": "https://docs.svix.com/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "vendor-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Production webhook sending, receiving, retries, replay, and signatures"
+      ],
+      "reliability_tier": "tier-2-vendor-primary",
+      "limitations": "Vendor-authored capability description; claims were not independently performance-tested and may change.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-037",
+      "title": "Svix Play",
+      "publisher_or_owner": "Svix",
+      "url": "https://www.svix.com/play/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "vendor-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Webhook inspection and relay use cases"
+      ],
+      "reliability_tier": "tier-2-vendor-primary",
+      "limitations": "Vendor-authored capability description; claims were not independently performance-tested and may change.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-038",
+      "title": "Webhook.site Documentation",
+      "publisher_or_owner": "Webhook.site",
+      "url": "https://docs.webhook.site/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "vendor-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Capture, inspect, forward, replay, and custom actions"
+      ],
+      "reliability_tier": "tier-2-vendor-primary",
+      "limitations": "Vendor-authored capability description; claims were not independently performance-tested and may change.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-039",
+      "title": "ngrok Webhook Verification",
+      "publisher_or_owner": "ngrok",
+      "url": "https://ngrok.com/docs/http/webhook-verification/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "vendor-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Traffic inspection, replay, and provider signature verification"
+      ],
+      "reliability_tier": "tier-2-vendor-primary",
+      "limitations": "Vendor-authored capability description; claims were not independently performance-tested and may change.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-040",
+      "title": "WireMock Simulating Faults",
+      "publisher_or_owner": "WireMock",
+      "url": "https://wiremock.org/docs/simulating-faults/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "HTTP delays, malformed responses, connection resets, and stateful stubs"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-041",
+      "title": "Toxiproxy",
+      "publisher_or_owner": "Shopify",
+      "url": "https://github.com/Shopify/toxiproxy",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-repository",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Network latency and connection-failure injection"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-042",
+      "title": "Newman Built-in Reporters",
+      "publisher_or_owner": "Postman",
+      "url": "https://learning.postman.com/docs/collections/using-newman-cli/newman-built-in-reporters/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "CLI collection execution and JUnit reporting"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-043",
+      "title": "Hypothesis Stateful Testing",
+      "publisher_or_owner": "Hypothesis",
+      "url": "https://hypothesis.readthedocs.io/en/latest/stateful.html",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Rule-based state machines, invariants, and shrinking"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-044",
+      "title": "Schemathesis",
+      "publisher_or_owner": "Schemathesis",
+      "url": "https://schemathesis.readthedocs.io/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Schema-driven property-based API testing"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-045",
+      "title": "Pact Documentation",
+      "publisher_or_owner": "Pact Foundation",
+      "url": "https://docs.pact.io/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Consumer-driven contract testing and provider verification"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-046",
+      "title": "Testcontainers for Python",
+      "publisher_or_owner": "Testcontainers",
+      "url": "https://testcontainers-python.readthedocs.io/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Container lifecycle in integration tests"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-047",
+      "title": "Making retries safe with idempotent APIs",
+      "publisher_or_owner": "Amazon Web Services",
+      "url": "https://aws.amazon.com/builders-library/making-retries-safe-with-idempotent-APIs/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "institutional-engineering-guidance",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Idempotency tokens, retry ambiguity, and semantic equivalence"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "General engineering guidance rather than a webhook-specific implementation contract.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-048",
+      "title": "Azure Service Bus duplicate detection",
+      "publisher_or_owner": "Microsoft",
+      "url": "https://learn.microsoft.com/en-us/azure/service-bus-messaging/duplicate-detection",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "At-least-once delivery, duplicate detection windows, and idempotent consumers"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-049",
+      "title": "Webhook race condition creates duplicate incident issues",
+      "publisher_or_owner": "GitLab",
+      "url": "https://gitlab.com/gitlab-org/gitlab/-/issues/576636",
+      "publication_or_release_date": "2026",
+      "access_date": "2026-07-26",
+      "source_type": "engineering-issue",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Concurrent check-then-act webhook handling can create duplicate business effects"
+      ],
+      "reliability_tier": "tier-2-engineering-evidence",
+      "limitations": "Demonstrates one incident or implementation failure; it establishes possibility and consequence, not population prevalence.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-050",
+      "title": "Webhook processing incidents",
+      "publisher_or_owner": "Cirun",
+      "url": "https://cirun.instatus.com/cmhkpedz60203jyjx11leug7w",
+      "publication_or_release_date": "2025-11",
+      "access_date": "2026-07-26",
+      "source_type": "postmortem",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Webhook-processing failures delayed or failed CI/CD triggers"
+      ],
+      "reliability_tier": "tier-2-postmortem",
+      "limitations": "Demonstrates one incident or implementation failure; it establishes possibility and consequence, not population prevalence.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-051",
+      "title": "Duplicate webhook deliveries",
+      "publisher_or_owner": "Mollie",
+      "url": "https://status.mollie.com/",
+      "publication_or_release_date": "2026-03-09",
+      "access_date": "2026-07-26",
+      "source_type": "incident-report",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Provider incidents can produce duplicate webhook deliveries"
+      ],
+      "reliability_tier": "tier-2-postmortem",
+      "limitations": "Status history URL may require date navigation.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-052",
+      "title": "Webhook delays",
+      "publisher_or_owner": "Postmark",
+      "url": "https://status.postmarkapp.com/",
+      "publication_or_release_date": "2026-03-24",
+      "access_date": "2026-07-26",
+      "source_type": "incident-report",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Webhook backlogs can delay downstream processing"
+      ],
+      "reliability_tier": "tier-2-postmortem",
+      "limitations": "Status history URL may require date navigation.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-053",
+      "title": "Delayed webhook processing",
+      "publisher_or_owner": "Swarmia",
+      "url": "https://status.swarmia.com/",
+      "publication_or_release_date": "2026-03",
+      "access_date": "2026-07-26",
+      "source_type": "incident-report",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Webhook-processing latency affects developer-platform data freshness"
+      ],
+      "reliability_tier": "tier-2-postmortem",
+      "limitations": "Demonstrates one incident or implementation failure; it establishes possibility and consequence, not population prevalence.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-054",
+      "title": "Duplicate webhook notifications incident",
+      "publisher_or_owner": "PagerDuty",
+      "url": "https://status.pagerduty.com/",
+      "publication_or_release_date": "2025-08",
+      "access_date": "2026-07-26",
+      "source_type": "incident-report",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Webhook duplication can fan out into duplicate notifications"
+      ],
+      "reliability_tier": "tier-2-postmortem",
+      "limitations": "Demonstrates one incident or implementation failure; it establishes possibility and consequence, not population prevalence.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-055",
+      "title": "Webhook latency postmortem",
+      "publisher_or_owner": "PagerDuty",
+      "url": "https://status.pagerduty.com/",
+      "publication_or_release_date": "2025-11",
+      "access_date": "2026-07-26",
+      "source_type": "postmortem",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Connection timeouts and retry backlogs can create hours-long webhook latency"
+      ],
+      "reliability_tier": "tier-2-postmortem",
+      "limitations": "Demonstrates one incident or implementation failure; it establishes possibility and consequence, not population prevalence.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-056",
+      "title": "Delayed webhooks",
+      "publisher_or_owner": "Exa",
+      "url": "https://status.exa.ai/",
+      "publication_or_release_date": "2026-04",
+      "access_date": "2026-07-26",
+      "source_type": "incident-report",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Webhook queues can accumulate and later drain"
+      ],
+      "reliability_tier": "tier-2-postmortem",
+      "limitations": "Demonstrates one incident or implementation failure; it establishes possibility and consequence, not population prevalence.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-057",
+      "title": "Outbound webhooks blocked without retry",
+      "publisher_or_owner": "Ghost",
+      "url": "https://status.ghost.org/",
+      "publication_or_release_date": "2026-03-31",
+      "access_date": "2026-07-26",
+      "source_type": "incident-report",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Lack of retry can cause lost webhook events"
+      ],
+      "reliability_tier": "tier-2-postmortem",
+      "limitations": "Demonstrates one incident or implementation failure; it establishes possibility and consequence, not population prevalence.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-058",
+      "title": "Duplicate folder.updated webhooks",
+      "publisher_or_owner": "Frame.io Developer Forum",
+      "url": "https://forum.frame.io/t/frame-io-sending-duplicate-folder-updated-webhooks-causing-duplicate-processing/2998",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "practitioner-report",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Duplicate webhook reports outside payment systems"
+      ],
+      "reliability_tier": "tier-4-anecdotal",
+      "limitations": "Demonstrates one incident or implementation failure; it establishes possibility and consequence, not population prevalence.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-059",
+      "title": "Webhook timeout retry storm",
+      "publisher_or_owner": "Telegram Bot API issue tracker",
+      "url": "https://github.com/tdlib/telegram-bot-api/issues",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "engineering-issue",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Timeouts can trigger retry storms and repeated processing"
+      ],
+      "reliability_tier": "tier-3-project-evidence",
+      "limitations": "Issue collection requires locating the specific timeout report.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-060",
+      "title": "Webhook backlog and duplicate retries",
+      "publisher_or_owner": "Mollie",
+      "url": "https://status.mollie.com/",
+      "publication_or_release_date": "2025-11",
+      "access_date": "2026-07-26",
+      "source_type": "incident-report",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Backlog recovery can interact with retries and duplicates"
+      ],
+      "reliability_tier": "tier-2-postmortem",
+      "limitations": "Demonstrates one incident or implementation failure; it establishes possibility and consequence, not population prevalence.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-061",
+      "title": "Webhook delivery delays",
+      "publisher_or_owner": "Maplerad",
+      "url": "https://status.maplerad.com/",
+      "publication_or_release_date": "2026",
+      "access_date": "2026-07-26",
+      "source_type": "incident-report",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Webhook delivery latency incidents occur in payments infrastructure"
+      ],
+      "reliability_tier": "tier-2-postmortem",
+      "limitations": "Demonstrates one incident or implementation failure; it establishes possibility and consequence, not population prevalence.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-062",
+      "title": "GitHub webhook processing outage",
+      "publisher_or_owner": "Firetiger",
+      "url": "https://status.firetiger.com/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "incident-report",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Webhook processing outages can disrupt product integrations"
+      ],
+      "reliability_tier": "tier-2-postmortem",
+      "limitations": "Demonstrates one incident or implementation failure; it establishes possibility and consequence, not population prevalence.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-063",
+      "title": "Write-Ahead Logging",
+      "publisher_or_owner": "SQLite",
+      "url": "https://sqlite.org/wal.html",
+      "publication_or_release_date": "2026-04-13",
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "WAL concurrency, checkpointing, durability, host limitations, and the 2026 WAL-reset bug/fixes"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-064",
+      "title": "Atomic Commit in SQLite",
+      "publisher_or_owner": "SQLite",
+      "url": "https://sqlite.org/atomiccommit.html",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Rollback-journal commit and crash consistency"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-065",
+      "title": "Transaction",
+      "publisher_or_owner": "SQLite",
+      "url": "https://sqlite.org/lang_transaction.html",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Transaction modes and one-writer semantics"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-066",
+      "title": "PRAGMA Statements",
+      "publisher_or_owner": "SQLite",
+      "url": "https://sqlite.org/pragma.html",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "synchronous, integrity_check, foreign_keys, and user_version behavior"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-067",
+      "title": "sqlite3 — DB-API 2.0 interface for SQLite databases",
+      "publisher_or_owner": "Python Software Foundation",
+      "url": "https://docs.python.org/3/library/sqlite3.html",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": "Python 3.14.6 docs",
+      "claims_supported": [
+        "Python transaction control, row handling, and supported SQLite inspection"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-068",
+      "title": "random — Generate pseudo-random numbers",
+      "publisher_or_owner": "Python Software Foundation",
+      "url": "https://docs.python.org/3/library/random.html",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": "Python 3.14.6 docs",
+      "claims_supported": [
+        "Python random reproducibility guarantees are intentionally limited across versions"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-069",
+      "title": "time — Time access and conversions",
+      "publisher_or_owner": "Python Software Foundation",
+      "url": "https://docs.python.org/3/library/time.html",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": "Python 3.14.6 docs",
+      "claims_supported": [
+        "Monotonic and wall clock semantics"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-070",
+      "title": "HTTPX Documentation",
+      "publisher_or_owner": "Encode",
+      "url": "https://www.python-httpx.org/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": "0.28.1",
+      "claims_supported": [
+        "Async HTTP client, transports, limits, and stable 0.28 behavior"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-071",
+      "title": "HTTPX Timeouts",
+      "publisher_or_owner": "Encode",
+      "url": "https://www.python-httpx.org/advanced/timeouts/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": "0.28.1",
+      "claims_supported": [
+        "Connect, read, write, and pool timeout categories"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-072",
+      "title": "HTTPX Environment Variables",
+      "publisher_or_owner": "Encode",
+      "url": "https://www.python-httpx.org/environment_variables/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": "0.28.1",
+      "claims_supported": [
+        "Proxy and certificate environment behavior controlled by trust_env"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-073",
+      "title": "AnyIO Documentation",
+      "publisher_or_owner": "AnyIO maintainers",
+      "url": "https://anyio.readthedocs.io/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": "4.14.2",
+      "claims_supported": [
+        "Structured concurrency, cancellation scopes, timeouts, and pytest integration"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-074",
+      "title": "Pydantic Documentation",
+      "publisher_or_owner": "Pydantic",
+      "url": "https://docs.pydantic.dev/latest/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": "2.13.4",
+      "claims_supported": [
+        "Strict configuration and model validation"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-075",
+      "title": "Typer Documentation",
+      "publisher_or_owner": "FastAPI project",
+      "url": "https://typer.tiangolo.com/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": "0.27.0",
+      "claims_supported": [
+        "Typed CLI construction and Click interoperability"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-076",
+      "title": "pytest Documentation",
+      "publisher_or_owner": "pytest",
+      "url": "https://docs.pytest.org/en/stable/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": "9.1.1",
+      "claims_supported": [
+        "Test discovery, fixtures, markers, and CI execution"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-077",
+      "title": "Hypothesis Documentation",
+      "publisher_or_owner": "Hypothesis",
+      "url": "https://hypothesis.readthedocs.io/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": "6.160.0+",
+      "claims_supported": [
+        "Property-based generation, stateful testing, and shrinking"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-078",
+      "title": "jsonschema Documentation",
+      "publisher_or_owner": "python-jsonschema",
+      "url": "https://python-jsonschema.readthedocs.io/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": "4.26.0",
+      "claims_supported": [
+        "Draft 2020-12 validation in Python"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-079",
+      "title": "uv Documentation",
+      "publisher_or_owner": "Astral",
+      "url": "https://docs.astral.sh/uv/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": "0.11.29",
+      "claims_supported": [
+        "Locking, environments, builds, tools, and reproducible project commands"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-080",
+      "title": "pipx Documentation",
+      "publisher_or_owner": "PyPA",
+      "url": "https://pipx.pypa.io/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Isolated installation of Python command-line applications"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-081",
+      "title": "Server-Side Request Forgery Prevention Cheat Sheet",
+      "publisher_or_owner": "OWASP",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "security-guidance",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Allowlisting, address normalization, redirect controls, and DNS considerations"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "General security guidance requiring contextual tailoring; only requirements mapped to this product are applicable.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-082",
+      "title": "Logging Cheat Sheet",
+      "publisher_or_owner": "OWASP",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "security-guidance",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Sensitive-data exclusion and log-injection controls"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "General security guidance requiring contextual tailoring; only requirements mapped to this product are applicable.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-083",
+      "title": "Cross Site Scripting Prevention Cheat Sheet",
+      "publisher_or_owner": "OWASP",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "security-guidance",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Output encoding and safe HTML generation"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "General security guidance requiring contextual tailoring; only requirements mapped to this product are applicable.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-084",
+      "title": "File Upload Cheat Sheet",
+      "publisher_or_owner": "OWASP",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "security-guidance",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Path, archive, size, and untrusted-file handling"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "General security guidance requiring contextual tailoring; only requirements mapped to this product are applicable.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-085",
+      "title": "Application Security Verification Standard",
+      "publisher_or_owner": "OWASP",
+      "url": "https://owasp.org/www-project-application-security-verification-standard/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "security-standard",
+      "version_or_commit": "5.0.0",
+      "claims_supported": [
+        "Testable application-security requirements"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "General security guidance requiring contextual tailoring; only requirements mapped to this product are applicable.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-086",
+      "title": "Secure Software Development Framework",
+      "publisher_or_owner": "NIST",
+      "url": "https://csrc.nist.gov/pubs/sp/800/218/final",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "security-standard",
+      "version_or_commit": "SP 800-218 v1.1",
+      "claims_supported": [
+        "Secure development, provenance, vulnerability response, and requirement tracking"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "General security guidance requiring contextual tailoring; only requirements mapped to this product are applicable.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-087",
+      "title": "SLSA Specification",
+      "publisher_or_owner": "OpenSSF",
+      "url": "https://slsa.dev/spec/v1.1/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "supply-chain-standard",
+      "version_or_commit": "1.1",
+      "claims_supported": [
+        "Build provenance and artifact integrity levels"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "General security guidance requiring contextual tailoring; only requirements mapped to this product are applicable.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-088",
+      "title": "PyPI Digital Attestations",
+      "publisher_or_owner": "Python Packaging Authority",
+      "url": "https://docs.pypi.org/attestations/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Package attestations and trusted publishing"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-089",
+      "title": "CycloneDX Specification",
+      "publisher_or_owner": "OWASP",
+      "url": "https://cyclonedx.org/specification/overview/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "supply-chain-standard",
+      "version_or_commit": "1.7",
+      "claims_supported": [
+        "Software bill of materials format"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "General security guidance requiring contextual tailoring; only requirements mapped to this product are applicable.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-090",
+      "title": "GitHub Artifact Attestations",
+      "publisher_or_owner": "GitHub",
+      "url": "https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Build provenance for release artifacts"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-091",
+      "title": "Software Requirements Analysis",
+      "publisher_or_owner": "NASA",
+      "url": "https://swehb.nasa.gov/display/SWEHBVC/Software+Requirements+Analysis",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "institutional-engineering-guidance",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Requirement clarity, completeness, consistency, feasibility, singularity, traceability, and verifiability"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "General engineering guidance rather than a webhook-specific implementation contract.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-092",
+      "title": "C4 Model",
+      "publisher_or_owner": "C4 Model",
+      "url": "https://c4model.com/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "architecture-guidance",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Context, container, component, dynamic, and deployment views"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "General engineering guidance rather than a webhook-specific implementation contract.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-093",
+      "title": "Documenting Software Architectures: Views and Beyond",
+      "publisher_or_owner": "Software Engineering Institute",
+      "url": "https://www.sei.cmu.edu/library/documenting-software-architectures-views-and-beyond/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "institutional-engineering-guidance",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Stakeholder-oriented architecture views, interfaces, rationale, and cross-view consistency"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "General engineering guidance rather than a webhook-specific implementation contract.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-094",
+      "title": "Spec Kit",
+      "publisher_or_owner": "GitHub",
+      "url": "https://github.com/github/spec-kit",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-repository",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Specification-driven workflow from specification to plan, tasks, implementation, and cross-artifact analysis"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-095",
+      "title": "JUnit XML format in GitLab",
+      "publisher_or_owner": "GitLab",
+      "url": "https://docs.gitlab.com/ci/testing/unit_test_reports/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official-documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "JUnit ingestion, testcase outcomes, and separation from process exit status"
+      ],
+      "reliability_tier": "tier-1-primary",
+      "limitations": "Describes one provider, library, or project as accessed; behavior may change and must not be generalized beyond the documented scope.",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-096",
+      "title": "Building and publishing a package",
+      "publisher_or_owner": "Astral",
+      "url": "https://docs.astral.sh/uv/guides/package/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official_tool_documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "uv builds source and wheel distributions and supports credential-free Trusted Publisher workflows."
+      ],
+      "reliability_tier": 1,
+      "limitations": "",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-097",
+      "title": "Locking and syncing",
+      "publisher_or_owner": "Astral",
+      "url": "https://docs.astral.sh/uv/concepts/projects/sync/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official_tool_documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "uv lockfiles and --locked/--frozen modes support repeatable CI environments."
+      ],
+      "reliability_tier": 1,
+      "limitations": "",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-098",
+      "title": "PyPI Digital Attestations",
+      "publisher_or_owner": "Python Package Index",
+      "url": "https://docs.pypi.org/attestations/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official_registry_documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "PyPI supports in-toto attestations including SLSA Provenance and PyPI Publish predicates from Trusted Publishers."
+      ],
+      "reliability_tier": 1,
+      "limitations": "",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-099",
+      "title": "GitHub Artifact Attestations",
+      "publisher_or_owner": "GitHub",
+      "url": "https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official_ci_documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "GitHub Actions can attest wheels, binaries, container images, and SBOMs and supports offline verification."
+      ],
+      "reliability_tier": 1,
+      "limitations": "",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-100",
+      "title": "Server-Side Request Forgery Prevention Cheat Sheet",
+      "publisher_or_owner": "OWASP",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "security_guidance",
+      "version_or_commit": null,
+      "claims_supported": [
+        "SSRF defenses should prefer allowlists, validate IPv4 and IPv6 addresses, disable redirects, and account for DNS rebinding."
+      ],
+      "reliability_tier": 1,
+      "limitations": "",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-101",
+      "title": "OS Command Injection Defense Cheat Sheet",
+      "publisher_or_owner": "OWASP",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/OS_Command_Injection_Defense_Cheat_Sheet.html",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "security_guidance",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Avoid shell execution and pass executable arguments through parameterized APIs."
+      ],
+      "reliability_tier": 1,
+      "limitations": "",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-102",
+      "title": "Cross Site Scripting Prevention Cheat Sheet",
+      "publisher_or_owner": "OWASP",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "security_guidance",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Untrusted report content requires context-appropriate output encoding and safe sinks."
+      ],
+      "reliability_tier": 1,
+      "limitations": "",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-103",
+      "title": "Application Security Verification Standard",
+      "publisher_or_owner": "OWASP",
+      "url": "https://owasp.org/www-project-application-security-verification-standard/",
+      "publication_or_release_date": "2025-05",
+      "access_date": "2026-07-26",
+      "source_type": "security_standard",
+      "version_or_commit": "5.0.0",
+      "claims_supported": [
+        "ASVS 5.0.0 provides versioned technical security requirements suitable for selective mapping."
+      ],
+      "reliability_tier": 1,
+      "limitations": "",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-104",
+      "title": "Secure Software Development Framework",
+      "publisher_or_owner": "NIST",
+      "url": "https://csrc.nist.gov/pubs/sp/800/218/final",
+      "publication_or_release_date": "2022-02",
+      "access_date": "2026-07-26",
+      "source_type": "security_standard",
+      "version_or_commit": "SP 800-218 v1.1",
+      "claims_supported": [
+        "SSDF 1.1 defines practices for preparing, protecting, producing, and responding across the software lifecycle."
+      ],
+      "reliability_tier": 1,
+      "limitations": "",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-105",
+      "title": "Secure Software Development Framework 1.2 Initial Public Draft",
+      "publisher_or_owner": "NIST",
+      "url": "https://csrc.nist.gov/pubs/sp/800/218/a/ipd",
+      "publication_or_release_date": "2025-12",
+      "access_date": "2026-07-26",
+      "source_type": "draft_security_standard",
+      "version_or_commit": "SP 800-218A IPD",
+      "claims_supported": [
+        "SSDF 1.2 was still an initial public draft and must not be treated as the final controlling baseline."
+      ],
+      "reliability_tier": 1,
+      "limitations": "",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-106",
+      "title": "Schemathesis",
+      "publisher_or_owner": "Schemathesis maintainers",
+      "url": "https://schemathesis.readthedocs.io/en/stable/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official_tool_documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Schemathesis generates property-based and stateful API tests from OpenAPI or GraphQL and emits JUnit/HAR artifacts."
+      ],
+      "reliability_tier": 1,
+      "limitations": "",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-107",
+      "title": "Pact Provider Verification",
+      "publisher_or_owner": "Pact",
+      "url": "https://docs.pact.io/provider",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official_tool_documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Pact verifies consumer-provider contracts against local provider instances but does not model webhook delivery-attempt faults."
+      ],
+      "reliability_tier": 1,
+      "limitations": "",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-108",
+      "title": "WireMock Stateful Behaviour",
+      "publisher_or_owner": "WireMock",
+      "url": "https://wiremock.org/docs/stateful-behaviour/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official_tool_documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "WireMock scenarios implement stateful mock-server behavior."
+      ],
+      "reliability_tier": 1,
+      "limitations": "",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-109",
+      "title": "Toxiproxy",
+      "publisher_or_owner": "Shopify",
+      "url": "https://github.com/Shopify/toxiproxy",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official_repository",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Toxiproxy injects deterministic or randomized TCP latency, timeouts, resets, bandwidth limits, slicing, and connection cutoff."
+      ],
+      "reliability_tier": 1,
+      "limitations": "",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-110",
+      "title": "Postman CLI",
+      "publisher_or_owner": "Postman",
+      "url": "https://learning.postman.com/docs/tests-and-scripts/postman-cli-guides/overview/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official_tool_documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "Postman CLI executes collections in CI and exports JSON, JUnit, and HTML reports."
+      ],
+      "reliability_tier": 1,
+      "limitations": "",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-111",
+      "title": "RFC 9110: HTTP Semantics",
+      "publisher_or_owner": "RFC Editor",
+      "url": "https://www.rfc-editor.org/rfc/rfc9110.html",
+      "publication_or_release_date": "2022-06",
+      "access_date": "2026-07-26",
+      "source_type": "rfc",
+      "version_or_commit": "RFC 9110",
+      "claims_supported": [
+        "HTTP field names are case-insensitive and method/status semantics must be interpreted independently from application side effects."
+      ],
+      "reliability_tier": 1,
+      "limitations": "",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-112",
+      "title": "RFC 8174: Ambiguity of Uppercase vs Lowercase in RFC 2119 Key Words",
+      "publisher_or_owner": "RFC Editor",
+      "url": "https://www.rfc-editor.org/rfc/rfc8174.html",
+      "publication_or_release_date": "2017-05",
+      "access_date": "2026-07-26",
+      "source_type": "rfc",
+      "version_or_commit": "RFC 8174",
+      "claims_supported": [
+        "BCP 14 requirement keywords have normative force only when capitalized as specified."
+      ],
+      "reliability_tier": 1,
+      "limitations": "",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-113",
+      "title": "RFC 2104: HMAC",
+      "publisher_or_owner": "RFC Editor",
+      "url": "https://www.rfc-editor.org/rfc/rfc2104.html",
+      "publication_or_release_date": "1997-02",
+      "access_date": "2026-07-26",
+      "source_type": "rfc",
+      "version_or_commit": "RFC 2104",
+      "claims_supported": [
+        "HMAC is a keyed message-authentication construction over cryptographic hash functions."
+      ],
+      "reliability_tier": 1,
+      "limitations": "",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-114",
+      "title": "RFC 8032: Edwards-Curve Digital Signature Algorithm",
+      "publisher_or_owner": "RFC Editor",
+      "url": "https://www.rfc-editor.org/rfc/rfc8032.html",
+      "publication_or_release_date": "2017-01",
+      "access_date": "2026-07-26",
+      "source_type": "rfc",
+      "version_or_commit": "RFC 8032",
+      "claims_supported": [
+        "RFC 8032 specifies Ed25519 signatures."
+      ],
+      "reliability_tier": 1,
+      "limitations": "",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-115",
+      "title": "RFC 8259: The JavaScript Object Notation Data Interchange Format",
+      "publisher_or_owner": "RFC Editor",
+      "url": "https://www.rfc-editor.org/rfc/rfc8259.html",
+      "publication_or_release_date": "2017-12",
+      "access_date": "2026-07-26",
+      "source_type": "rfc",
+      "version_or_commit": "RFC 8259",
+      "claims_supported": [
+        "JSON permits implementation differences around duplicate names and numeric precision, making raw-byte fixtures important."
+      ],
+      "reliability_tier": 1,
+      "limitations": "",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-116",
+      "title": "OpenAPI Specification 3.2.0",
+      "publisher_or_owner": "OpenAPI Initiative",
+      "url": "https://spec.openapis.org/oas/v3.2.0.html",
+      "publication_or_release_date": "2025-09-19",
+      "access_date": "2026-07-26",
+      "source_type": "open_standard",
+      "version_or_commit": "3.2.0",
+      "claims_supported": [
+        "OpenAPI 3.2.0 is the current published OpenAPI specification and includes webhook descriptions."
+      ],
+      "reliability_tier": 1,
+      "limitations": "",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-117",
+      "title": "JSON Schema Draft 2020-12",
+      "publisher_or_owner": "JSON Schema",
+      "url": "https://json-schema.org/draft/2020-12",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "open_standard",
+      "version_or_commit": "2020-12",
+      "claims_supported": [
+        "Draft 2020-12 is the selected stable validation dialect; format is annotation unless the format-assertion vocabulary is applied."
+      ],
+      "reliability_tier": 1,
+      "limitations": "",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-118",
+      "title": "SARIF 2.1.0",
+      "publisher_or_owner": "OASIS",
+      "url": "https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "open_standard",
+      "version_or_commit": "2.1.0",
+      "claims_supported": [
+        "SARIF is optimized for static-analysis result interchange and is a poor primary representation for runtime conformance attempts."
+      ],
+      "reliability_tier": 1,
+      "limitations": "",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-119",
+      "title": "Unit test reports",
+      "publisher_or_owner": "GitLab",
+      "url": "https://docs.gitlab.com/ci/testing/unit_test_reports/",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "official_ci_documentation",
+      "version_or_commit": null,
+      "claims_supported": [
+        "CI systems ingest JUnit XML while job exit status remains the source of pipeline success or failure."
+      ],
+      "reliability_tier": 1,
+      "limitations": "",
+      "conflicting_source_ids": []
+    },
+    {
+      "source_id": "SRC-120",
+      "title": "BCP 14 Requirement Keywords",
+      "publisher_or_owner": "RFC Editor",
+      "url": "https://www.rfc-editor.org/rfc/rfc2119.html",
+      "publication_or_release_date": null,
+      "access_date": "2026-07-26",
+      "source_type": "rfc",
+      "version_or_commit": "RFC 2119 / BCP 14",
+      "claims_supported": [
+        "RFC 2119 and RFC 8174 define normative requirement terminology."
+      ],
+      "reliability_tier": 1,
+      "limitations": "",
+      "conflicting_source_ids": []
+    }
+  ]
+}

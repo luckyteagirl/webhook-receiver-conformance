@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="webhook-conformance" tests="1" failures="0" errors="0" skipped="0" time="0.160">
+  <testsuite name="scenario:scenario_01J00000000000000000000000" tests="1" failures="0" errors="0" skipped="0" time="0.160" timestamp="2026-07-26T20:00:00Z">
+    <properties>
+      <property name="run_id" value="run_01J00000000000000000000000"/>
+      <property name="manifest_id" value="manifest_01J00000000000000000000000"/>
+      <property name="artifact.result_summary" value="result-summary.json"/>
+    </properties>
+    <testcase classname="webhook-conformance.sequential-duplicate" name="assertion:assertion_01J00000000000000000000000" time="0.010"/>
+    <system-out>Sanitized report: results.html</system-out>
+  </testsuite>
+</testsuites>

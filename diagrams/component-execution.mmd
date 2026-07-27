@@ -1,0 +1,10 @@
+flowchart LR
+  MANIFEST[Manifest Reader] --> SCHED[Persistent Scheduler]
+  JOURNAL[SQLite Journal] <--> SCHED
+  SCHED --> POLICY[Destination Policy]
+  POLICY --> DIAL[Pinned Dialer]
+  DIAL --> HTTP[Bounded HTTP Executor]
+  HTTP --> RECEIVER[Receiver]
+  HTTP --> JOURNAL
+  SCHED --> RECOVERY[Recovery / Ambiguity Engine]
+  RECOVERY <--> JOURNAL

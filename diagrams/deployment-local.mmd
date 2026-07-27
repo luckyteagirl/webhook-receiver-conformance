@@ -1,0 +1,10 @@
+flowchart LR
+  subgraph Workstation
+    CLI[webhook-conformance process]
+    RUN[(Run bundle / SQLite)]
+    RECV[Local receiver]
+    CMD[Observer process]
+    CLI <--> RUN
+    CLI -->|loopback HTTP| RECV
+    CLI -->|bounded stdin/stdout| CMD
+  end

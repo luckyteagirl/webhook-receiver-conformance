@@ -1,0 +1,358 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/webhook-receiver-conformance/v1/run-manifest.schema.json",
+  "title": "Immutable realized run manifest",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "manifest_id",
+    "run_id",
+    "created_at",
+    "tool",
+    "generator",
+    "configuration_digest",
+    "environment",
+    "target_policy",
+    "blobs",
+    "scenarios"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "manifest_id": {
+      "$ref": "#/$defs/id"
+    },
+    "run_id": {
+      "$ref": "#/$defs/id"
+    },
+    "created_at": {
+      "$ref": "#/$defs/utc"
+    },
+    "tool": {
+      "type": "object",
+      "required": [
+        "version",
+        "python"
+      ],
+      "properties": {
+        "version": {
+          "type": "string"
+        },
+        "python": {
+          "type": "string"
+        },
+        "dependencies_digest": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "additionalProperties": false
+    },
+    "generator": {
+      "type": "object",
+      "required": [
+        "algorithm",
+        "seed_fingerprint"
+      ],
+      "properties": {
+        "algorithm": {
+          "const": "hmac-sha256-context-v1"
+        },
+        "seed_fingerprint": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "additionalProperties": false
+    },
+    "configuration_digest": {
+      "$ref": "#/$defs/sha256"
+    },
+    "environment": {
+      "type": "object",
+      "required": [
+        "os",
+        "architecture"
+      ],
+      "properties": {
+        "os": {
+          "type": "string"
+        },
+        "architecture": {
+          "type": "string"
+        },
+        "timezone": {
+          "const": "UTC"
+        }
+      },
+      "additionalProperties": false
+    },
+    "target_policy": {
+      "type": "object",
+      "required": [
+        "profile",
+        "authorized_host",
+        "authorized_port"
+      ],
+      "properties": {
+        "profile": {
+          "enum": [
+            "loopback",
+            "private-allowlist",
+            "public-authorized"
+          ]
+        },
+        "authorized_host": {
+          "type": "string"
+        },
+        "authorized_port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "challenge_fingerprint": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "additionalProperties": false
+    },
+    "blobs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "sha256",
+          "byte_length",
+          "media_type"
+        ],
+        "properties": {
+          "sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "byte_length": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "media_type": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "scenarios": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "scenario_id",
+          "events",
+          "deliveries",
+          "assertions"
+        ],
+        "properties": {
+          "scenario_id": {
+            "$ref": "#/$defs/id"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "event_id",
+                "event_type",
+                "fixture_blob"
+              ],
+              "properties": {
+                "event_id": {
+                  "$ref": "#/$defs/id"
+                },
+                "event_type": {
+                  "type": "string"
+                },
+                "fixture_blob": {
+                  "$ref": "#/$defs/sha256"
+                },
+                "depends_on": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/id"
+                  },
+                  "uniqueItems": true
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "deliveries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "delivery_id",
+                "event_id",
+                "logical_time_ns",
+                "ordinal",
+                "attempt_plan"
+              ],
+              "properties": {
+                "delivery_id": {
+                  "$ref": "#/$defs/id"
+                },
+                "event_id": {
+                  "$ref": "#/$defs/id"
+                },
+                "logical_time_ns": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "ordinal": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "concurrency_group": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "attempt_plan": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "ordinal",
+                      "not_before_logical_ns",
+                      "request_blob",
+                      "headers_sha256"
+                    ],
+                    "properties": {
+                      "ordinal": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "not_before_logical_ns": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "request_blob": {
+                        "$ref": "#/$defs/sha256"
+                      },
+                      "headers_sha256": {
+                        "$ref": "#/$defs/sha256"
+                      },
+                      "conditional_on": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "assertions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "assertion_id",
+                "type"
+              ],
+              "properties": {
+                "assertion_id": {
+                  "$ref": "#/$defs/id"
+                },
+                "type": {
+                  "type": "string"
+                },
+                "observer": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "parameters": {
+                  "type": "object"
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_[0-9A-HJKMNP-TV-Z]{26}$",
+      "maxLength": 96
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "utc": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?Z$"
+    },
+    "json_value": {},
+    "secret_ref": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "env"
+          ],
+          "properties": {
+            "env": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9_]{0,127}$"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "file"
+          ],
+          "properties": {
+            "file": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "generated"
+          ],
+          "properties": {
+            "generated": {
+              "enum": [
+                "hmac-256",
+                "ed25519-test"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "duration": {
+      "type": "string",
+      "pattern": "^(?:0|[1-9]\\d*)(?:ns|us|ms|s|m|h)$",
+      "description": "Non-negative integer duration with an explicit unit; floating-point durations are prohibited."
+    }
+  }
+}

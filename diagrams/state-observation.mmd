@@ -1,0 +1,13 @@
+stateDiagram-v2
+  [*] --> requested
+  requested --> running
+  running --> ok
+  running --> pending
+  pending --> running: next poll
+  running --> unsupported
+  running --> error
+  running --> timeout
+  ok --> [*]
+  unsupported --> [*]
+  error --> [*]
+  timeout --> [*]

@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/webhook-receiver-conformance/v1/observation-record.schema.json",
+  "title": "Receiver observation evidence record",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "record_id",
+    "run_id",
+    "scenario_id",
+    "observation_id",
+    "observer_id",
+    "sample_sequence",
+    "recorded_at",
+    "status"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "record_id": {
+      "$ref": "#/$defs/id"
+    },
+    "run_id": {
+      "$ref": "#/$defs/id"
+    },
+    "scenario_id": {
+      "$ref": "#/$defs/id"
+    },
+    "event_id": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "observation_id": {
+      "$ref": "#/$defs/id"
+    },
+    "observer_id": {
+      "type": "string"
+    },
+    "sample_sequence": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "recorded_at": {
+      "$ref": "#/$defs/utc"
+    },
+    "status": {
+      "enum": [
+        "ok",
+        "pending",
+        "unsupported",
+        "error",
+        "timeout"
+      ]
+    },
+    "snapshot_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "key",
+          "value_type",
+          "value"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "value_type": {
+            "enum": [
+              "null",
+              "boolean",
+              "integer",
+              "number",
+              "string",
+              "array",
+              "object"
+            ]
+          },
+          "value": {},
+          "sensitive": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "error": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "category": {
+          "type": "string"
+        },
+        "message_redacted": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_[0-9A-HJKMNP-TV-Z]{26}$",
+      "maxLength": 96
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "utc": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?Z$"
+    },
+    "json_value": {},
+    "secret_ref": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "env"
+          ],
+          "properties": {
+            "env": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9_]{0,127}$"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "file"
+          ],
+          "properties": {
+            "file": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "generated"
+          ],
+          "properties": {
+            "generated": {
+              "enum": [
+                "hmac-256",
+                "ed25519-test"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "duration": {
+      "type": "string",
+      "pattern": "^(?:0|[1-9]\\d*)(?:ns|us|ms|s|m|h)$",
+      "description": "Non-negative integer duration with an explicit unit; floating-point durations are prohibited."
+    }
+  }
+}

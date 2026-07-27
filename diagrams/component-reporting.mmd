@@ -1,0 +1,9 @@
+flowchart LR
+  MANIFEST[Immutable Manifest] --> PROJ[Normalized Projection]
+  JOURNAL[Journal + Evidence] --> PROJ
+  REDACT[Redaction Policy] --> PROJ
+  PROJ --> JSON[Summary JSON]
+  PROJ --> JSONL[Evidence JSON Lines]
+  PROJ --> JUNIT[JUnit XML]
+  PROJ --> HTML[Static Escaped HTML]
+  PROJ --> EXIT[Exit Category]

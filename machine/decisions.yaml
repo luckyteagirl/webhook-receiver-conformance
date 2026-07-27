@@ -1,0 +1,1281 @@
+schema_version: 1.0.0-draft.1
+decisions:
+- id: ADR-001
+  title: Use a Python modular monolith
+  status: accepted
+  date: '2026-07-26'
+  owners:
+  - principal architect
+  - future maintainer
+  context_and_forces: Use a Python modular monolith
+  requirements_affected:
+  - FR-001
+  - FR-007
+  - COMPAT-001
+  risks_affected:
+  - RISK-001
+  decision_criteria:
+  - correctness
+  - testability
+  - security
+  - local-first operation
+  - solo-maintainer complexity
+  - cross-platform behavior
+  options_considered:
+  - Python modular monolith
+  - Go single binary
+  - Rust single binary
+  - Distributed services
+  evidence_source_ids:
+  - SRC-077
+  - SRC-080
+  - SRC-046
+  selected_decision: Implement v0.1 as one Python package and process with explicit internal component boundaries.
+  positive_consequences:
+  - Matches maintainer skills and preferred stack.
+  - Minimizes operational dependencies.
+  - Supports rapid property and integration testing.
+  negative_consequences:
+  - Python packaging is less self-contained than a native binary.
+  - CPU-bound scale is not a design goal.
+  rejected_alternatives:
+  - Python modular monolith
+  - Go single binary
+  - Rust single binary
+  - Distributed services
+  implementation_constraints:
+  - Public behavior must remain traceable to normative requirements.
+  - Changes require ADR supersession and schema/traceability updates.
+  verification_implications:
+  - Decision-specific contract and regression tests are required.
+  revisit_triggers:
+  - Measured install friction prevents adoption.
+  - A P0 workload cannot meet documented budgets.
+  related_or_superseded_adrs: []
+- id: ADR-002
+  title: Support CPython 3.12 through 3.14
+  status: accepted
+  date: '2026-07-26'
+  owners:
+  - principal architect
+  - future maintainer
+  context_and_forces: Support CPython 3.12 through 3.14
+  requirements_affected:
+  - COMPAT-001
+  - OPS-001
+  risks_affected:
+  - RISK-002
+  decision_criteria:
+  - correctness
+  - testability
+  - security
+  - local-first operation
+  - solo-maintainer complexity
+  - cross-platform behavior
+  options_considered:
+  - 3.11-3.14
+  - 3.12-3.14
+  - 3.13-3.14
+  - Latest minor only
+  evidence_source_ids:
+  - SRC-077
+  - SRC-078
+  - SRC-079
+  - SRC-080
+  selected_decision: Set requires-python >=3.12,<3.15 for v0.1 and test every supported minor.
+  positive_consequences:
+  - Balances modern typing/runtime features with broad current availability.
+  - All selected dependencies support the range.
+  negative_consequences:
+  - Three-version CI matrix increases test cost.
+  rejected_alternatives:
+  - 3.11-3.14
+  - 3.12-3.14
+  - 3.13-3.14
+  - Latest minor only
+  implementation_constraints:
+  - Public behavior must remain traceable to normative requirements.
+  - Changes require ADR supersession and schema/traceability updates.
+  verification_implications:
+  - Decision-specific contract and regression tests are required.
+  revisit_triggers:
+  - A core dependency drops a supported minor.
+  - CI duration exceeds budget.
+  related_or_superseded_adrs: []
+- id: ADR-003
+  title: Use AnyIO with the asyncio backend in v0.1
+  status: accepted
+  date: '2026-07-26'
+  owners:
+  - principal architect
+  - future maintainer
+  context_and_forces: Use AnyIO with the asyncio backend in v0.1
+  requirements_affected:
+  - SCHED-012
+  - STATE-007
+  - OBS-011
+  risks_affected:
+  - RISK-003
+  decision_criteria:
+  - correctness
+  - testability
+  - security
+  - local-first operation
+  - solo-maintainer complexity
+  - cross-platform behavior
+  options_considered:
+  - Raw asyncio
+  - AnyIO with asyncio backend
+  - AnyIO with asyncio and Trio parity
+  - Trio only
+  evidence_source_ids:
+  - SRC-022
+  - SRC-019
+  selected_decision: Use AnyIO task groups, cancellation scopes, subprocess APIs, and synchronization while running only the
+    asyncio backend in required tests.
+  positive_consequences:
+  - Structured concurrency and bounded cancellation.
+  - Preserves a future backend seam without promising parity.
+  negative_consequences:
+  - Adds an abstraction dependency.
+  - Trio compatibility is not guaranteed.
+  rejected_alternatives:
+  - Raw asyncio
+  - AnyIO with asyncio backend
+  - AnyIO with asyncio and Trio parity
+  - Trio only
+  implementation_constraints:
+  - Public behavior must remain traceable to normative requirements.
+  - Changes require ADR supersession and schema/traceability updates.
+  verification_implications:
+  - Decision-specific contract and regression tests are required.
+  revisit_triggers:
+  - AnyIO abstractions block required HTTPX or subprocess behavior.
+  related_or_superseded_adrs: []
+- id: ADR-004
+  title: Use a single-writer SQLite rollback journal
+  status: accepted
+  date: '2026-07-26'
+  owners:
+  - principal architect
+  - future maintainer
+  context_and_forces: The v0.1 core needs durable local state, crash recovery, simple packaging, and one active writer per
+    run; it does not need concurrent distributed writers.
+  requirements_affected:
+  - DATA-001
+  - DATA-002
+  - DATA-003
+  - REL-001
+  - REL-004
+  risks_affected:
+  - RISK-006
+  - RISK-007
+  decision_criteria:
+  - correctness
+  - testability
+  - security
+  - local-first operation
+  - solo-maintainer complexity
+  - cross-platform behavior
+  options_considered:
+  - SQLite rollback journal DELETE + synchronous EXTRA
+  - SQLite WAL + synchronous FULL
+  - Append-only files only
+  - PostgreSQL
+  evidence_source_ids:
+  - SRC-084
+  - SRC-085
+  - SRC-086
+  - SRC-087
+  - SRC-088
+  selected_decision: Use one local SQLite database per run bundle with journal_mode=DELETE, synchronous=EXTRA, foreign_keys=ON,
+    trusted_schema=OFF, explicit BEGIN IMMEDIATE write transactions, and one owning process.
+  positive_consequences:
+  - Hot-journal recovery is built into SQLite.
+  - No checkpoint subsystem or WAL sidecars are required.
+  - The design matches the single-writer product boundary.
+  - Current WAL-specific recovery risk is avoided.
+  negative_consequences:
+  - Readers block briefly during commits.
+  - The database must remain on a local filesystem.
+  - Parallel processes cannot write one run.
+  rejected_alternatives:
+  - WAL adds checkpoint and sidecar complexity without a measured reader-concurrency need.
+  - Append-only files alone make relational integrity and recovery scans harder.
+  - PostgreSQL violates local-first zero-service operation.
+  implementation_constraints:
+  - One process owns a run directory.
+  - All state transitions occur through the journal service.
+  - Database files on network filesystems are unsupported.
+  - Migrations are transactional and append-only.
+  verification_implications:
+  - Crash every transaction boundary.
+  - Verify hot-journal recovery and foreign-key integrity.
+  - Reject concurrent ownership.
+  revisit_triggers:
+  - Measured report readers require concurrent reads during long writes.
+  - A distributed execution requirement is accepted.
+  related_or_superseded_adrs: []
+- id: ADR-005
+  title: Use HMAC-SHA256 counter generation and RFC 8785 manifests
+  status: accepted
+  date: '2026-07-26'
+  owners:
+  - principal architect
+  - future maintainer
+  context_and_forces: Use HMAC-SHA256 counter generation and RFC 8785 manifests
+  requirements_affected:
+  - SCHED-001
+  - SCHED-004
+  - SCHED-005
+  risks_affected:
+  - RISK-005
+  decision_criteria:
+  - correctness
+  - testability
+  - security
+  - local-first operation
+  - solo-maintainer complexity
+  - cross-platform behavior
+  options_considered:
+  - Python random seed
+  - PCG implementation
+  - HMAC-SHA256 counter generator plus realized manifest
+  - UUID-only random generation
+  evidence_source_ids:
+  - SRC-018
+  - SRC-030
+  - SRC-031
+  - SRC-033
+  selected_decision: Define wrch-hmac-drbg-v1 for deterministic choices and RFC 8785 canonical JSON for content hashes; record
+    all realized values so replay never depends on generator stability.
+  positive_consequences:
+  - Simple, portable test vectors.
+  - Algorithm changes cannot affect existing manifests.
+  - Cryptographic primitive is widely available.
+  negative_consequences:
+  - Requires a small specified sampler and JCS implementation dependency.
+  - JCS constrains numeric representation.
+  rejected_alternatives:
+  - Python random seed
+  - PCG implementation
+  - HMAC-SHA256 counter generator plus realized manifest
+  - UUID-only random generation
+  implementation_constraints:
+  - Public behavior must remain traceable to normative requirements.
+  - Changes require ADR supersession and schema/traceability updates.
+  verification_implications:
+  - Decision-specific contract and regression tests are required.
+  revisit_triggers:
+  - Canonicalization library becomes unmaintained.
+  - Interoperability vectors fail across runtimes.
+  related_or_superseded_adrs: []
+- id: ADR-006
+  title: Use integer microsecond logical time with real and scaled modes
+  status: accepted
+  date: '2026-07-26'
+  owners:
+  - principal architect
+  - future maintainer
+  context_and_forces: Use integer microsecond logical time with real and scaled modes
+  requirements_affected:
+  - SCHED-006
+  - SCHED-007
+  - SCHED-008
+  - SCHED-009
+  risks_affected:
+  - RISK-006
+  decision_criteria:
+  - correctness
+  - testability
+  - security
+  - local-first operation
+  - solo-maintainer complexity
+  - cross-platform behavior
+  options_considered:
+  - Floating seconds
+  - Integer nanoseconds
+  - Integer microseconds real/scaled
+  - Full virtual clock
+  evidence_source_ids:
+  - SRC-032
+  - SRC-033
+  - SRC-019
+  selected_decision: Represent logical time as integer microseconds; use monotonic real deadlines; support real and rationally
+    scaled delays in v0.1; defer external virtual time.
+  positive_consequences:
+  - Avoids floating drift.
+  - Readable and sufficient precision for webhook conformance.
+  - Does not overclaim control of external systems.
+  negative_consequences:
+  - Sub-microsecond scheduling is unsupported.
+  - Scaled time cannot prove receiver wall-clock behavior.
+  rejected_alternatives:
+  - Floating seconds
+  - Integer nanoseconds
+  - Integer microseconds real/scaled
+  - Full virtual clock
+  implementation_constraints:
+  - Public behavior must remain traceable to normative requirements.
+  - Changes require ADR supersession and schema/traceability updates.
+  verification_implications:
+  - Decision-specific contract and regression tests are required.
+  revisit_triggers:
+  - A validated use case requires coordinated receiver test clocks.
+  related_or_superseded_adrs: []
+- id: ADR-007
+  title: Use SQLite WAL, synchronous FULL, and one writer
+  status: accepted
+  date: '2026-07-26'
+  owners:
+  - principal architect
+  - future maintainer
+  context_and_forces: Use SQLite WAL, synchronous FULL, and one writer
+  requirements_affected:
+  - DATA-001
+  - DATA-002
+  - DATA-003
+  - REL-010
+  risks_affected:
+  - RISK-007
+  decision_criteria:
+  - correctness
+  - testability
+  - security
+  - local-first operation
+  - solo-maintainer complexity
+  - cross-platform behavior
+  options_considered:
+  - SQLite rollback journal
+  - SQLite WAL NORMAL
+  - SQLite WAL FULL single writer
+  - PostgreSQL
+  evidence_source_ids:
+  - SRC-026
+  - SRC-027
+  - SRC-028
+  - SRC-029
+  selected_decision: Store mutable execution state in SQLite with WAL, synchronous=FULL, foreign keys, one writer connection,
+    and append-oriented evidence.
+  positive_consequences:
+  - Local and CI portability.
+  - Strong transaction semantics and crash tests.
+  - No service dependency.
+  negative_consequences:
+  - Power-loss durability has filesystem limits.
+  - One writer limits mutation throughput, which is acceptable.
+  rejected_alternatives:
+  - SQLite rollback journal
+  - SQLite WAL NORMAL
+  - SQLite WAL FULL single writer
+  - PostgreSQL
+  implementation_constraints:
+  - Public behavior must remain traceable to normative requirements.
+  - Changes require ADR supersession and schema/traceability updates.
+  verification_implications:
+  - Decision-specific contract and regression tests are required.
+  revisit_triggers:
+  - A hosted multi-worker product becomes a committed scope.
+  - Measured writer contention violates budgets.
+  related_or_superseded_adrs: []
+- id: ADR-008
+  title: Separate manifest, run, event, delivery, attempt, observation, and assertion identities
+  status: accepted
+  date: '2026-07-26'
+  owners:
+  - principal architect
+  - future maintainer
+  context_and_forces: Separate manifest, run, event, delivery, attempt, observation, and assertion identities
+  requirements_affected:
+  - FR-004
+  - DATA-006
+  - DATA-007
+  - REL-007
+  risks_affected:
+  - RISK-008
+  decision_criteria:
+  - correctness
+  - testability
+  - security
+  - local-first operation
+  - solo-maintainer complexity
+  - cross-platform behavior
+  options_considered:
+  - One event ID everywhere
+  - Run-scoped integer IDs only
+  - Layered typed identities
+  evidence_source_ids:
+  - SRC-007
+  - SRC-013
+  - SRC-064
+  selected_decision: Use content-derived manifest and planned entity IDs, plus a unique execution run_id and separately generated
+    physical attempt/sample/evaluation IDs.
+  positive_consequences:
+  - Prevents conflating provider event identity with network attempts.
+  - Supports replay and ambiguity evidence.
+  negative_consequences:
+  - More identifiers appear in user reports.
+  rejected_alternatives:
+  - One event ID everywhere
+  - Run-scoped integer IDs only
+  - Layered typed identities
+  implementation_constraints:
+  - Public behavior must remain traceable to normative requirements.
+  - Changes require ADR supersession and schema/traceability updates.
+  verification_implications:
+  - Decision-specific contract and regression tests are required.
+  revisit_triggers:
+  - User testing shows identifiers are not navigable despite report design.
+  related_or_superseded_adrs: []
+- id: ADR-009
+  title: Preserve unknown network outcomes
+  status: accepted
+  date: '2026-07-26'
+  owners:
+  - principal architect
+  - future maintainer
+  context_and_forces: Preserve unknown network outcomes
+  requirements_affected:
+  - STATE-008
+  - REL-002
+  - REL-003
+  - REL-006
+  risks_affected:
+  - RISK-009
+  decision_criteria:
+  - correctness
+  - testability
+  - security
+  - local-first operation
+  - solo-maintainer complexity
+  - cross-platform behavior
+  options_considered:
+  - Assume failure and retry
+  - Assume success
+  - Infer from socket state
+  - Explicit unknown_outcome
+  evidence_source_ids:
+  - SRC-064
+  - SRC-065
+  - SRC-075
+  selected_decision: When request bytes may have left but terminal evidence is not durably committed, preserve unknown_outcome
+    and require explicit reconciliation or redelivery policy.
+  positive_consequences:
+  - Honest distributed-systems semantics.
+  - Makes duplicate physical delivery risk visible.
+  negative_consequences:
+  - Some runs require operator or observer action.
+  - Cannot guarantee no duplicate physical send.
+  rejected_alternatives:
+  - Assume failure and retry
+  - Assume success
+  - Infer from socket state
+  - Explicit unknown_outcome
+  implementation_constraints:
+  - Public behavior must remain traceable to normative requirements.
+  - Changes require ADR supersession and schema/traceability updates.
+  verification_implications:
+  - Decision-specific contract and regression tests are required.
+  revisit_triggers:
+  - A transport API provides a durable sender transaction boundary.
+  related_or_superseded_adrs: []
+- id: ADR-010
+  title: Use command and HTTP observers as v0.1 extension boundaries
+  status: accepted
+  date: '2026-07-26'
+  owners:
+  - principal architect
+  - future maintainer
+  context_and_forces: Use command and HTTP observers as v0.1 extension boundaries
+  requirements_affected:
+  - OBS-001
+  - OBS-002
+  - OBS-004
+  - ASSERT-009
+  risks_affected:
+  - RISK-010
+  decision_criteria:
+  - correctness
+  - testability
+  - security
+  - local-first operation
+  - solo-maintainer complexity
+  - cross-platform behavior
+  options_considered:
+  - HTTP only
+  - Command only
+  - Command + HTTP
+  - General in-process plugin API
+  evidence_source_ids:
+  - SRC-046
+  - SRC-064
+  - SRC-036
+  selected_decision: Provide schema-versioned command/stdin-stdout and authenticated HTTP observer contracts; defer direct
+    SQL, telemetry, queue, and in-process custom plugins.
+  positive_consequences:
+  - Language-independent application integration.
+  - Security boundaries are explicit and testable.
+  negative_consequences:
+  - Requires receiver-side setup.
+  - Process and HTTP errors need careful classification.
+  rejected_alternatives:
+  - HTTP only
+  - Command only
+  - Command + HTTP
+  - General in-process plugin API
+  implementation_constraints:
+  - Public behavior must remain traceable to normative requirements.
+  - Changes require ADR supersession and schema/traceability updates.
+  verification_implications:
+  - Decision-specific contract and regression tests are required.
+  revisit_triggers:
+  - Pilots reject both observer forms.
+  - Two proven adapters require a public API.
+  related_or_superseded_adrs: []
+- id: ADR-011
+  title: Keep provider behavior in versioned signing and fixture adapters
+  status: accepted
+  date: '2026-07-26'
+  owners:
+  - principal architect
+  - future maintainer
+  context_and_forces: Keep provider behavior in versioned signing and fixture adapters
+  requirements_affected:
+  - SIG-001
+  - SIG-008
+  - SIG-009
+  - SIG-010
+  risks_affected:
+  - RISK-011
+  decision_criteria:
+  - correctness
+  - testability
+  - security
+  - local-first operation
+  - solo-maintainer complexity
+  - cross-platform behavior
+  options_considered:
+  - Generic HMAC only
+  - Many provider emulators
+  - Generic + Stripe + Standard Webhooks HMAC
+  - Generic + all asymmetric formats
+  evidence_source_ids:
+  - SRC-003
+  - SRC-006
+  - SRC-009
+  - SRC-012
+  - SRC-013
+  selected_decision: Ship generic HMAC-SHA256, Stripe HMAC, and Standard Webhooks HMAC adapters; record versions; defer Ed25519
+    and broad provider emulation.
+  positive_consequences:
+  - Covers core raw-byte and timestamp semantics.
+  - Demonstrates provider seam without broad scope.
+  negative_consequences:
+  - Discord and other asymmetric providers are deferred.
+  rejected_alternatives:
+  - Generic HMAC only
+  - Many provider emulators
+  - Generic + Stripe + Standard Webhooks HMAC
+  - Generic + all asymmetric formats
+  implementation_constraints:
+  - Public behavior must remain traceable to normative requirements.
+  - Changes require ADR supersession and schema/traceability updates.
+  verification_implications:
+  - Decision-specific contract and regression tests are required.
+  revisit_triggers:
+  - User demand clusters around an unsupported provider.
+  related_or_superseded_adrs: []
+- id: ADR-012
+  title: Use staged typed mutations
+  status: accepted
+  date: '2026-07-26'
+  owners:
+  - principal architect
+  - future maintainer
+  context_and_forces: Use staged typed mutations
+  requirements_affected:
+  - MUT-001
+  - MUT-002
+  - MUT-003
+  - MUT-004
+  risks_affected:
+  - RISK-012
+  decision_criteria:
+  - correctness
+  - testability
+  - security
+  - local-first operation
+  - solo-maintainer complexity
+  - cross-platform behavior
+  options_considered:
+  - Boolean corruption flags
+  - Arbitrary scripts
+  - Versioned staged operators
+  evidence_source_ids:
+  - SRC-066
+  - SRC-067
+  - SRC-046
+  selected_decision: Define structured, serialization, raw-byte, signing, and post-signing mutation stages with versioned
+    operators and golden vectors.
+  positive_consequences:
+  - Deterministic and diagnosable failures.
+  - Signing order remains explicit.
+  negative_consequences:
+  - Operator catalog requires maintenance.
+  rejected_alternatives:
+  - Boolean corruption flags
+  - Arbitrary scripts
+  - Versioned staged operators
+  implementation_constraints:
+  - Public behavior must remain traceable to normative requirements.
+  - Changes require ADR supersession and schema/traceability updates.
+  verification_implications:
+  - Decision-specific contract and regression tests are required.
+  revisit_triggers:
+  - Operator count creates support burden without use.
+  related_or_superseded_adrs: []
+- id: ADR-013
+  title: Do not publish an in-process plugin API in v0.1
+  status: accepted
+  date: '2026-07-26'
+  owners:
+  - principal architect
+  - future maintainer
+  context_and_forces: Do not publish an in-process plugin API in v0.1
+  requirements_affected:
+  - API-002
+  - API-003
+  - API-004
+  risks_affected:
+  - RISK-013
+  decision_criteria:
+  - correctness
+  - testability
+  - security
+  - local-first operation
+  - solo-maintainer complexity
+  - cross-platform behavior
+  options_considered:
+  - Entry-point plugins in v0.1
+  - No abstractions
+  - Internal protocols without public ABI
+  evidence_source_ids:
+  - SRC-036
+  - SRC-050
+  selected_decision: Keep internal protocols typed but unstable; use static first-party registry and process/HTTP extension
+    boundaries.
+  positive_consequences:
+  - Avoids premature compatibility commitments and arbitrary code loading.
+  - Still permits later extraction from concrete adapters.
+  negative_consequences:
+  - Third-party provider packages cannot integrate in-process initially.
+  rejected_alternatives:
+  - Entry-point plugins in v0.1
+  - No abstractions
+  - Internal protocols without public ABI
+  implementation_constraints:
+  - Public behavior must remain traceable to normative requirements.
+  - Changes require ADR supersession and schema/traceability updates.
+  verification_implications:
+  - Decision-specific contract and regression tests are required.
+  revisit_triggers:
+  - At least two external implementations prove a stable abstraction.
+  related_or_superseded_adrs: []
+- id: ADR-014
+  title: Use allowlisted destination security with permanent metadata blocks
+  status: accepted
+  date: '2026-07-26'
+  owners:
+  - principal architect
+  - future maintainer
+  context_and_forces: Use allowlisted destination security with permanent metadata blocks
+  requirements_affected:
+  - SEC-001
+  - SEC-002
+  - SEC-003
+  - SEC-004
+  - HTTP-003
+  - HTTP-004
+  risks_affected:
+  - RISK-014
+  decision_criteria:
+  - correctness
+  - testability
+  - security
+  - local-first operation
+  - solo-maintainer complexity
+  - cross-platform behavior
+  options_considered:
+  - Allow any URL
+  - Block all public URLs permanently
+  - Dual authorization with address validation
+  evidence_source_ids:
+  - SRC-041
+  - SRC-019
+  - SRC-021
+  selected_decision: Allow loopback and explicitly named local hosts by default; require configuration plus CLI confirmation
+    for public targets; disable redirects and environment proxies; validate every resolved address.
+  positive_consequences:
+  - Reduces accidental production traffic and SSRF paths.
+  - Retains legitimate staging tests through explicit consent.
+  negative_consequences:
+  - Local DNS and container networking require clear diagnostics.
+  - Not equivalent to a multi-tenant network sandbox.
+  rejected_alternatives:
+  - Allow any URL
+  - Block all public URLs permanently
+  - Dual authorization with address validation
+  implementation_constraints:
+  - Public behavior must remain traceable to normative requirements.
+  - Changes require ADR supersession and schema/traceability updates.
+  verification_implications:
+  - Decision-specific contract and regression tests are required.
+  revisit_triggers:
+  - A hosted mode is approved.
+  - DNS pinning is required by a demonstrated threat model.
+  related_or_superseded_adrs: []
+- id: ADR-015
+  title: Use JSONL, summary JSON, JUnit, and static HTML; reject runtime SARIF
+  status: accepted
+  date: '2026-07-26'
+  owners:
+  - principal architect
+  - future maintainer
+  context_and_forces: Use JSONL, summary JSON, JUnit, and static HTML; reject runtime SARIF
+  requirements_affected:
+  - REPORT-003
+  - REPORT-004
+  - REPORT-005
+  - REPORT-007
+  risks_affected:
+  - RISK-015
+  decision_criteria:
+  - correctness
+  - testability
+  - security
+  - local-first operation
+  - solo-maintainer complexity
+  - cross-platform behavior
+  options_considered:
+  - JSON only
+  - JUnit only
+  - JSONL + summary + JUnit + HTML
+  - Add SARIF
+  evidence_source_ids:
+  - SRC-035
+  - SRC-046
+  - SRC-083
+  selected_decision: Emit versioned JSONL evidence, result-summary JSON, JUnit XML, and no-script static HTML; do not emit
+    SARIF for runtime conformance in v0.1.
+  positive_consequences:
+  - Supports automation, CI, and human diagnosis.
+  - Keeps authoritative data separate from presentation.
+  negative_consequences:
+  - Four artifact forms require consistency tests.
+  rejected_alternatives:
+  - JSON only
+  - JUnit only
+  - JSONL + summary + JUnit + HTML
+  - Add SARIF
+  implementation_constraints:
+  - Public behavior must remain traceable to normative requirements.
+  - Changes require ADR supersession and schema/traceability updates.
+  verification_implications:
+  - Decision-specific contract and regression tests are required.
+  revisit_triggers:
+  - A concrete static-analysis result class is added.
+  related_or_superseded_adrs: []
+- id: ADR-016
+  title: Use wrch as the neutral technical CLI name
+  status: accepted
+  date: '2026-07-26'
+  owners:
+  - principal architect
+  - future maintainer
+  context_and_forces: Use wrch as the neutral technical CLI name
+  requirements_affected:
+  - CLI-001
+  risks_affected:
+  - RISK-016
+  decision_criteria:
+  - correctness
+  - testability
+  - security
+  - local-first operation
+  - solo-maintainer complexity
+  - cross-platform behavior
+  options_considered:
+  - HookLab
+  - EventGauntlet
+  - wrch technical identifier
+  evidence_source_ids:
+  - SRC-050
+  selected_decision: Publish the technical executable wrch and repository identifier webhook-receiver-conformance-harness
+    while leaving marketing branding outside architecture contracts.
+  positive_consequences:
+  - Avoids known naming collisions.
+  - Schemas and scripts remain brand-neutral.
+  negative_consequences:
+  - Acronym requires explanation in user-facing material.
+  rejected_alternatives:
+  - HookLab
+  - EventGauntlet
+  - wrch technical identifier
+  implementation_constraints:
+  - Public behavior must remain traceable to normative requirements.
+  - Changes require ADR supersession and schema/traceability updates.
+  verification_implications:
+  - Decision-specific contract and regression tests are required.
+  revisit_triggers:
+  - A cleared final brand is selected before package publication.
+  related_or_superseded_adrs: []
+- id: ADR-017
+  title: Package as wheel, container, and GitHub Action
+  status: accepted
+  date: '2026-07-26'
+  owners:
+  - principal architect
+  - future maintainer
+  context_and_forces: Package as wheel, container, and GitHub Action
+  requirements_affected:
+  - OPS-001
+  - OPS-003
+  - OPS-004
+  - OPS-005
+  risks_affected:
+  - RISK-017
+  decision_criteria:
+  - correctness
+  - testability
+  - security
+  - local-first operation
+  - solo-maintainer complexity
+  - cross-platform behavior
+  options_considered:
+  - Wheel only
+  - Standalone native executable
+  - Wheel + container + GitHub Action
+  evidence_source_ids:
+  - SRC-037
+  - SRC-038
+  - SRC-039
+  - SRC-040
+  selected_decision: Make the wheel authoritative, installable through pipx/uvx; build a thin nonroot container and action
+    wrapper from released artifacts.
+  positive_consequences:
+  - Meets local and CI adoption paths.
+  - Avoids separate runtime implementations.
+  negative_consequences:
+  - Three distribution surfaces need smoke tests.
+  rejected_alternatives:
+  - Wheel only
+  - Standalone native executable
+  - Wheel + container + GitHub Action
+  implementation_constraints:
+  - Public behavior must remain traceable to normative requirements.
+  - Changes require ADR supersession and schema/traceability updates.
+  verification_implications:
+  - Decision-specific contract and regression tests are required.
+  revisit_triggers:
+  - Installation measurements show a standalone binary is required.
+  related_or_superseded_adrs: []
+- id: ADR-018
+  title: Use an orders-and-payments reference domain
+  status: accepted
+  date: '2026-07-26'
+  owners:
+  - principal architect
+  - future maintainer
+  context_and_forces: Use an orders-and-payments reference domain
+  requirements_affected:
+  - FR-005
+  - TEST-007
+  risks_affected:
+  - RISK-018
+  decision_criteria:
+  - correctness
+  - testability
+  - security
+  - local-first operation
+  - solo-maintainer complexity
+  - cross-platform behavior
+  options_considered:
+  - Generic counter receiver
+  - Orders and payments domain
+  - Full Stripe clone
+  evidence_source_ids:
+  - SRC-001
+  - SRC-061
+  - SRC-064
+  selected_decision: Model order.created, payment.authorized, payment.captured, and order.cancelled with transactional side-effect
+    and idempotency tables, plus isolated flawed variants.
+  positive_consequences:
+  - Makes duplicate, ordering, partial processing, and signature defects understandable.
+  - Avoids implementing an entire provider.
+  negative_consequences:
+  - Domain examples may appear payment-centric.
+  rejected_alternatives:
+  - Generic counter receiver
+  - Orders and payments domain
+  - Full Stripe clone
+  implementation_constraints:
+  - Public behavior must remain traceable to normative requirements.
+  - Changes require ADR supersession and schema/traceability updates.
+  verification_implications:
+  - Decision-specific contract and regression tests are required.
+  revisit_triggers:
+  - Users consistently misunderstand provider independence.
+  related_or_superseded_adrs: []
+- id: ADR-019
+  title: Import standards only as deferred adapters
+  status: accepted
+  date: '2026-07-26'
+  owners:
+  - principal architect
+  - future maintainer
+  context_and_forces: Import standards only as deferred adapters
+  requirements_affected:
+  - CFG-001
+  - API-002
+  risks_affected:
+  - RISK-019
+  decision_criteria:
+  - correctness
+  - testability
+  - security
+  - local-first operation
+  - solo-maintainer complexity
+  - cross-platform behavior
+  options_considered:
+  - All standards in v0.1
+  - Raw fixtures only forever
+  - Raw fixtures now, versioned import adapters later
+  evidence_source_ids:
+  - SRC-014
+  - SRC-015
+  - SRC-016
+  - SRC-017
+  selected_decision: Accept raw byte and JSON fixtures in v0.1; defer OpenAPI, AsyncAPI, CloudEvents, and broad schema import
+    to roadmap adapters.
+  positive_consequences:
+  - Keeps MVP focused while preserving evidence-backed extension direction.
+  negative_consequences:
+  - Users must author initial fixture metadata manually.
+  rejected_alternatives:
+  - All standards in v0.1
+  - Raw fixtures only forever
+  - Raw fixtures now, versioned import adapters later
+  implementation_constraints:
+  - Public behavior must remain traceable to normative requirements.
+  - Changes require ADR supersession and schema/traceability updates.
+  verification_implications:
+  - Decision-specific contract and regression tests are required.
+  revisit_triggers:
+  - Pilots identify fixture authoring as the dominant adoption blocker.
+  related_or_superseded_adrs: []
+- id: ADR-020
+  title: Use bounded conformance performance budgets
+  status: accepted
+  date: '2026-07-26'
+  owners:
+  - principal architect
+  - future maintainer
+  context_and_forces: Use bounded conformance performance budgets
+  requirements_affected:
+  - PERF-001
+  - PERF-002
+  - PERF-003
+  - PERF-008
+  risks_affected:
+  - RISK-020
+  decision_criteria:
+  - correctness
+  - testability
+  - security
+  - local-first operation
+  - solo-maintainer complexity
+  - cross-platform behavior
+  options_considered:
+  - No budgets
+  - Enterprise-scale targets
+  - MVP conformance budgets
+  evidence_source_ids:
+  - SRC-019
+  - SRC-022
+  - SRC-046
+  selected_decision: Set explicit local planning, throughput, memory, disk, payload, concurrency, startup, and CI budgets
+    without treating the tool as a load tester.
+  positive_consequences:
+  - Makes regressions measurable.
+  - Prevents accidental scope expansion.
+  negative_consequences:
+  - Reference hardware must be documented.
+  rejected_alternatives:
+  - No budgets
+  - Enterprise-scale targets
+  - MVP conformance budgets
+  implementation_constraints:
+  - Public behavior must remain traceable to normative requirements.
+  - Changes require ADR supersession and schema/traceability updates.
+  verification_implications:
+  - Decision-specific contract and regression tests are required.
+  revisit_triggers:
+  - Real user workloads consistently exceed hard caps.
+  related_or_superseded_adrs: []
+- id: ADR-021
+  title: Use context-derived HMAC-SHA256 deterministic generation
+  status: accepted
+  date: '2026-07-26'
+  owners:
+  - principal architect
+  - determinism maintainer
+  context_and_forces: A seed must produce stable independent choices even when unrelated fields are added, while algorithm
+    changes must not invalidate an already realized manifest.
+  requirements_affected:
+  - SCHED-001
+  - SCHED-002
+  - SCHED-003
+  - DATA-008
+  risks_affected:
+  - RISK-009
+  decision_criteria:
+  - cross-version stability
+  - domain separation
+  - random-access derivation
+  - testability
+  options_considered:
+  - Python random.Random
+  - PCG stream
+  - ChaCha stream
+  - context-derived HMAC-SHA256
+  evidence_source_ids:
+  - SRC-113
+  selected_decision: 'Define generator hmac-sha256-context-v1: derive bytes as HMAC-SHA256(seed_key, domain_separator || length-prefixed
+    context path || block_index); use rejection sampling for bounded integers. The manifest records every realized value and
+    replays without invoking the generator.'
+  positive_consequences:
+  - Adding an unrelated draw does not shift existing choices.
+  - The primitive is ubiquitous and easy to vector-test.
+  - Manifest replay is independent of generator implementation.
+  negative_consequences:
+  - The seed becomes sensitive if users expect generated values to remain private.
+  - The algorithm requires an explicit canonical context encoding.
+  rejected_alternatives:
+  - random.Random is not a public cross-version contract.
+  - A sequential stream is fragile when the plan shape changes.
+  - ChaCha adds a dependency without improving the realized-manifest guarantee.
+  implementation_constraints:
+  - Seed material is not a signing key.
+  - Contexts are UTF-8 length-prefixed components.
+  - Golden vectors are immutable per algorithm version.
+  verification_implications:
+  - Golden vectors, prefix independence, rejection-sampling, and replay-without-generator tests.
+  revisit_triggers:
+  - A standards-based deterministic generator materially improves interoperability.
+  related_or_superseded_adrs: []
+- id: ADR-022
+  title: Defer a public third-party plugin API
+  status: accepted
+  date: '2026-07-26'
+  owners:
+  - principal architect
+  - open-source maintainer
+  context_and_forces: Signer, mutation, observer, assertion, and reporter seams are needed internally, but a public plugin
+    contract would create an early compatibility burden before external implementations prove the abstractions.
+  requirements_affected:
+  - API-004
+  - COMPAT-008
+  - OPS-007
+  risks_affected:
+  - RISK-016
+  decision_criteria:
+  - scope discipline
+  - compatibility cost
+  - two-implementation rule
+  - security boundary
+  options_considered:
+  - Public entry-point plugins in v0.1
+  - Internal protocols only
+  - No extension seams
+  evidence_source_ids:
+  - SRC-106
+  - SRC-107
+  selected_decision: Keep typed internal protocols and built-in registries in v0.1. Publish only the observer wire protocol.
+    Revisit entry-point plugins after at least two external adapter contributions or concrete user demand.
+  positive_consequences:
+  - Avoids freezing speculative APIs.
+  - Reduces arbitrary-code loading and supply-chain exposure.
+  - Keeps built-ins contract-testable.
+  negative_consequences:
+  - Third parties must contribute built-ins or wrap the CLI.
+  - Provider expansion is initially maintainer-mediated.
+  rejected_alternatives:
+  - A generic plugin framework has no validated external consumers.
+  - Removing all seams would couple core planning to providers.
+  implementation_constraints:
+  - Internal protocols are not compatibility promises.
+  - No dynamic entry-point loading in v0.1.
+  - The plugin metadata schema is informational/experimental only.
+  verification_implications:
+  - Built-in contract suites; negative test that installed entry points are not auto-loaded.
+  revisit_triggers:
+  - Two independent external implementations need the same category.
+  - A v0.2 architecture review accepts a trust model.
+  related_or_superseded_adrs: []
+- id: ADR-023
+  title: Support real and scaled clocks; limit virtual time to in-process tests
+  status: accepted
+  date: '2026-07-26'
+  owners:
+  - principal architect
+  - scheduler maintainer
+  context_and_forces: CI cannot wait through provider-scale backoff, but a local harness cannot virtualize an unmodified external
+    receiver clock or network stack honestly.
+  requirements_affected:
+  - SCHED-007
+  - SCHED-008
+  - SCHED-009
+  - SCHED-010
+  risks_affected:
+  - RISK-008
+  decision_criteria:
+  - honest claims
+  - CI duration
+  - deterministic ordering
+  - external compatibility
+  options_considered:
+  - Real time only
+  - Real + scaled
+  - Full external virtual time
+  - Sleep patching
+  evidence_source_ids:
+  - SRC-001
+  - SRC-022
+  - SRC-032
+  selected_decision: Provide real and scaled execution modes for network runs. Use integer logical nanoseconds for plan ordering,
+    monotonic time for elapsed deadlines, UTC wall time for audit evidence, and virtual time only for pure/in-process unit
+    and model tests.
+  positive_consequences:
+  - CI remains fast.
+  - The tool does not claim to control the receiver wall clock.
+  - Schedule order and external elapsed time remain distinct.
+  negative_consequences:
+  - A scaled retry does not prove behavior after the equivalent real-world duration.
+  - Time-dependent receivers need their own test-clock hook.
+  rejected_alternatives:
+  - Full external virtual time is impossible without receiver cooperation.
+  - Real-only mode makes backoff corpora impractical.
+  implementation_constraints:
+  - Every report names clock mode and scale.
+  - Timeouts use real monotonic time.
+  - Minimum physical intervals prevent zero-duration busy loops.
+  verification_implications:
+  - Clock-jump, scale-boundary, monotonic-deadline, and false-claim tests.
+  revisit_triggers:
+  - A standardized receiver test-clock protocol emerges.
+  related_or_superseded_adrs: []
+- id: ADR-024
+  title: Ship three built-in HMAC signature profiles in v0.1
+  status: accepted
+  date: '2026-07-26'
+  owners:
+  - principal architect
+  - security maintainer
+  context_and_forces: The MVP must prove exact-byte signing and replay-window behavior without becoming a provider emulator
+    or cryptographic framework.
+  requirements_affected:
+  - SIG-001
+  - SIG-006
+  - SIG-009
+  - SIG-015
+  risks_affected:
+  - RISK-003
+  - RISK-014
+  decision_criteria:
+  - market relevance
+  - raw-byte fidelity
+  - key rotation coverage
+  - implementation scope
+  options_considered:
+  - Generic HMAC only
+  - Generic HMAC + Stripe
+  - Generic HMAC + Stripe + Standard Webhooks HMAC
+  - Include Ed25519
+  evidence_source_ids:
+  - SRC-001
+  - SRC-003
+  - SRC-013
+  - SRC-113
+  - SRC-114
+  selected_decision: Ship generic HMAC-SHA256, Stripe v1, and Standard Webhooks HMAC profiles. Defer Ed25519 and other provider
+    profiles until the core contract is stable.
+  positive_consequences:
+  - Covers raw body, timestamps, multiple signatures, and key rotation.
+  - Keeps cryptographic surface reviewable.
+  - Provides one generic and two concrete profiles.
+  negative_consequences:
+  - Discord-style Ed25519 receivers need custom test code in v0.1.
+  - Provider behavior still requires maintenance.
+  rejected_alternatives:
+  - Generic-only does not prove provider fidelity.
+  - Ed25519 expands key encoding and dependency scope without being required for the first vertical slice.
+  implementation_constraints:
+  - Sign exact transmitted bytes.
+  - Use fixed official/golden vectors.
+  - Never serialize secret key material.
+  verification_implications:
+  - Official/golden vectors, altered-body, stale timestamp, wrong-key, multiple-key, and malformed-header cases.
+  revisit_triggers:
+  - Measured demand from an Ed25519 provider integration.
+  related_or_superseded_adrs: []
+- id: ADR-025
+  title: Use JUnit, structured JSON Lines, and static HTML; reject runtime SARIF
+  status: accepted
+  date: '2026-07-26'
+  owners:
+  - principal architect
+  - reporting maintainer
+  context_and_forces: CI needs test-result ingestion, developers need complete causal evidence, and reports render untrusted
+    fixture content.
+  requirements_affected:
+  - REPORT-001
+  - REPORT-006
+  - REPORT-011
+  - REPORT-015
+  risks_affected:
+  - RISK-015
+  decision_criteria:
+  - CI compatibility
+  - lossless evidence
+  - security
+  - standards fit
+  options_considered:
+  - JUnit only
+  - SARIF
+  - JSON/JSONL only
+  - JUnit + JSON/JSONL + static HTML
+  evidence_source_ids:
+  - SRC-118
+  - SRC-119
+  - SRC-102
+  selected_decision: Emit an immutable manifest, append-oriented JSON Lines evidence, a machine summary, JUnit XML, and a
+    no-script escaped HTML report. Do not emit SARIF for runtime outcomes.
+  positive_consequences:
+  - CI systems receive conventional test cases.
+  - Lossless evidence remains schema-backed.
+  - Static HTML reduces injection surface.
+  negative_consequences:
+  - Several synchronized renderers must agree.
+  - JUnit attachment behavior varies by CI provider.
+  rejected_alternatives:
+  - SARIF models static-analysis findings rather than network attempt lifecycles.
+  - JUnit alone cannot preserve full causal evidence.
+  implementation_constraints:
+  - The journal is the reporting authority.
+  - Renderers are pure/idempotent.
+  - HTML contains no active content.
+  verification_implications:
+  - Cross-renderer verdict checks, XML parsing, schema validation, secret canaries, and XSS payload corpus.
+  revisit_triggers:
+  - A specific CI integration requires another export format.
+  related_or_superseded_adrs: []

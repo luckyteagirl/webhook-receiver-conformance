@@ -1,0 +1,18 @@
+stateDiagram-v2
+  [*] --> planned
+  planned --> ready: dependencies and preconditions met
+  ready --> running: first action claimed
+  running --> passed: required assertions pass
+  running --> receiver_failed: comparable assertion fails
+  running --> environment_failed: required environment unavailable
+  running --> ambiguous: unresolved possible send
+  running --> unsupported: required capability absent
+  running --> cancelled: cancelled
+  running --> harness_failed: internal invariant fails
+  passed --> [*]
+  receiver_failed --> [*]
+  environment_failed --> [*]
+  ambiguous --> [*]
+  unsupported --> [*]
+  cancelled --> [*]
+  harness_failed --> [*]

@@ -1,0 +1,17 @@
+sequenceDiagram
+  participant S as Scheduler
+  participant L as Named Lifecycle Profile
+  participant R as Receiver
+  participant O as Observer
+  S->>R: first valid delivery
+  R-->>S: 204 after durable commit
+  S->>L: restart argv (no shell)
+  L-->>S: bounded process result
+  loop readiness until deadline
+    S->>O: health
+    O-->>S: pending/ready
+  end
+  S->>R: duplicate same logical event
+  R-->>S: 204
+  S->>O: processing_count
+  O-->>S: 1

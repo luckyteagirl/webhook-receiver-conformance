@@ -1,0 +1,253 @@
+schema_version: 1.0.0-draft.1
+risks:
+- risk_id: RISK-001
+  title: Observer adoption friction
+  probability: medium
+  impact: high
+  trigger: Pilot users refuse to add a command or test-only HTTP observer.
+  mitigation: Keep protocol minimal, provide framework examples, and preserve transport-only scenarios as a valid subset.
+  owner: DX maintainer
+  status: open
+- risk_id: RISK-002
+  title: Transport features are commoditized
+  probability: high
+  impact: high
+  trigger: Users compare the tool only to request replay or existing payment simulators.
+  mitigation: Center onboarding and reports on business-state evidence, ambiguity, and deterministic manifests.
+  owner: product maintainer
+  status: open
+- risk_id: RISK-003
+  title: Provider behavior drift
+  probability: high
+  impact: medium
+  trigger: Provider documentation, headers, or retry semantics change.
+  mitigation: Version adapters, use official vectors, schedule documentation reviews, and avoid hard-coding provider retry
+    policy into core.
+  owner: adapter maintainer
+  status: open
+- risk_id: RISK-004
+  title: Ambiguous outcome misunderstood
+  probability: medium
+  impact: high
+  trigger: Users interpret resume as proof that an attempt did or did not execute.
+  mitigation: Use explicit terminal vocabulary, stop by default, and render causal evidence prominently.
+  owner: reliability maintainer
+  status: open
+- risk_id: RISK-005
+  title: Receiver nondeterminism causes flaky tests
+  probability: high
+  impact: high
+  trigger: External queues, clocks, or eventual consistency exceed polling assumptions.
+  mitigation: Use bounded eventual assertions, distinguish environment errors, retain timing evidence, and prohibit hidden
+    retries.
+  owner: test architect
+  status: open
+- risk_id: RISK-006
+  title: DNS rebinding or target-policy bypass
+  probability: low
+  impact: critical
+  trigger: Resolved destination changes or redirects/proxies route to protected networks.
+  mitigation: Disable redirects and trust_env, resolve every connection, block protected ranges, allowlist names and resolved
+    addresses, and test rebinding.
+  owner: security maintainer
+  status: open
+- risk_id: RISK-007
+  title: Sensitive data leaks into artifacts
+  probability: medium
+  impact: high
+  trigger: Error paths, duplicate headers, malformed bytes, or observer output bypass redaction.
+  mitigation: Centralize evidence sanitization, minimize retention, run canary tests, and exclude raw evidence from default
+    CI upload.
+  owner: privacy maintainer
+  status: open
+- risk_id: RISK-008
+  title: SQLite durability assumptions differ by filesystem
+  probability: low
+  impact: high
+  trigger: Network or unusual filesystems do not honor required locking or fsync semantics.
+  mitigation: Support local filesystems only in v0.1, preflight filesystem behavior where feasible, and document unsupported
+    locations.
+  owner: persistence maintainer
+  status: open
+- risk_id: RISK-009
+  title: Single writer limits future parallelism
+  probability: low
+  impact: medium
+  trigger: Measured runs need more than one mutating process per journal.
+  mitigation: Keep journal repository interfaces explicit and revisit only with workload evidence.
+  owner: architecture maintainer
+  status: accepted
+- risk_id: RISK-010
+  title: YAML ambiguity and unsafe tags
+  probability: medium
+  impact: medium
+  trigger: Different parsers coerce scalars or instantiate custom objects.
+  mitigation: Use safe parsing, JSON-compatible values, strict models, and unknown-field rejection.
+  owner: configuration maintainer
+  status: open
+- risk_id: RISK-011
+  title: Mutation combinations become uninterpretable
+  probability: medium
+  impact: high
+  trigger: A scenario applies several mutations and a failure has no isolated cause.
+  mitigation: Require one-fault baselines, stage-aware conflict validation, and minimized reproductions.
+  owner: scenario maintainer
+  status: open
+- risk_id: RISK-012
+  title: Command observer expands attack surface
+  probability: medium
+  impact: high
+  trigger: Shell interpolation, inherited secrets, unbounded output, or unsafe working directory.
+  mitigation: argv-only execution, minimal environment, path containment, timeout, output caps, and explicit profile enablement.
+  owner: security maintainer
+  status: open
+- risk_id: RISK-013
+  title: HTML report injection
+  probability: medium
+  impact: high
+  trigger: Fixture or receiver content is rendered as markup, URL, or script.
+  mitigation: No script, context-aware escaping, restrictive CSP, no active links from untrusted data, and security regression
+    corpus.
+  owner: reporting maintainer
+  status: open
+- risk_id: RISK-014
+  title: Dependency or release compromise
+  probability: low
+  impact: high
+  trigger: Malicious dependency, build environment, or package upload.
+  mitigation: Minimize dependencies, lock CI, scan, generate SBOMs, use trusted publishing, attest builds, and publish response
+    policy.
+  owner: release maintainer
+  status: open
+- risk_id: RISK-015
+  title: Cross-platform process semantics diverge
+  probability: medium
+  impact: medium
+  trigger: Signals, file locks, subprocess termination, or path rules differ on Windows.
+  mitigation: Define portable abstractions, test hosted runners, and avoid POSIX-only process groups in normative behavior.
+  owner: platform maintainer
+  status: open
+- risk_id: RISK-016
+  title: Manifest canonicalization is implemented incorrectly
+  probability: low
+  impact: high
+  trigger: Equivalent manifests hash differently or non-I-JSON values enter canonicalization.
+  mitigation: Use RFC 8785 library or verified implementation, publish vectors, reject non-I-JSON values, and hash without
+    self-referential fields.
+  owner: determinism maintainer
+  status: open
+- risk_id: RISK-017
+  title: JUnit semantics lose causal detail
+  probability: medium
+  impact: medium
+  trigger: CI displays only one test case or conflates infrastructure errors with assertion failures.
+  mitigation: Map one scenario to one testcase, use failure versus error deliberately, attach artifact references, and keep
+    JSON authoritative.
+  owner: reporting maintainer
+  status: open
+- risk_id: RISK-018
+  title: Performance caps are mistaken for load testing
+  probability: medium
+  impact: medium
+  trigger: Users direct high-volume traffic or cite results as receiver capacity evidence.
+  mitigation: Validate purpose and caps, document limitations in CLI/report, and reject excessive concurrency.
+  owner: product maintainer
+  status: open
+- risk_id: RISK-019
+  title: Reference flawed receivers have overlapping defects
+  probability: medium
+  impact: high
+  trigger: A scenario fails for an unintended reason, weakening test evidence.
+  mitigation: One primary defect per variant, negative-control tests, and matrix assertions for unaffected scenarios.
+  owner: test architect
+  status: open
+- risk_id: RISK-020
+  title: Autonomous agents diverge from contracts
+  probability: medium
+  impact: high
+  trigger: Tasks edit shared schemas or invent interfaces.
+  mitigation: Exclusive ownership, dependency graph, work packets, schema-first tasks, architecture checks, and integration
+    gates.
+  owner: principal maintainer
+  status: open
+open_questions:
+- question_id: OQ-001
+  question: What public product name clears package, repository, domain, and trademark screening?
+  owner: product maintainer
+  impact: Branding only; technical identifier remains stable.
+  latest_safe_decision_point: Before public repository launch
+  proposed_default: Use webhook-receiver-conformance-harness and wrch.
+  blocking: false
+  status: open
+- question_id: OQ-002
+  question: Should a public third-party plugin API ship before v0.2?
+  owner: architecture maintainer
+  impact: Premature compatibility obligation.
+  latest_safe_decision_point: After two external adapter contributions
+  proposed_default: No public plugin API in v0.1.
+  blocking: false
+  status: deferred
+- question_id: OQ-003
+  question: Should Standard Webhooks Ed25519 become P1 after HMAC adapters stabilize?
+  owner: security maintainer
+  impact: Broader signature coverage and key-management complexity.
+  latest_safe_decision_point: Before v0.2 planning
+  proposed_default: Defer; retain schema room for asymmetric metadata.
+  blocking: false
+  status: deferred
+- question_id: OQ-004
+  question: Which, if any, of OpenAPI, AsyncAPI, and CloudEvents importers earns first-party support?
+  owner: product maintainer
+  impact: Additional parser and semantic-mapping surface.
+  latest_safe_decision_point: After fixture-manifest adoption evidence
+  proposed_default: Document manual conversion; no importer in v0.1.
+  blocking: false
+  status: deferred
+- question_id: OQ-005
+  question: Do users need first-party read-only SQL or OpenTelemetry observers?
+  owner: developer-experience maintainer
+  impact: Credential handling and backend-specific integrations.
+  latest_safe_decision_point: After command/HTTP observer pilot results
+  proposed_default: Ship protocol examples only.
+  blocking: false
+  status: deferred
+- question_id: OQ-006
+  question: Is a standalone native executable materially better than wheels and OCI images?
+  owner: release maintainer
+  impact: Build complexity and platform matrix.
+  latest_safe_decision_point: After measuring installation failures
+  proposed_default: Use wheels, uvx/pipx, and OCI.
+  blocking: false
+  status: deferred
+- question_id: OQ-007
+  question: Should deterministic external virtual-time integration be standardized?
+  owner: scheduler maintainer
+  impact: Receiver-specific hooks and risk of overstated guarantees.
+  latest_safe_decision_point: After at least two receiver implementations need it
+  proposed_default: Real and scaled clocks only.
+  blocking: false
+  status: deferred
+- question_id: OQ-008
+  question: Should Docker Compose lifecycle control become a first-party adapter?
+  owner: integration maintainer
+  impact: Cross-platform Docker dependency.
+  latest_safe_decision_point: After argv lifecycle profile validation
+  proposed_default: Provide documented argv examples, not a core adapter.
+  blocking: false
+  status: deferred
+- question_id: OQ-009
+  question: What telemetry, if any, can be collected without compromising local-first trust?
+  owner: privacy maintainer
+  impact: Adoption measurement versus privacy promise.
+  latest_safe_decision_point: Before any telemetry code
+  proposed_default: No telemetry in v0.1.
+  blocking: false
+  status: deferred
+- question_id: OQ-010
+  question: Is a hosted report-sharing service commercially useful?
+  owner: product maintainer
+  impact: Would introduce multitenancy, SSRF, retention, and compliance requirements.
+  latest_safe_decision_point: After repeated local CI adoption
+  proposed_default: Out of scope.
+  blocking: false
+  status: deferred

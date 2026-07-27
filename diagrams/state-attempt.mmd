@@ -1,0 +1,19 @@
+stateDiagram-v2
+  [*] --> scheduled
+  scheduled --> leased: durable claim
+  leased --> sending: sending intent committed
+  sending --> acknowledged: response accepted
+  sending --> rejected: response rejected
+  sending --> timed_out: phase-aware timeout
+  sending --> connection_failed: proven transport failure
+  sending --> protocol_failed: malformed or oversized response
+  sending --> cancelled: no bytes could leave
+  sending --> unknown_outcome: bytes may have left; no terminal evidence
+  leased --> cancelled: cancel before send
+  acknowledged --> [*]
+  rejected --> [*]
+  timed_out --> [*]
+  connection_failed --> [*]
+  protocol_failed --> [*]
+  cancelled --> [*]
+  unknown_outcome --> [*]

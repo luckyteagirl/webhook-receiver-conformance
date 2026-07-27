@@ -1,0 +1,13 @@
+sequenceDiagram
+  participant S as Scheduler
+  participant J as Journal
+  participant H as Executor
+  participant R as Receiver
+  S->>J: commit sending intent
+  H->>R: request bytes may leave
+  Note over H,J: process terminates before terminal commit
+  participant N as New Process
+  N->>J: recovery scan
+  J-->>N: no terminal outcome
+  N->>J: append unknown_outcome
+  Note over N: default policy does not resend

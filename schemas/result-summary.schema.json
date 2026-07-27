@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/webhook-receiver-conformance/v1/result-summary.schema.json",
+  "title": "Run result summary",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_id",
+    "manifest_id",
+    "generated_at",
+    "verdict",
+    "exit_code",
+    "counts",
+    "artifacts"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "run_id": {
+      "$ref": "#/$defs/id"
+    },
+    "manifest_id": {
+      "$ref": "#/$defs/id"
+    },
+    "generated_at": {
+      "$ref": "#/$defs/utc"
+    },
+    "verdict": {
+      "enum": [
+        "pass",
+        "receiver_failure",
+        "invalid_input",
+        "environment_failure",
+        "ambiguous",
+        "harness_failure",
+        "unsupported",
+        "cancelled"
+      ]
+    },
+    "exit_code": {
+      "enum": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        130
+      ]
+    },
+    "counts": {
+      "type": "object",
+      "required": [
+        "scenarios",
+        "attempts",
+        "observations",
+        "assertions"
+      ],
+      "properties": {
+        "scenarios": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "attempts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "observations": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "assertions": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "failure_refs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/id"
+      },
+      "uniqueItems": true
+    },
+    "artifacts": {
+      "type": "object",
+      "required": [
+        "manifest",
+        "deliveries",
+        "observations",
+        "assertions"
+      ],
+      "properties": {
+        "manifest": {
+          "type": "string"
+        },
+        "deliveries": {
+          "type": "string"
+        },
+        "observations": {
+          "type": "string"
+        },
+        "assertions": {
+          "type": "string"
+        },
+        "junit": {
+          "type": "string"
+        },
+        "html": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_[0-9A-HJKMNP-TV-Z]{26}$",
+      "maxLength": 96
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "utc": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?Z$"
+    },
+    "json_value": {},
+    "secret_ref": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "env"
+          ],
+          "properties": {
+            "env": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9_]{0,127}$"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "file"
+          ],
+          "properties": {
+            "file": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "generated"
+          ],
+          "properties": {
+            "generated": {
+              "enum": [
+                "hmac-256",
+                "ed25519-test"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "duration": {
+      "type": "string",
+      "pattern": "^(?:0|[1-9]\\d*)(?:ns|us|ms|s|m|h)$",
+      "description": "Non-negative integer duration with an explicit unit; floating-point durations are prohibited."
+    }
+  }
+}

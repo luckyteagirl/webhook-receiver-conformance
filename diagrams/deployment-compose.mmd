@@ -1,0 +1,12 @@
+flowchart LR
+  subgraph DockerHost
+    subgraph TestNet[Explicit test network]
+      H[Non-root harness container]
+      R[Receiver container]
+      O[Observer / dependency container]
+      H -->|private allowlisted HTTP| R
+      H -->|authorized probe| O
+    end
+    IN[Read-only project mount] --> H
+    H --> OUT[Writable artifact mount]
+  end

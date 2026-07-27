@@ -1,0 +1,8 @@
+sequenceDiagram
+  participant S as Scheduler
+  participant J as Journal
+  S->>J: commit lease
+  Note over S: process termination before sending intent / bytes
+  participant N as New Process
+  N->>J: verify owner absent and recover
+  J-->>N: delivery is reclaimable; no possible send

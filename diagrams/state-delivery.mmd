@@ -1,0 +1,17 @@
+stateDiagram-v2
+  [*] --> planned
+  planned --> ready
+  ready --> in_progress
+  in_progress --> retry_wait: retry-eligible terminal attempt
+  retry_wait --> in_progress: conditional next attempt
+  in_progress --> succeeded
+  in_progress --> rejected
+  in_progress --> failed
+  in_progress --> ambiguous
+  in_progress --> cancelled
+  ambiguous --> reconciled: observer/operator evidence
+  succeeded --> [*]
+  rejected --> [*]
+  failed --> [*]
+  reconciled --> [*]
+  cancelled --> [*]

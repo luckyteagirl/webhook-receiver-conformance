@@ -1,0 +1,225 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/webhook-receiver-conformance/v1/task-index.schema.json",
+  "title": "Agentic task index",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "tasks"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "task_id",
+          "title",
+          "phase",
+          "priority",
+          "objective",
+          "requirement_ids",
+          "test_ids",
+          "dependency_task_ids",
+          "exclusive_file_ownership",
+          "allowed_files",
+          "forbidden_files",
+          "acceptance_criteria",
+          "commands_to_run",
+          "completion_evidence",
+          "estimated_agent_complexity"
+        ],
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "pattern": "^TASK-\\d{4}$"
+          },
+          "title": {
+            "type": "string"
+          },
+          "phase": {
+            "type": "string"
+          },
+          "priority": {
+            "enum": [
+              "P0",
+              "P1",
+              "P2",
+              "P3"
+            ]
+          },
+          "objective": {
+            "type": "string"
+          },
+          "rationale": {
+            "type": "string"
+          },
+          "requirement_ids": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Z]+-\\d{3}$"
+            }
+          },
+          "test_ids": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^VT-[A-Z]+-\\d{3}$"
+            }
+          },
+          "adr_ids": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^ADR-\\d{3}$"
+            }
+          },
+          "dependency_task_ids": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^TASK-\\d{4}$"
+            }
+          },
+          "blocks_task_ids": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^TASK-\\d{4}$"
+            }
+          },
+          "parallel_group": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "exclusive_file_ownership": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "allowed_files": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "forbidden_files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "input_artifacts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "interfaces_owned": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "interfaces_consumed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "preconditions": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "implementation_scope": {
+            "type": "string"
+          },
+          "explicit_non_goals": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "security_constraints": {
+            "type": "string"
+          },
+          "error_and_edge_cases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "acceptance_criteria": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "commands_to_run": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "expected_outputs": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "completion_evidence": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "rollback_or_recovery": {
+            "type": "string"
+          },
+          "documentation_changes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "handoff_notes": {
+            "type": "string"
+          },
+          "estimated_agent_complexity": {
+            "enum": [
+              "small",
+              "medium",
+              "large"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

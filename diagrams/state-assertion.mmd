@@ -1,0 +1,15 @@
+stateDiagram-v2
+  [*] --> pending
+  pending --> polling: eventual assertion
+  polling --> polling: contrary valid evidence and deadline remains
+  pending --> pass
+  pending --> fail
+  pending --> error
+  pending --> skipped
+  polling --> pass
+  polling --> fail: deadline reached
+  polling --> error
+  pass --> [*]
+  fail --> [*]
+  error --> [*]
+  skipped --> [*]

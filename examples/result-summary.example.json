@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "run_id": "run_01J00000000000000000000000",
+  "manifest_id": "manifest_01J00000000000000000000000",
+  "generated_at": "2026-07-26T20:00:00.200Z",
+  "verdict": "pass",
+  "exit_code": 0,
+  "counts": {
+    "scenarios": 1,
+    "attempts": 1,
+    "observations": 1,
+    "assertions": 1
+  },
+  "failure_refs": [],
+  "artifacts": {
+    "manifest": "run-manifest.json",
+    "deliveries": "deliveries.jsonl",
+    "observations": "observations.jsonl",
+    "assertions": "assertions.jsonl",
+    "junit": "junit.xml",
+    "html": "results.html"
+  }
+}

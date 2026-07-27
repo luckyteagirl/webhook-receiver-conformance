@@ -1,0 +1,14 @@
+stateDiagram-v2
+  [*] --> created
+  created --> validated: inputs and manifest valid
+  created --> invalid: validation failure
+  validated --> running: owner acquired
+  running --> paused: graceful pause/interruption
+  paused --> running: resume and recovery
+  running --> completed: all scenarios terminal
+  running --> cancelled: cancellation completes
+  running --> failed: harness integrity failure
+  completed --> [*]
+  cancelled --> [*]
+  failed --> [*]
+  invalid --> [*]

@@ -1,0 +1,15 @@
+sequenceDiagram
+  participant S as Scheduler
+  participant J as Journal
+  participant R as Receiver
+  participant O as Observer
+  S->>J: create attempts A and B for one event_id
+  par barrier release
+    S->>R: attempt A
+  and
+    S->>R: attempt B
+  end
+  R-->>S: bounded responses
+  S->>J: append both outcomes
+  S->>O: processing_count(event_id)
+  O-->>J: count=1
