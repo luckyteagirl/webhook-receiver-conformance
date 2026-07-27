@@ -83,8 +83,8 @@ class FrozenParameterObject(Mapping[str, FrozenParameterValue]):
             if type(key) is not str:
                 message = "frozen parameter keys must be strings"
                 raise TypeError(message)
-            if not key or len(key) > MAX_PARAMETER_KEY_LENGTH:
-                message = "frozen parameter key is empty or too long"
+            if len(key) > MAX_PARAMETER_KEY_LENGTH:
+                message = "frozen parameter key is too long"
                 raise ValueError(message)
             if key in seen:
                 message = "frozen parameter keys must be unique"
@@ -121,11 +121,12 @@ def _validate_frozen_parameter_values(
     root_items: tuple[tuple[str, FrozenParameterValue], ...],
 ) -> None:
     stack: list[tuple[object, int]] = [(value, 1) for _key, value in reversed(root_items)]
-    nodes = 1
+    nodes = 0
+    node_limit = MAX_PARAMETER_NODES + len(root_items)
     while stack:
         value, depth = stack.pop()
         nodes += 1
-        if nodes > MAX_PARAMETER_NODES:
+        if nodes > node_limit:
             message = "frozen mutation parameters exceed the node limit"
             raise ValueError(message)
         if depth > MAX_PARAMETER_DEPTH:
@@ -167,7 +168,17 @@ def freeze_parameter_object(values: object) -> FrozenParameterObject:
         raise TypeError(message)
     nodes = [0]
     mapping = cast("dict[object, object]", values)
-    frozen = _freeze_parameter_value(mapping, depth=1, nodes=nodes)
+    if any(type(key) is str and not key for key in mapping):
+        message = "top-level mutation parameter names must be nonempty"
+        raise ValueError(message)
+    node_limit = MAX_PARAMETER_NODES + len(mapping)
+    nodes[0] = -1  # The parameter envelope is not part of an embedded JSON value.
+    frozen = _freeze_parameter_value(
+        mapping,
+        depth=0,
+        nodes=nodes,
+        node_limit=node_limit,
+    )
     if type(frozen) is not FrozenParameterObject:
         raise AssertionError("root mutation parameters did not remain an object")
     return frozen
@@ -186,9 +197,10 @@ def _freeze_parameter_value(
     *,
     depth: int,
     nodes: list[int],
+    node_limit: int,
 ) -> FrozenParameterValue:
     nodes[0] += 1
-    if nodes[0] > MAX_PARAMETER_NODES:
+    if nodes[0] > node_limit:
         message = "mutation parameters exceed the node limit"
         raise ValueError(message)
     if depth > MAX_PARAMETER_DEPTH:
@@ -212,7 +224,13 @@ def _freeze_parameter_value(
             message = "mutation parameter array exceeds the item limit"
             raise ValueError(message)
         return tuple(
-            _freeze_parameter_value(item, depth=depth + 1, nodes=nodes) for item in sequence
+            _freeze_parameter_value(
+                item,
+                depth=depth + 1,
+                nodes=nodes,
+                node_limit=node_limit,
+            )
+            for item in sequence
         )
     if type(value) is dict:
         mapping = cast("dict[object, object]", value)
@@ -224,13 +242,18 @@ def _freeze_parameter_value(
             if type(key) is not str:
                 message = "mutation parameter object keys must be strings"
                 raise TypeError(message)
-            if not key or len(key) > MAX_PARAMETER_KEY_LENGTH:
-                message = "mutation parameter object key is empty or too long"
+            if len(key) > MAX_PARAMETER_KEY_LENGTH:
+                message = "mutation parameter object key is too long"
                 raise ValueError(message)
             items.append(
                 (
                     key,
-                    _freeze_parameter_value(item, depth=depth + 1, nodes=nodes),
+                    _freeze_parameter_value(
+                        item,
+                        depth=depth + 1,
+                        nodes=nodes,
+                        node_limit=node_limit,
+                    ),
                 )
             )
         return FrozenParameterObject(tuple(items))

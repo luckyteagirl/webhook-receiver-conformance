@@ -16,6 +16,7 @@ from webhook_receiver_conformance.errors import ErrorCategory
 from webhook_receiver_conformance.mutations.base import (
     MAX_MUTATIONS_PER_PIPELINE,
     REDACTED_PARAMETER_VALUE,
+    FrozenParameterObject,
     MutationError,
     MutationInput,
     MutationOperator,
@@ -679,6 +680,45 @@ def test_parameters_are_detached_and_evidence_is_redacted_by_default() -> None:
     assert SECRET_CANARY not in reprs
     assert "alias-mutated" not in rendered
     assert REDACTED_PARAMETER_VALUE in rendered
+
+
+def test_nested_json_objects_allow_empty_members_but_parameter_names_do_not() -> None:
+    realized = _realized(
+        "nested-empty-key",
+        MutationStage.RAW_PRE_SIGN,
+        parameters={"replacement": {"": "value"}},
+    )
+
+    nested = realized.parameters["replacement"]
+    assert isinstance(nested, FrozenParameterObject)
+    assert nested[""] == "value"
+    with pytest.raises(ValueError, match="top-level"):
+        _realized(
+            "empty-parameter-name",
+            MutationStage.RAW_PRE_SIGN,
+            parameters={"": {"nested": "value"}},
+        )
+
+
+def test_parameter_envelope_does_not_consume_embedded_json_depth_budget() -> None:
+    boundary: object = None
+    for _index in range(63):
+        boundary = [boundary]
+
+    realized = _realized(
+        "depth-boundary",
+        MutationStage.RAW_PRE_SIGN,
+        parameters={"replacement": boundary},
+    )
+    assert "replacement" in realized.parameters
+
+    too_deep = [boundary]
+    with pytest.raises(ValueError, match="depth"):
+        _realized(
+            "depth-overflow",
+            MutationStage.RAW_PRE_SIGN,
+            parameters={"replacement": too_deep},
+        )
 
 
 class InputAliasMutator:
