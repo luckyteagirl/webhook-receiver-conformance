@@ -2,6 +2,30 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.example.invalid/webhook-receiver-conformance/v1/observation-record.schema.json",
   "title": "Receiver observation evidence record",
+  "x-reproducibility": {
+    "volatile_fields": [
+      {
+        "json_pointer": "/error",
+        "category": "environment-observation"
+      },
+      {
+        "json_pointer": "/evidence",
+        "category": "environment-observation"
+      },
+      {
+        "json_pointer": "/recorded_at",
+        "category": "wall-timestamp"
+      },
+      {
+        "json_pointer": "/run_id",
+        "category": "execution-identity"
+      },
+      {
+        "json_pointer": "/snapshot_id",
+        "category": "environment-observation"
+      }
+    ]
+  },
   "type": "object",
   "required": [
     "schema_version",

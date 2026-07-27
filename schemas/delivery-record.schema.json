@@ -2,6 +2,30 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.example.invalid/webhook-receiver-conformance/v1/delivery-record.schema.json",
   "title": "Delivery attempt evidence record",
+  "x-reproducibility": {
+    "volatile_fields": [
+      {
+        "json_pointer": "/error",
+        "category": "environment-observation"
+      },
+      {
+        "json_pointer": "/monotonic_elapsed_ns",
+        "category": "measured-duration"
+      },
+      {
+        "json_pointer": "/recorded_at",
+        "category": "wall-timestamp"
+      },
+      {
+        "json_pointer": "/response",
+        "category": "environment-observation"
+      },
+      {
+        "json_pointer": "/run_id",
+        "category": "execution-identity"
+      }
+    ]
+  },
   "type": "object",
   "required": [
     "schema_version",

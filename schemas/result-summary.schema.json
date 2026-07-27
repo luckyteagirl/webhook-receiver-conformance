@@ -2,6 +2,18 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.example.invalid/webhook-receiver-conformance/v1/result-summary.schema.json",
   "title": "Run result summary",
+  "x-reproducibility": {
+    "volatile_fields": [
+      {
+        "json_pointer": "/generated_at",
+        "category": "wall-timestamp"
+      },
+      {
+        "json_pointer": "/run_id",
+        "category": "execution-identity"
+      }
+    ]
+  },
   "type": "object",
   "required": [
     "schema_version",

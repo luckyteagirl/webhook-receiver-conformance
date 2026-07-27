@@ -10,6 +10,19 @@
 - Schema/wire versions and package versions are independent.
 - Security policy is evaluated before side effects.
 
+## Artifact schema compatibility behavior
+
+Artifact schema majors are independent. A same-major additive field is accepted only when a registered same-major schema revision declares it optional; arbitrary unknown properties remain invalid at a strict current-schema boundary.
+
+| Version relation | Change kind | Reader behavior |
+| --- | --- | --- |
+| `same-major` | `exact` | `accept` |
+| `same-major` | `additive-optional` | `accept` |
+| `same-major` | `breaking` | `reject` |
+| `unknown-major` | `any` | `reject` |
+
+A breaking change includes removing or renaming a field, adding a required field, changing a field type or meaning, or adding a value that the reader must interpret. It requires a new integer major. An unknown major is rejected before blob access, observer invocation, network activity, or other side effects.
+
 ## Identity encoding at serialized boundaries
 
 - `run_id` is a canonical lowercase, hyphenated UUIDv4 and is newly generated for every execution, including replay. It belongs to the execution journal, evidence, and results; it is not serialized in the immutable manifest.

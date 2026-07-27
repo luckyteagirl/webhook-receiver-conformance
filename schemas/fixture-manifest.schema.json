@@ -2,6 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.example.invalid/webhook-receiver-conformance/v1/fixture-manifest.schema.json",
   "title": "Fixture manifest",
+  "x-reproducibility": {
+    "volatile_fields": []
+  },
   "type": "object",
   "required": [
     "schema_version",

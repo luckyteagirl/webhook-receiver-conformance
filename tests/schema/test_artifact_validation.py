@@ -23,9 +23,14 @@ if TYPE_CHECKING:
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "helpers"))
 import schema_validation as schema_validation_module
 from schema_validation import (
+    EXECUTABLE_TRANSITIONS,
+    PERSISTED_ARTIFACT_SCHEMAS,
     build_schema_registry,
     compare_state_transitions,
+    compare_transition_triplet,
+    is_transition_allowed,
     load_json,
+    load_jsonl,
     load_yaml,
     parse_state_transition_tables,
     parse_state_transitions,
@@ -49,6 +54,15 @@ RUN_ID = "123e4567-e89b-42d3-a456-426614174000"
 MANIFEST_ID = "126b2cb058cc7702127f7f95a89e3fee4a1a7d835361d6f7d04be36a31ccda34"
 DEFAULT_CONCURRENCY = 10
 MAX_CONCURRENCY = 50
+PERSISTED_EXAMPLE_CASES = (
+    ("assertion-record.schema.json", "assertions.example.jsonl", True),
+    ("delivery-record.schema.json", "deliveries.example.jsonl", True),
+    ("fixture-manifest.schema.json", "fixture-manifest.example.json", False),
+    ("observation-record.schema.json", "observations.example.jsonl", True),
+    ("plugin-metadata.schema.json", "plugin-metadata.example.json", False),
+    ("result-summary.schema.json", "result-summary.example.json", False),
+    ("run-manifest.schema.json", "run-manifest.example.json", False),
+)
 
 
 def _schema_registry() -> Registry[Any]:
@@ -56,26 +70,8 @@ def _schema_registry() -> Registry[Any]:
     return build_schema_registry(schemas)
 
 
-def test_persisted_record_requires_schema_version() -> None:
-    schema = load_json(ROOT / "schemas" / "delivery-record.schema.json")
-    record = {
-        "record_id": "record_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        "run_id": RUN_ID,
-        "scenario_id": "scenario_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        "event_id": "event_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        "delivery_id": "delivery_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        "attempt_id": "attempt_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        "sequence": 1,
-        "recorded_at": "2026-07-26T00:00:00Z",
-        "state": "scheduled",
-        "classification": "planned",
-    }
-    assert any("schema_version" in message for message in validate_instance(record, schema))
-
-
-def test_task_index_empty_execution_evidence_is_rejected() -> None:
-    schema = load_json(ROOT / "schemas" / "task-index.schema.json")
-    task = {
+def _minimal_task() -> dict[str, Any]:
+    return {
         "task_id": "TASK-0003",
         "title": "test",
         "phase": "phase-00",
@@ -88,13 +84,50 @@ def test_task_index_empty_execution_evidence_is_rejected() -> None:
         "allowed_files": ["tests/schema/**"],
         "forbidden_files": [],
         "acceptance_criteria": ["test"],
-        "commands_to_run": [],
-        "completion_evidence": [],
+        "commands_to_run": ["uv run pytest"],
+        "completion_evidence": ["passing tests"],
         "estimated_agent_complexity": "small",
     }
+
+
+@pytest.mark.parametrize(
+    ("schema_name", "example_name", "is_jsonl"),
+    PERSISTED_EXAMPLE_CASES,
+)
+def test_every_persisted_artifact_rejects_missing_schema_version(
+    schema_name: str,
+    example_name: str,
+    *,
+    is_jsonl: bool,
+) -> None:
+    assert {case[0] for case in PERSISTED_EXAMPLE_CASES} == PERSISTED_ARTIFACT_SCHEMAS
+    schema = load_json(ROOT / "schemas" / schema_name)
+    example_path = ROOT / "examples" / example_name
+    instance = load_jsonl(example_path)[0] if is_jsonl else load_json(example_path)
+    without_version = deepcopy(instance)
+    del without_version["schema_version"]
+    errors = validate_instance(without_version, schema, registry=_schema_registry())
+    assert any("schema_version" in message for message in errors)
+
+
+def test_task_index_empty_execution_evidence_is_rejected() -> None:
+    schema = load_json(ROOT / "schemas" / "task-index.schema.json")
+    task = _minimal_task()
+    task["commands_to_run"] = []
+    task["completion_evidence"] = []
     errors = validate_instance({"schema_version": "1.0", "tasks": [task]}, schema)
     assert any("commands_to_run" in message for message in errors)
     assert any("completion_evidence" in message for message in errors)
+
+
+@pytest.mark.parametrize("blank", ["", " ", "\t\r\n"])
+@pytest.mark.parametrize("field", ["commands_to_run", "completion_evidence"])
+def test_task_index_blank_execution_evidence_is_rejected(field: str, blank: str) -> None:
+    schema = load_json(ROOT / "schemas" / "task-index.schema.json")
+    task = _minimal_task()
+    task[field] = [blank]
+    errors = validate_instance({"schema_version": "1.0", "tasks": [task]}, schema)
+    assert errors
 
 
 def test_state_transition_comparison_detects_each_direction() -> None:
@@ -307,11 +340,11 @@ def test_state_diagram_vocabularies_match_state_001_through_006(
     assert documented == {state.value for state in state_enum}
 
 
-def test_state_diagram_edges_match_normative_transition_tables() -> None:
+def test_transition_registry_diagrams_and_normative_tables_have_triple_parity() -> None:
     tables = parse_state_transition_tables(
         (ROOT / "specification" / "09-state-machines.md").read_text(encoding="utf-8")
     )
-    assert set(tables) == {
+    expected_machines = {
         "run",
         "scenario",
         "delivery",
@@ -319,18 +352,41 @@ def test_state_diagram_edges_match_normative_transition_tables() -> None:
         "observation",
         "assertion",
     }
+    assert set(tables) == expected_machines
+    assert set(EXECUTABLE_TRANSITIONS) == expected_machines
     for name, table in tables.items():
         diagram = parse_state_transitions(
             (ROOT / "diagrams" / f"state-{name}.mmd").read_text(encoding="utf-8")
         )
         assert (
-            compare_state_transitions(
+            compare_transition_triplet(
                 machine_name=name,
-                documented=diagram,
-                executable=table,
+                registry=EXECUTABLE_TRANSITIONS[name],
+                diagram=diagram,
+                table=table,
             )
             == []
         )
+        source, target = min(table)
+        assert is_transition_allowed(name, source, target)
+
+
+def test_transition_triplet_detects_drift_in_each_source() -> None:
+    baseline = frozenset({("planned", "running"), ("running", "completed")})
+    variants = (
+        (frozenset({("planned", "running")}), baseline, baseline, "registry"),
+        (baseline, frozenset({("planned", "running")}), baseline, "diagram"),
+        (baseline, baseline, frozenset({("planned", "running")}), "table"),
+    )
+    for registry, diagram, table, changed_source in variants:
+        errors = compare_transition_triplet(
+            machine_name="run",
+            registry=registry,
+            diagram=diagram,
+            table=table,
+        )
+        assert errors
+        assert any(changed_source in error for error in errors)
 
 
 def test_superseded_decisions_and_corrected_task_packets_are_machine_visible() -> None:

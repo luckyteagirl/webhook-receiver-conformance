@@ -3,6 +3,18 @@
   "$id": "https://schemas.example.invalid/webhook-receiver-conformance/v1/run-manifest.schema.json",
   "title": "Immutable realized run manifest",
   "description": "A run-agnostic content-addressed plan. Canonicalized manifest numbers are integers in the I-JSON interoperable range -(2^53-1) through 2^53-1; floating-point values are not part of the manifest profile.",
+  "x-reproducibility": {
+    "volatile_fields": [
+      {
+        "json_pointer": "/created_at",
+        "category": "wall-timestamp"
+      },
+      {
+        "json_pointer": "/environment",
+        "category": "environment-observation"
+      }
+    ]
+  },
   "type": "object",
   "required": [
     "schema_version",

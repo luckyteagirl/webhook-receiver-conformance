@@ -7,11 +7,10 @@ import argparse
 import csv
 import re
 import sys
-import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from jsonschema import Draft202012Validator
+from jsonschema import Draft202012Validator, SchemaError
 
 if TYPE_CHECKING:
     from referencing import Registry
@@ -19,15 +18,21 @@ if TYPE_CHECKING:
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from tests.helpers.schema_validation import (  # noqa: E402
-    MAX_ARTIFACT_BYTES,
+    COMPATIBILITY_BEHAVIOR_MATRIX,
+    EXECUTABLE_TRANSITIONS,
+    ArtifactValidationError,
     build_schema_registry,
-    compare_state_transitions,
+    compare_transition_triplet,
     load_json,
     load_jsonl,
+    load_xml,
     load_yaml,
+    parse_compatibility_matrix,
     parse_state_transition_tables,
     parse_state_transitions,
     validate_instance,
+    validate_persisted_schema_versions,
+    validate_volatility_contract,
 )
 
 MAPPINGS: dict[str, str] = {
@@ -45,20 +50,43 @@ JSONL_MAPPINGS = {
     "observations.example.jsonl": "observation-record.schema.json",
     "assertions.example.jsonl": "assertion-record.schema.json",
 }
+_VOLATILITY_SECTION = re.compile(
+    r"^## Reproducibility comparison volatility\s*$"
+    r"(?P<body>.*?)(?=^## |\Z)",
+    re.MULTILINE | re.DOTALL,
+)
+_VOLATILITY_DOCUMENT_ROWS = frozenset(
+    {
+        ("environment-observation", "environment observations", "exclude"),
+        ("execution-identity", "run_id", "exclude"),
+        ("measured-duration", "measured durations", "exclude"),
+        ("wall-timestamp", "wall timestamps", "exclude"),
+    }
+)
+_CONTRACT_TABLE_COLUMNS = 3
 
 
-def validate_pack(root: Path = ROOT) -> list[str]:
+def validate_pack(root: Path = ROOT) -> list[str]:  # noqa: C901, PLR0912
     """Validate all currently materialized artifacts; never mutate inputs."""
     errors: list[str] = []
     schemas: dict[str, dict[str, Any]] = {}
     for path in sorted((root / "schemas").glob("*.schema.json")):
         try:
-            schema = load_json(path)
+            schema_value = cast("object", load_json(path))
+            if not isinstance(schema_value, dict):
+                errors.append(f"{path.relative_to(root)}: schema document must be an object")
+                continue
+            schema = cast("dict[str, Any]", schema_value)
             Draft202012Validator.check_schema(schema)
             schemas[path.name] = schema
-        except (OSError, UnicodeDecodeError, ValueError, TypeError) as exc:
-            errors.append(f"{path.relative_to(root)}: invalid JSON Schema: {exc}")
+        except ArtifactValidationError as exc:
+            errors.append(f"{path.relative_to(root)}: {exc}")
+        except (SchemaError, TypeError, ValueError):
+            errors.append(f"{path.relative_to(root)}: invalid JSON Schema")
     registry = build_schema_registry(schemas.values())
+    errors.extend(validate_persisted_schema_versions(schemas))
+    for schema_name, schema in sorted(schemas.items()):
+        errors.extend(validate_volatility_contract(schema_name, schema))
 
     for filename, schema_name in sorted(MAPPINGS.items()):
         path = root / "examples" / filename
@@ -72,8 +100,10 @@ def validate_pack(root: Path = ROOT) -> list[str]:
                     registry=registry,
                 )
             )
-        except (OSError, UnicodeDecodeError, ValueError, TypeError, KeyError) as exc:
+        except ArtifactValidationError as exc:
             errors.append(f"{path.relative_to(root)}: {exc}")
+        except (TypeError, KeyError):
+            errors.append(f"{path.relative_to(root)}: artifact validation failed")
     for filename, schema_name in sorted(JSONL_MAPPINGS.items()):
         path = root / "examples" / filename
         try:
@@ -86,24 +116,23 @@ def validate_pack(root: Path = ROOT) -> list[str]:
                         registry=registry,
                     )
                 )
-        except (OSError, UnicodeDecodeError, ValueError, KeyError) as exc:
+        except ArtifactValidationError as exc:
             errors.append(f"{path.relative_to(root)}: {exc}")
+        except (TypeError, KeyError):
+            errors.append(f"{path.relative_to(root)}: artifact validation failed")
 
     xml_path = root / "examples" / "junit.example.xml"
     try:
-        if xml_path.stat().st_size > MAX_ARTIFACT_BYTES:
-            message = "artifact exceeds size limit"
-            errors.append(f"{xml_path.relative_to(root)}: invalid XML: {message}")
-        else:
-            ET.parse(xml_path)  # noqa: S314
-    except (OSError, ET.ParseError) as exc:
-        errors.append(f"{xml_path.relative_to(root)}: invalid XML: {exc}")
+        load_xml(xml_path)
+    except ArtifactValidationError as exc:
+        errors.append(f"{xml_path.relative_to(root)}: {exc}")
     errors.extend(_validate_task_index_schema(root, schemas, registry))
     errors.extend(_cross_references(root))
     errors.extend(_traceability_parity(root))
     errors.extend(_state_diagram_syntax(root))
     errors.extend(_state_table_diagram_parity(root))
-    errors.extend(_documentation_checks(root))
+    errors.extend(_compatibility_matrix_contract(root))
+    errors.extend(_volatility_document_contract(root))
     return sorted(set(errors))
 
 
@@ -120,8 +149,10 @@ def _validate_task_index_schema(
             f"{path.relative_to(root)}: {message}"
             for message in validate_instance(instance, schema, registry=registry)
         ]
-    except (OSError, UnicodeDecodeError, ValueError, TypeError, KeyError) as exc:
+    except ArtifactValidationError as exc:
         return [f"{path.relative_to(root)}: {exc}"]
+    except (TypeError, KeyError):
+        return [f"{path.relative_to(root)}: task-index validation failed"]
 
 
 def _cross_references(root: Path) -> list[str]:
@@ -152,8 +183,16 @@ def _cross_references(root: Path) -> list[str]:
                         [f"machine/task-index.yaml:{label}.{field}: unknown reference {value}"]
                     )
         for field in ("commands_to_run", "completion_evidence"):
-            if not task.get(field):
+            entries_value = cast("object", task.get(field))
+            if not isinstance(entries_value, list) or not entries_value:
                 errors.extend([f"machine/task-index.yaml:{label}.{field}: must not be empty"])
+                continue
+            entries = cast("list[object]", entries_value)
+            for index, entry in enumerate(entries):
+                if not isinstance(entry, str) or not entry.strip():
+                    errors.append(
+                        f"machine/task-index.yaml:{label}.{field}[{index}]: must not be blank"
+                    )
     return errors
 
 
@@ -244,7 +283,7 @@ def _state_diagram_syntax(root: Path) -> list[str]:
 
 
 def _state_table_diagram_parity(root: Path) -> list[str]:
-    """Require specification/09 legal-exit tables and Mermaid edges to match."""
+    """Require registry, specification/09 tables, and Mermaid edges to match."""
     specification_path = root / "specification" / "09-state-machines.md"
     try:
         tables = parse_state_transition_tables(specification_path.read_text(encoding="utf-8"))
@@ -258,7 +297,19 @@ def _state_table_diagram_parity(root: Path) -> list[str]:
             for missing_name in sorted(expected_names - tables.keys())
         ]
     )
-    for name in sorted(expected_names & tables.keys()):
+    diagnostics.extend(
+        [
+            f"transition registry: missing machine {missing_name}"
+            for missing_name in sorted(expected_names - set(EXECUTABLE_TRANSITIONS))
+        ]
+    )
+    diagnostics.extend(
+        [
+            f"transition registry: unexpected machine {extra_name}"
+            for extra_name in sorted(set(EXECUTABLE_TRANSITIONS) - expected_names)
+        ]
+    )
+    for name in sorted(expected_names & tables.keys() & EXECUTABLE_TRANSITIONS.keys()):
         diagram_path = root / "diagrams" / f"state-{name}.mmd"
         try:
             diagram = parse_state_transitions(diagram_path.read_text(encoding="utf-8"))
@@ -266,49 +317,83 @@ def _state_table_diagram_parity(root: Path) -> list[str]:
             diagnostics.append(f"{diagram_path.relative_to(root)}: {exc}")
             continue
         diagnostics.extend(
-            compare_state_transitions(
+            compare_transition_triplet(
                 machine_name=name,
-                documented=diagram,
-                executable=tables[name],
+                registry=EXECUTABLE_TRANSITIONS[name],
+                diagram=diagram,
+                table=tables[name],
             )
         )
     return diagnostics
 
 
-def _documentation_checks(root: Path) -> list[str]:
-    determinism = (
-        (root / "specification" / "12-scheduler-and-determinism.md")
-        .read_text(encoding="utf-8")
-        .lower()
-    )
-    requirements = (
-        (root / "specification" / "05-product-requirements.md").read_text(encoding="utf-8").lower()
-    )
-    report = (
-        (root / "specification" / "20-observability-and-reporting.md")
-        .read_text(encoding="utf-8")
-        .lower()
-    )
-    checks = (
-        ("run_id", determinism + requirements + report),
-        ("wall", determinism),
-        ("duration", determinism),
-        ("environment", determinism),
-        ("same-major", requirements),
-        ("unknown major", requirements),
-        ("volatile", requirements + report),
-    )
-    return [
-        f"documentation: missing compatibility/volatility annotation '{term}'"
-        for term, text in checks
-        if term not in text
+def _compatibility_matrix_contract(root: Path) -> list[str]:
+    """Require interface documentation to match executable reader behavior exactly."""
+    path = root / "specification" / "16-interfaces-and-contracts.md"
+    try:
+        source = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return [f"{path.relative_to(root)}: compatibility contract could not be read"]
+    actual = parse_compatibility_matrix(source)
+    diagnostics = [
+        f"{path.relative_to(root)}: missing compatibility row {relation}/{change}/{behavior}"
+        for relation, change, behavior in sorted(COMPATIBILITY_BEHAVIOR_MATRIX - actual)
     ]
+    diagnostics.extend(
+        f"{path.relative_to(root)}: unexpected compatibility row {relation}/{change}/{behavior}"
+        for relation, change, behavior in sorted(actual - COMPATIBILITY_BEHAVIOR_MATRIX)
+    )
+    return diagnostics
+
+
+def _volatility_document_contract(root: Path) -> list[str]:
+    """Require an explicit category-level volatility declaration."""
+    path = root / "specification" / "12-scheduler-and-determinism.md"
+    try:
+        source = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return [f"{path.relative_to(root)}: volatility contract could not be read"]
+    match = _VOLATILITY_SECTION.search(source)
+    if match is None:
+        return [f"{path.relative_to(root)}: missing volatility declaration"]
+    actual: set[tuple[str, str, str]] = set()
+    for line in match.group("body").splitlines():
+        if not line.lstrip().startswith("|"):
+            continue
+        cells = tuple(
+            cell.strip().strip("`").lower() for cell in line.strip().strip("|").split("|")
+        )
+        if len(cells) >= _CONTRACT_TABLE_COLUMNS and cells[0] in {
+            "environment-observation",
+            "execution-identity",
+            "measured-duration",
+            "wall-timestamp",
+        }:
+            actual.add(cast("tuple[str, str, str]", cells[:_CONTRACT_TABLE_COLUMNS]))
+    diagnostics = [
+        f"{path.relative_to(root)}: missing volatility row {category}/{fields}/{behavior}"
+        for category, fields, behavior in sorted(_VOLATILITY_DOCUMENT_ROWS - actual)
+    ]
+    diagnostics.extend(
+        f"{path.relative_to(root)}: unexpected volatility row {category}/{fields}/{behavior}"
+        for category, fields, behavior in sorted(actual - _VOLATILITY_DOCUMENT_ROWS)
+    )
+    return diagnostics
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.parse_args(argv)
-    diagnostics = validate_pack()
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=ROOT,
+        help=argparse.SUPPRESS,
+    )
+    arguments = parser.parse_args(argv)
+    try:
+        diagnostics = validate_pack(arguments.root.resolve())
+    except Exception:  # noqa: BLE001
+        diagnostics = ["artifact validation failed safely"]
     for diagnostic in diagnostics:
         sys.stderr.write(f"{diagnostic}\n")
     return 1 if diagnostics else 0
