@@ -1,0 +1,474 @@
+name: Secure release
+
+"on":
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: SemVer to validate without publishing
+        required: true
+        default: 0.1.0
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  UV_VERSION: 0.11.24
+
+jobs:
+  release-policy:
+    name: Version, changelog, and exception policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Select release version
+        id: version
+        shell: bash
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "release" ]]; then
+            value="${GITHUB_REF_NAME#v}"
+          else
+            value="$DISPATCH_VERSION"
+          fi
+          printf 'value=%s\n' "$value" >> "$GITHUB_OUTPUT"
+      - name: Prepare machine-readable vulnerability exceptions
+        shell: bash
+        run: |
+          mkdir -p .release
+          if [[ -f .github/security-exceptions.json ]]; then
+            cp .github/security-exceptions.json .release/security-exceptions.json
+          else
+            printf '%s\n' '{"schema_version":1,"exceptions":[]}' \
+              > .release/security-exceptions.json
+          fi
+      - name: Validate release policy
+        run: >-
+          python scripts/release_check.py policy
+          --version "${{ steps.version.outputs.value }}"
+          --exceptions .release/security-exceptions.json
+
+  lint:
+    name: Lint and format
+    needs: [release-policy]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install locked uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Synchronize locked environment
+        run: uv sync --locked --all-groups
+      - name: Run Ruff
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+
+  typing:
+    name: Static typing
+    needs: [release-policy]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install locked uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Synchronize locked environment
+        run: uv sync --locked --all-groups
+      - name: Run Pyright
+        run: uv run pyright
+
+  tests:
+    name: Tests / ${{ matrix.os }} / CPython ${{ matrix.python }}
+    needs: [release-policy]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2025]
+        python: ["3.12", "3.13", "3.14"]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install locked uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Verify and synchronize lock
+        run: |
+          uv lock --check
+          uv sync --locked --all-groups
+      - name: Run test suite
+        run: uv run pytest -q tests
+
+  schema:
+    name: Schema and artifact validation
+    needs: [release-policy]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install locked uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Synchronize locked environment
+        run: uv sync --locked --all-groups
+      - name: Validate schemas and cross-references
+        run: uv run python scripts/validate_artifacts.py
+
+  package-smoke:
+    name: Build and smoke-test distributions
+    needs: [release-policy, lint, typing, tests, schema]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install locked uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Synchronize locked environment
+        run: uv sync --locked --all-groups
+      - name: Build distributions
+        run: uv build --no-sources
+      - name: Smoke-test wheel and source distribution
+        shell: bash
+        run: |
+          wheel=(dist/*.whl)
+          sdist=(dist/*.tar.gz)
+          uv run python scripts/package_smoke.py \
+            --artifact "${wheel[0]}" \
+            --artifact "${sdist[0]}" \
+            --python "3.12" \
+            --exercise-runners
+      - name: Upload distributions
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: python-distributions
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  image:
+    name: Build non-published image
+    needs: [release-policy]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+      image-name: ${{ steps.image.outputs.name }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Configure Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+      - name: Select image name
+        id: image
+        shell: bash
+        run: printf 'name=ghcr.io/%s/webhook-receiver-conformance\n' "${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+      - name: Build reproducible OCI archive without publishing
+        id: build
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: Dockerfile
+          push: false
+          provenance: false
+          sbom: false
+          tags: ${{ steps.image.outputs.name }}:${{ needs.release-policy.outputs.version }}
+          outputs: type=oci,dest=/tmp/release-image.tar
+          build-args: |
+            OCI_REVISION=${{ github.sha }}
+            OCI_SOURCE=${{ github.server_url }}/${{ github.repository }}
+            OCI_VERSION=${{ needs.release-policy.outputs.version }}
+      - name: Upload image archive
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-image
+          path: /tmp/release-image.tar
+          if-no-files-found: error
+          retention-days: 7
+
+  security-scan:
+    name: Dependency and image vulnerability policy
+    needs: [release-policy, package-smoke, image]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Download image archive
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-image
+          path: .release/image
+      - name: Scan locked filesystem dependencies
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # 0.33.1
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: json
+          output: .release/filesystem-vulnerabilities.json
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: "0"
+      - name: Scan OCI archive
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # 0.33.1
+        with:
+          input: .release/image/release-image.tar
+          format: json
+          output: .release/image-vulnerabilities.json
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: "0"
+      - name: Prepare machine-readable vulnerability exceptions
+        shell: bash
+        run: |
+          if [[ -f .github/security-exceptions.json ]]; then
+            cp .github/security-exceptions.json .release/security-exceptions.json
+          else
+            printf '%s\n' '{"schema_version":1,"exceptions":[]}' \
+              > .release/security-exceptions.json
+          fi
+      - name: Enforce vulnerability and exception-expiry policy
+        run: >-
+          python scripts/release_check.py scan
+          --report .release/filesystem-vulnerabilities.json
+          --report .release/image-vulnerabilities.json
+          --exceptions .release/security-exceptions.json
+
+  sbom:
+    name: Generate and validate release SBOMs
+    needs: [release-policy, package-smoke, image]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Download distributions
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: python-distributions
+          path: .release/dist
+      - name: Download image archive
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-image
+          path: .release/image
+      - name: Generate SPDX SBOMs and local provenance statements
+        shell: bash
+        run: |
+          mkdir -p .release/evidence
+          for subject in .release/dist/*; do
+            name="$(basename "$subject")"
+            python scripts/release_check.py sbom \
+              --subject "$subject" \
+              --output ".release/evidence/${name}.spdx.json"
+            python scripts/release_check.py statement \
+              --subject "$subject" \
+              --output ".release/evidence/${name}.intoto.json"
+            python scripts/release_check.py verify \
+              --subject "$subject" \
+              --sbom ".release/evidence/${name}.spdx.json" \
+              --attestation ".release/evidence/${name}.intoto.json"
+          done
+          image_name="${{ needs.image.outputs.image-name }}:${{ needs.release-policy.outputs.version }}"
+          image_digest="${{ needs.image.outputs.digest }}"
+          python scripts/release_check.py sbom \
+            --subject-name "$image_name" \
+            --subject-digest "$image_digest" \
+            --output .release/evidence/image.spdx.json
+          python scripts/release_check.py statement \
+            --subject-name "$image_name" \
+            --subject-digest "$image_digest" \
+            --output .release/evidence/image.intoto.json
+          python scripts/release_check.py verify \
+            --subject-name "$image_name" \
+            --subject-digest "$image_digest" \
+            --sbom .release/evidence/image.spdx.json \
+            --attestation .release/evidence/image.intoto.json
+      - name: Upload SBOM and digest-validation evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-evidence
+          path: .release/evidence/
+          if-no-files-found: error
+          retention-days: 90
+
+  provenance:
+    name: Attest and verify release subjects
+    needs: [release-policy, package-smoke, image, security-scan, sbom]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: python-distributions
+          path: .release/dist
+      - name: Download image archive
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-image
+          path: .release/image
+      - name: Attest Python distributions
+        if: github.event_name == 'release'
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: .release/dist/*
+      - name: Attest OCI archive
+        if: github.event_name == 'release'
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: .release/image/release-image.tar
+      - name: Verify GitHub attestations for every local subject
+        if: github.event_name == 'release'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for subject in .release/dist/* .release/image/release-image.tar; do
+            gh attestation verify "$subject" --repo "$GITHUB_REPOSITORY"
+          done
+
+  publish:
+    name: Publish attested release
+    if: github.event_name == 'release'
+    needs:
+      - release-policy
+      - lint
+      - typing
+      - tests
+      - schema
+      - package-smoke
+      - image
+      - security-scan
+      - sbom
+      - provenance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment:
+      name: pypi
+      url: https://pypi.org/p/webhook-receiver-conformance
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Download distributions
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: python-distributions
+          path: dist
+      - name: Download release evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-evidence
+          path: release-evidence
+      - name: Configure Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+      - name: Authenticate to GHCR with the workflow-scoped token
+        uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Publish image with BuildKit SBOM and provenance
+        id: publish-image
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: |
+            ${{ needs.image.outputs.image-name }}:${{ needs.release-policy.outputs.version }}
+            ${{ needs.image.outputs.image-name }}:latest
+          build-args: |
+            OCI_REVISION=${{ github.sha }}
+            OCI_SOURCE=${{ github.server_url }}/${{ github.repository }}
+            OCI_VERSION=${{ needs.release-policy.outputs.version }}
+      - name: Attest the published image digest
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-name: ${{ needs.image.outputs.image-name }}
+          subject-digest: ${{ steps.publish-image.outputs.digest }}
+          push-to-registry: true
+      - name: Verify published image attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh attestation verify
+          "oci://${{ needs.image.outputs.image-name }}@${{
+          steps.publish-image.outputs.digest }}"
+          --repo "$GITHUB_REPOSITORY"
+      - name: Attach SBOMs to the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" release-evidence/*.spdx.json
+      - name: Publish distributions with OIDC Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e # v1.13.0
