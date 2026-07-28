@@ -28,7 +28,10 @@ from webhook_receiver_conformance.journal.run_lock import (
     MAX_OWNER_EPOCH,
     RunLockMetadata,
 )
-from webhook_receiver_conformance.journal.transitions import MAX_SAFE_INTEGER
+from webhook_receiver_conformance.journal.transitions import (
+    MAX_SAFE_INTEGER,
+    AttemptResponseStagingCommand,
+)
 
 
 class DurableNoSendProof(StrEnum):
@@ -117,6 +120,8 @@ class AttemptRecoveryItem:
     action: AttemptRecoveryAction
     ambiguity: RecoveryAmbiguity
     target_state: AttemptState | None
+    predecessor_attempt_id: str | None = None
+    response_staging: AttemptResponseStagingCommand | None = None
 
     def __post_init__(self) -> None:
         """Validate typed identities, ordering coordinates, and action coherence."""
@@ -131,6 +136,14 @@ class AttemptRecoveryItem:
             expected_kind=PlannedIdKind.DELIVERY,
         )
         validate_fresh_id(self.attempt_id, expected_kind=FreshIdKind.ATTEMPT)
+        if self.predecessor_attempt_id is not None:
+            validate_fresh_id(
+                self.predecessor_attempt_id,
+                expected_kind=FreshIdKind.ATTEMPT,
+            )
+            if self.predecessor_attempt_id == self.attempt_id:
+                message = "attempt cannot be its own predecessor"
+                raise ValueError(message)
         for name, value in (
             ("scenario_ordinal", self.scenario_ordinal),
             ("step_ordinal", self.step_ordinal),
@@ -152,6 +165,12 @@ class AttemptRecoveryItem:
             raise TypeError(message)
         if self.target_state is not None and type(self.target_state) is not AttemptState:
             message = "target_state must be an AttemptState or None"
+            raise TypeError(message)
+        if (
+            self.response_staging is not None
+            and type(self.response_staging) is not AttemptResponseStagingCommand
+        ):
+            message = "response_staging must be an AttemptResponseStagingCommand or None"
             raise TypeError(message)
         _validate_attempt_action(self)
 
@@ -277,7 +296,27 @@ class RecoveryPlan:
     @property
     def contains_ambiguity(self) -> bool:
         """Return whether any attempt needs evidence or preserves possible effect."""
-        return any(item.ambiguity is not RecoveryAmbiguity.NONE for item in self.attempts)
+        return bool(self.unresolved_ambiguous_attempts)
+
+    @property
+    def unresolved_ambiguous_attempts(self) -> tuple[AttemptRecoveryItem, ...]:
+        """Return only ambiguous leaves without an already-created successor.
+
+        A persisted successor is durable proof that a prior explicit policy
+        decision already created the next physical attempt.  The predecessor's
+        immutable ambiguity remains reportable history, but it must not solicit
+        consent or create another successor after a fresh-process restart.
+        """
+        predecessors = {
+            item.predecessor_attempt_id
+            for item in self.attempts
+            if item.predecessor_attempt_id is not None
+        }
+        return tuple(
+            item
+            for item in self.attempts
+            if item.ambiguity is not RecoveryAmbiguity.NONE and item.attempt_id not in predecessors
+        )
 
     @property
     def automatic_transition_count(self) -> int:
@@ -377,6 +416,7 @@ def _validate_plan_inventories(plan: RecoveryPlan) -> None:
     ) != len(plan.observations):
         message = "recovery inventory contains duplicate identities"
         raise ValueError(message)
+    _validate_attempt_predecessors(plan.attempts)
     if plan.attempts != tuple(sorted(plan.attempts, key=lambda item: item.deterministic_key)):
         message = "attempt recovery inventory is not deterministically ordered"
         raise ValueError(message)
@@ -387,11 +427,52 @@ def _validate_plan_inventories(plan: RecoveryPlan) -> None:
         raise ValueError(message)
 
 
+def _validate_attempt_predecessors(
+    attempts: tuple[AttemptRecoveryItem, ...],
+) -> None:
+    attempts_by_id = {item.attempt_id: item for item in attempts}
+    successor_predecessors: set[str] = set()
+    for item in attempts:
+        predecessor_id = item.predecessor_attempt_id
+        if predecessor_id is None:
+            continue
+        predecessor = attempts_by_id.get(predecessor_id)
+        if predecessor is None:
+            message = "recovery attempt predecessor is absent"
+            raise ValueError(message)
+        if predecessor_id in successor_predecessors:
+            message = "recovery attempt history branches from one predecessor"
+            raise ValueError(message)
+        successor_predecessors.add(predecessor_id)
+        if (
+            item.scenario_id != predecessor.scenario_id
+            or item.event_id != predecessor.event_id
+            or item.delivery_id != predecessor.delivery_id
+            or item.scenario_ordinal != predecessor.scenario_ordinal
+            or item.step_ordinal != predecessor.step_ordinal
+            or item.delivery_ordinal != predecessor.delivery_ordinal
+            or item.attempt_ordinal != predecessor.attempt_ordinal + 1
+        ):
+            message = "recovery attempt predecessor coordinates disagree"
+            raise ValueError(message)
+
+
 def _validate_attempt_action(item: AttemptRecoveryItem) -> None:
-    expected_target = _ATTEMPT_ACTION_TARGETS.get(item.action)
-    if item.target_state is not expected_target:
-        message = "attempt recovery action and target state disagree"
-        raise ValueError(message)
+    if item.action is AttemptRecoveryAction.REDUCE_DURABLE_RESPONSE:
+        if item.response_staging is None:
+            message = "durable response recovery requires staged response evidence"
+            raise ValueError(message)
+        if item.target_state is not item.response_staging.terminal_state:
+            message = "durable response recovery target differs from staged evidence"
+            raise ValueError(message)
+    else:
+        expected_target = _ATTEMPT_ACTION_TARGETS.get(item.action)
+        if item.target_state is not expected_target:
+            message = "attempt recovery action and target state disagree"
+            raise ValueError(message)
+        if item.response_staging is not None:
+            message = "only durable response recovery may carry staged response evidence"
+            raise ValueError(message)
     if item.prior_state not in _ATTEMPT_ACTION_PRIOR_STATES[item.action]:
         message = f"{item.action.value} is invalid from {item.prior_state.value}"
         raise ValueError(message)

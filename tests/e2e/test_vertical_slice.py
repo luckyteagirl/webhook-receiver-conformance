@@ -410,5 +410,7 @@ def test_run_help_describes_the_durable_local_job() -> None:
     assert result.exit_code == 0
     assert RUN_COMMAND_HELP in " ".join(result.stdout.split())
     assert "--config" in result.stdout
+    assert "--manifest" in result.stdout
+    assert "unsupported" not in result.stdout.casefold()
     assert "--output" in result.stdout
     assert "--authorize-public-target" in result.stdout

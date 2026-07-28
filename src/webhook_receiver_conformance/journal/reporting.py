@@ -13,6 +13,7 @@ from webhook_receiver_conformance.domain.enums import (
     AssertionState,
     AttemptClassification,
     AttemptEvidenceState,
+    AttemptState,
     ObservationStatus,
 )
 from webhook_receiver_conformance.domain.identifiers import validate_run_id
@@ -76,6 +77,7 @@ class JournalReportAttempt:
     """One terminal attempt record and its stable order coordinates."""
 
     record: AttemptEvidence
+    terminal_state: AttemptState
     scenario_ordinal: int
     delivery_ordinal: int
     attempt_ordinal: int
@@ -277,7 +279,8 @@ def _load_attempts(
             attempt_records.response_headers_elapsed_ns,
             scenarios.ordinal,
             deliveries.ordinal,
-            attempts.ordinal
+            attempts.ordinal,
+            attempts.state
         FROM attempt_records
         JOIN attempts
           ON attempts.run_id = attempt_records.run_id
@@ -299,7 +302,7 @@ def _load_attempts(
 
 
 def _attempt_from_row(row: Sequence[object]) -> JournalReportAttempt:
-    if len(row) != 29:
+    if len(row) != 30:
         raise ProjectionIntegrityError("attempt report row has an invalid shape")
     request: RequestMetadata | None = None
     if row[13] is not None:
@@ -362,6 +365,7 @@ def _attempt_from_row(row: Sequence[object]) -> JournalReportAttempt:
         )
         return JournalReportAttempt(
             record=record,
+            terminal_state=AttemptState(_text(row[29], name="attempt terminal state")),
             scenario_ordinal=_integer(row[26], name="attempt scenario ordinal"),
             delivery_ordinal=_integer(row[27], name="attempt delivery ordinal"),
             attempt_ordinal=_integer(row[28], name="attempt ordinal"),

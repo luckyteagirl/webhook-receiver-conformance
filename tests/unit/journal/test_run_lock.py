@@ -21,6 +21,7 @@ from webhook_receiver_conformance.journal.run_lock import (
     ProcessState,
     RunLockActiveError,
     RunLockEpochError,
+    RunLockError,
     RunLockMetadata,
     RunLockMetadataError,
     RunLockOwnerUnverifiableError,
@@ -142,6 +143,42 @@ def test_context_manager_releases_lock(tmp_path: Path) -> None:
 
     assert lock.closed
     assert not (tmp_path / "run.lock").exists()
+
+
+def test_live_guard_authorizes_only_its_exact_run_epoch(tmp_path: Path) -> None:
+    lock = acquire_run_lock(
+        tmp_path,
+        run_id=RUN_ID,
+        owner_epoch=INITIAL_OWNER_EPOCH,
+        process_inspector=StaticProcessInspector(),
+    )
+    try:
+        lock.require_owner(
+            tmp_path.resolve(),
+            run_id=RUN_ID,
+            owner_epoch=INITIAL_OWNER_EPOCH,
+        )
+        with pytest.raises(RunLockEpochError):
+            lock.require_owner(
+                tmp_path.resolve(),
+                run_id=OTHER_RUN_ID,
+                owner_epoch=INITIAL_OWNER_EPOCH,
+            )
+        with pytest.raises(RunLockEpochError):
+            lock.require_owner(
+                tmp_path.resolve(),
+                run_id=RUN_ID,
+                owner_epoch=INITIAL_OWNER_EPOCH + 1,
+            )
+    finally:
+        lock.release()
+
+    with pytest.raises(RunLockError, match="released"):
+        lock.require_owner(
+            tmp_path.resolve(),
+            run_id=RUN_ID,
+            owner_epoch=INITIAL_OWNER_EPOCH,
+        )
 
 
 def test_operating_system_lock_blocks_even_explicit_takeover(tmp_path: Path) -> None:

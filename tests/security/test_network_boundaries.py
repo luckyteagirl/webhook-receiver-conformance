@@ -210,9 +210,7 @@ async def test_authorized_answer_remains_pinned_after_resolver_changes() -> None
 
 @pytest.mark.anyio
 async def test_peer_mismatch_aborts_before_any_body_byte() -> None:
-    connector = _Connector(
-        forced_peer=PeerAddress("127.0.0.2", 8443, SocketFamily.IPV4)
-    )
+    connector = _Connector(forced_peer=PeerAddress("127.0.0.2", 8443, SocketFamily.IPV4))
     dialer = PinnedDestinationDialer(
         resolver=_Resolver(("127.0.0.1",)),
         connector=connector,
@@ -233,7 +231,9 @@ class _TLS(TLSContextProvider):
         return ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
 
 
-def _public_dialer(body: bytes, status: bytes = b"200 OK") -> tuple[
+def _public_dialer(
+    body: bytes, status: bytes = b"200 OK"
+) -> tuple[
     PinnedDestinationDialer,
     _Resolver,
     _Connector,

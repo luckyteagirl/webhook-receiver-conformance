@@ -49,6 +49,7 @@ from webhook_receiver_conformance.journal.service import (
 from webhook_receiver_conformance.journal.transitions import (
     AttemptPhaseEvidence,
     AttemptPhaseEvidenceCommand,
+    AttemptResponseStagingCommand,
     AttemptScheduleClaim,
     AttemptTerminalOutcome,
     AttemptTransportEvidenceCommand,
@@ -822,6 +823,70 @@ def _transport_evidence(
     )
 
 
+def _response_staging(
+    state: AttemptState,
+    *,
+    attempt_id: str = ATTEMPT_ID,
+    schedule: RetrySchedule | None = None,
+) -> AttemptResponseStagingCommand:
+    evidence = _transport_evidence(state, attempt_id=attempt_id)
+    if state is AttemptState.TRANSPORT_FAILED:
+        evidence = replace(
+            evidence,
+            response=ResponseMetadata(
+                status=599,
+                body_sha256=FIXTURE_HASH,
+                captured_bytes=0,
+                truncated=False,
+            ),
+        )
+    return AttemptResponseStagingCommand(
+        terminal_state=state,
+        terminal_outcome=_terminal_outcome(state, schedule=schedule),
+        transport_evidence=evidence,
+    )
+
+
+async def _seed_response_staging(
+    service: JournalService,
+    state: AttemptState,
+    *,
+    attempt_id: str = ATTEMPT_ID,
+    schedule: RetrySchedule | None = None,
+) -> AttemptResponseStagingCommand:
+    staging = _response_staging(
+        state,
+        attempt_id=attempt_id,
+        schedule=schedule,
+    )
+    await _execute(
+        service,
+        """
+        INSERT INTO attempt_response_staging (
+            attempt_id, record_id, run_id, scenario_id, event_id,
+            delivery_id, terminal_state, classification, evidence_state,
+            request_method, request_url_redacted, request_body_sha256,
+            request_byte_length, request_header_names_json,
+            response_status, response_body_sha256, response_captured_bytes,
+            response_truncated, error_category, error_message_redacted,
+            error_phase, response_headers_elapsed_ns,
+            retry_schedule_entry_id, retry_entity_id, retry_logical_time_ns,
+            retry_scenario_ordinal, retry_step_ordinal,
+            retry_delivery_ordinal, retry_attempt_ordinal,
+            retry_deterministic_tie_key, retry_idempotency_key,
+            retry_condition_json
+        ) VALUES (
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        )
+        """,
+        repository_module._attempt_response_staging_values(  # pyright: ignore[reportPrivateUsage]
+            staging
+        ),
+    )
+    return staging
+
+
 def test_transport_evidence_command_is_strict_bounded_and_canonical() -> None:
     acknowledged = _transport_evidence(AttemptState.SUCCEEDED)
     assert acknowledged.request_header_names_json == b'["content-type","x-request-id"]'
@@ -889,6 +954,27 @@ def test_transport_evidence_command_is_strict_bounded_and_canonical() -> None:
             error=TransportError(
                 category="transport_error",
                 message_redacted="redacted\nsecret-canary-value",
+            ),
+        )
+
+
+def test_response_staging_rederives_terminal_state_from_sanitized_facts() -> None:
+    accepted = _response_staging(AttemptState.SUCCEEDED)
+    assert accepted.transport_evidence.response is not None
+    with pytest.raises(
+        ValueError,
+        match="incompatible with its terminal state",
+    ):
+        replace(
+            accepted,
+            transport_evidence=replace(
+                accepted.transport_evidence,
+                response=ResponseMetadata(
+                    status=503,
+                    body_sha256=accepted.transport_evidence.response.body_sha256,
+                    captured_bytes=accepted.transport_evidence.response.captured_bytes,
+                    truncated=accepted.transport_evidence.response.truncated,
+                ),
             ),
         )
 
@@ -1694,6 +1780,10 @@ async def test_terminal_attempt_requires_one_exact_transport_record(
             "UPDATE attempts SET state = 'response_observed' WHERE attempt_id = ?",
             (ATTEMPT_ID,),
         )
+        await _seed_response_staging(
+            service,
+            AttemptState.SUCCEEDED,
+        )
         repository = TransitionRepository(service)
         command = _command(
             EntityType.ATTEMPT,
@@ -1786,6 +1876,12 @@ async def test_attempt_state_set_matches_sql_check_and_terminal_outcome_mapping(
                 "UPDATE attempts SET state = ? WHERE attempt_id = ?",
                 (source.value, attempt_id),
             )
+            if source is AttemptState.RESPONSE_OBSERVED:
+                await _seed_response_staging(
+                    service,
+                    target,
+                    attempt_id=attempt_id,
+                )
             committed = await repository.apply_attempt(
                 _command(
                     EntityType.ATTEMPT,
@@ -1841,6 +1937,8 @@ async def test_every_terminal_attempt_state_persists_compatible_outcome(
             "UPDATE attempts SET state = ? WHERE attempt_id = ?",
             (source.value, ATTEMPT_ID),
         )
+        if source is AttemptState.RESPONSE_OBSERVED:
+            await _seed_response_staging(service, target)
         committed = await TransitionRepository(service).apply_attempt(
             _command(
                 EntityType.ATTEMPT,
@@ -2016,6 +2114,11 @@ async def test_terminal_attempt_and_derived_retry_schedule_are_one_operation(
             (ATTEMPT_ID,),
         )
         schedule = _retry_schedule()
+        await _seed_response_staging(
+            service,
+            AttemptState.REJECTED,
+            schedule=schedule,
+        )
         command = _command(
             EntityType.ATTEMPT,
             ATTEMPT_ID,
@@ -2170,6 +2273,13 @@ async def test_completed_attempt_history_reconstructs_its_current_state(
                     command,
                     transport_evidence=_transport_evidence(target),
                 )
+            elif target is AttemptState.RESPONSE_OBSERVED:
+                staging = _response_staging(AttemptState.SUCCEEDED)
+                await repository.apply_attempt(
+                    command,
+                    AttemptPhaseEvidenceCommand(AttemptPhaseEvidence.RESPONSE_OBSERVED),
+                    response_staging=staging,
+                )
             else:
                 await repository.apply(command)
         history = await repository.history(
@@ -2203,6 +2313,11 @@ async def test_crash_at_each_atomic_boundary_rolls_back_every_write(
             service,
             "UPDATE attempts SET state = 'response_observed' WHERE attempt_id = ?",
             (ATTEMPT_ID,),
+        )
+        await _seed_response_staging(
+            service,
+            AttemptState.REJECTED,
+            schedule=_retry_schedule(suffix=phase.value),
         )
         repository = TransitionRepository(service, crash_hook=_CrashAt(phase))
         with pytest.raises(_InjectedCrashError):

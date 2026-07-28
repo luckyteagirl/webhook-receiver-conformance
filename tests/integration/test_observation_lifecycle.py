@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, ClassVar
@@ -51,7 +52,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from webhook_receiver_conformance.domain.identifiers import FreshIdKind
-
 RUN_ID = "00000000-0000-4000-8000-000000000504"
 MANIFEST_ID = "a" * 64
 SCENARIO_ID = f"scenario_{1:026d}"
@@ -116,16 +116,39 @@ class _CrashAt:
             raise _InjectedCrashError(phase.value)
 
 
+@dataclass(frozen=True)
+class _CancelAndStallAt:
+    target: ObservationMutationPhase
+    caller_scope: anyio.CancelScope
+    stall_seconds: float = 0.0
+    fake: _FakeTime | None = None
+    advance_ns: int = 0
+
+    def __call__(
+        self,
+        phase: TransitionMutationPhase | AttemptMutationPhase | ObservationMutationPhase,
+    ) -> None:
+        if phase is self.target:
+            if self.fake is not None:
+                self.fake.now_ns += self.advance_ns
+            self.caller_scope.cancel()
+            if self.stall_seconds:
+                time.sleep(self.stall_seconds)
+
+
 @dataclass
 class _SequenceObserver:
     outcomes: tuple[ObserverResponse | Exception | None, ...]
     calls: list[ObserverRequest] = field(default_factory=_request_list)
     index: int = 0
+    started: anyio.Event | None = None
 
     BUILTIN_KIND: ClassVar[BuiltinObserverKind] = BuiltinObserverKind.COMMAND
 
     async def invoke(self, request: ObserverRequest) -> ObserverResponse:
         self.calls.append(request)
+        if self.started is not None:
+            self.started.set()
         selected = self.outcomes[min(self.index, len(self.outcomes) - 1)]
         self.index += 1
         if selected is None:
@@ -509,7 +532,8 @@ async def test_outer_cancellation_is_persisted_and_no_observer_task_survives(
 ) -> None:
     run = await _database(tmp_path)
     capabilities = _capabilities()
-    observer = _SequenceObserver((None,))
+    started = anyio.Event()
+    observer = _SequenceObserver((None,), started=started)
     plan = _plan(
         capabilities,
         within_ns=2_000_000_000,
@@ -534,7 +558,7 @@ async def test_outer_cancellation_is_persisted_and_no_observer_task_survives(
 
         async with anyio.create_task_group() as tasks:
             tasks.start_soon(invoke)
-            await anyio.sleep(0.02)
+            await started.wait()
             tasks.cancel_scope.cancel()
 
         assert cancelled.is_set()
@@ -544,6 +568,174 @@ async def test_outer_cancellation_is_persisted_and_no_observer_task_survives(
             (OBSERVATION_ID,),
         ) == ((ObservationState.CANCELLED.value,),)
         assert tuple(record.status.value for record in await runtime.samples(plan)) == ("error",)
+
+
+@pytest.mark.anyio
+async def test_terminal_commit_wins_then_propagates_outer_cancellation(
+    tmp_path: Path,
+) -> None:
+    run = await _database(tmp_path)
+    capabilities = _capabilities()
+    observer = _SequenceObserver((_response(ObserverResponseStatus.OK, capabilities=capabilities),))
+    plan = _plan(capabilities)
+    cancelled_class = anyio.get_cancelled_exc_class()
+    async with JournalService.open(run.database_path) as service:
+        cancelled = False
+        started_at = time.monotonic()
+        with anyio.CancelScope() as caller_scope:
+            repository = ObservationRepository(
+                service,
+                crash_hook=_CancelAndStallAt(
+                    ObservationMutationPhase.AFTER_SAMPLE_INSERT,
+                    caller_scope,
+                    stall_seconds=0.1,
+                ),
+            )
+            runtime = ObservationRuntime(
+                observer=observer,
+                repository=repository,
+                clock=_clock(_FakeTime()),
+                owner_epoch=1,
+                fresh_id=_FreshFactory(),
+            )
+            try:
+                await runtime.poll(plan, lambda _response: True)
+            except cancelled_class:
+                cancelled = True
+
+        assert cancelled
+        assert time.monotonic() - started_at < 1.0
+        assert await _rows(
+            service,
+            """
+            SELECT status FROM observation_samples
+            WHERE observation_id = ?
+            ORDER BY sample_sequence
+            """,
+            (OBSERVATION_ID,),
+        ) == (("ok",),)
+        assert await _rows(
+            service,
+            "SELECT state FROM observer_series WHERE observation_id = ?",
+            (OBSERVATION_ID,),
+        ) == ((ObservationState.OK.value,),)
+
+
+@pytest.mark.anyio
+async def test_cancellation_after_durable_series_start_is_persisted(
+    tmp_path: Path,
+) -> None:
+    run = await _database(tmp_path)
+    capabilities = _capabilities()
+    observer = _SequenceObserver((None,))
+    plan = _plan(
+        capabilities,
+        within_ns=2_000_000_000,
+        invocation_timeout_ns=1_000_000_000,
+    )
+    cancelled_class = anyio.get_cancelled_exc_class()
+    async with JournalService.open(run.database_path) as service:
+        cancelled = False
+        with anyio.CancelScope() as caller_scope:
+            repository = ObservationRepository(
+                service,
+                crash_hook=_CancelAndStallAt(
+                    ObservationMutationPhase.AFTER_SERIES_INSERT,
+                    caller_scope,
+                ),
+            )
+            runtime = ObservationRuntime(
+                observer=observer,
+                repository=repository,
+                clock=_clock(_FakeTime()),
+                owner_epoch=1,
+                fresh_id=_FreshFactory(),
+            )
+            try:
+                await runtime.poll(plan, lambda _response: False)
+            except cancelled_class:
+                cancelled = True
+
+        assert cancelled
+        assert not observer.calls
+        assert await _rows(
+            service,
+            "SELECT state FROM observer_series WHERE observation_id = ?",
+            (OBSERVATION_ID,),
+        ) == ((ObservationState.CANCELLED.value,),)
+        assert await _rows(
+            service,
+            """
+            SELECT status FROM observation_samples
+            WHERE observation_id = ?
+            ORDER BY sample_sequence
+            """,
+            (OBSERVATION_ID,),
+        ) == (("error",),)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("expire_deadline", [False, True])
+async def test_cancellation_between_poll_samples_uses_fresh_sample_identity(
+    tmp_path: Path,
+    *,
+    expire_deadline: bool,
+) -> None:
+    run = await _database(tmp_path)
+    capabilities = _capabilities()
+    observer = _SequenceObserver(
+        (_response(ObserverResponseStatus.PENDING, capabilities=capabilities),)
+    )
+    plan = _plan(
+        capabilities,
+        within_ns=2_000_000_000,
+        invocation_timeout_ns=1_000_000_000,
+    )
+    fake = _FakeTime()
+    cancelled_class = anyio.get_cancelled_exc_class()
+    async with JournalService.open(run.database_path) as service:
+        cancelled = False
+        with anyio.CancelScope() as caller_scope:
+            repository = ObservationRepository(
+                service,
+                crash_hook=_CancelAndStallAt(
+                    ObservationMutationPhase.AFTER_SAMPLE_INSERT,
+                    caller_scope,
+                    fake=fake,
+                    advance_ns=2_000_000_000 if expire_deadline else 0,
+                ),
+            )
+            runtime = ObservationRuntime(
+                observer=observer,
+                repository=repository,
+                clock=_clock(fake),
+                owner_epoch=1,
+                fresh_id=_FreshFactory(),
+            )
+            try:
+                await runtime.poll(plan, lambda _response: False)
+            except cancelled_class:
+                cancelled = True
+
+        records = await _rows(
+            service,
+            """
+            SELECT sample_id, status FROM observation_samples
+            WHERE observation_id = ?
+            ORDER BY sample_sequence
+            """,
+            (OBSERVATION_ID,),
+        )
+        assert cancelled
+        assert len(observer.calls) == 1
+        assert tuple(record[1] for record in records) == ("pending", "error")
+        assert len({record[0] for record in records}) == 2
+        assert fake.sleeps_ns == []
+        assert await _rows(
+            service,
+            "SELECT state FROM observer_series WHERE observation_id = ?",
+            (OBSERVATION_ID,),
+        ) == ((ObservationState.CANCELLED.value,),)
 
 
 @pytest.mark.anyio

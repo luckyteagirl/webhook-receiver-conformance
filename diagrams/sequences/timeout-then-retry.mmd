@@ -14,5 +14,6 @@ sequenceDiagram
     R-->>H: 204
     H->>J: append acknowledged
   else ambiguity policy stop/observe
-    S->>J: mark delivery ambiguous
+    S->>J: keep delivery active; keep scenario/assertions unfinished
+    S->>J: pause run with attempt 1 immutable as unknown_outcome
   end

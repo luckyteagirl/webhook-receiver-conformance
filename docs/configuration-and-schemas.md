@@ -94,12 +94,21 @@ uv run webhook-conformance validate --config examples/project-config.quickstart.
 uv run webhook-conformance validate --config examples/project-config.quickstart.yaml --print-materialized
 uv run webhook-conformance plan --config examples/project-config.quickstart.yaml --out .webhook-conformance/example-plan
 uv run webhook-conformance run --config examples/project-config.quickstart.yaml
+uv run webhook-conformance run --manifest .webhook-conformance/plan \
+  --config examples/project-config.quickstart.yaml
 ```
 
 `validate` materializes typed configuration and performs no network I/O. `plan` resolves
 the fixture and secret fingerprint and writes an immutable bundle without sending
-traffic. `run` plans and sends to the authorized target. The last two commands therefore
-need the referenced signer secret.
+traffic. `run` either plans from configuration or verifies and loads the bundle selected
+by `--manifest`, then sends to the authorized target. Bundle execution still requires
+fresh configuration with matching target policy and secret fingerprints, but does not
+rediscover fixture sources. Loaded execution is fully materialized into a private
+verified snapshot and anonymous request-body spool before a public-target nonce
+challenge; the resulting runner-bound capability is consumed once and cleaned up after
+execution. Mutating the original manifest, effective configuration, blobs, or fixture
+source after that preparation cannot affect the request bytes. The last two commands
+therefore need the referenced signer secret.
 
 The plan separates reproducible choices from execution-specific facts. It realizes
 mutation parameters, retry recipes, logical times, identifiers, exact blob digests, and

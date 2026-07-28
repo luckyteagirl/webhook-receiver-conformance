@@ -181,9 +181,7 @@ def _corpus_config(
     base = loaded.config
     fixture_path = root / "fixture.json"
     fixture_path.write_bytes(
-        b'{"id":"evt_benchmark","type":"benchmark.event","payload":"'
-        + (b"x" * 961)
-        + b'"}'
+        b'{"id":"evt_benchmark","type":"benchmark.event","payload":"' + (b"x" * 961) + b'"}'
     )
     fixture = base.fixtures[0].model_copy(update={"path": fixture_path.name})
     base_step = base.scenarios[0].steps[0]
@@ -270,17 +268,13 @@ def _planning_samples(
     count: int = 10,
 ) -> tuple[float, ...]:
     _compile_once(config, root, "plan-authoritative")
-    return tuple(
-        _compile_once(config, root, "plan-authoritative") for _ in range(count)
-    )
+    return tuple(_compile_once(config, root, "plan-authoritative") for _ in range(count))
 
 
 def _peak_rss_bytes() -> int:
     if os.name == "nt":
         command = (
-            "$value=(Get-Process -Id "
-            f"{os.getpid()}"
-            ").PeakWorkingSet64; [Console]::Out.Write($value)"
+            f"$value=(Get-Process -Id {os.getpid()}).PeakWorkingSet64; [Console]::Out.Write($value)"
         )
         powershell = shutil.which("powershell")
         if powershell is None:
@@ -313,8 +307,7 @@ def _seed_journal_graph(connection: sqlite3.Connection, attempts: int) -> None:
     scenario_id = _planned("scenario", 1)
     connection.execute("BEGIN IMMEDIATE")
     connection.execute(
-        "INSERT INTO runs (run_id, manifest_id, state, created_at) "
-        "VALUES (?, ?, 'planned', ?)",
+        "INSERT INTO runs (run_id, manifest_id, state, created_at) VALUES (?, ?, 'planned', ?)",
         (RUN_ID, MANIFEST_ID, TIMESTAMP),
     )
     connection.execute(
@@ -498,12 +491,9 @@ async def _report_samples_async(
 ) -> tuple[float, ...]:
     run = create_run_database(root, run_id=RUN_ID)
     connection = open_journal_database(run.database_path)
+    connection.execute("BEGIN IMMEDIATE")
     connection.execute(
-        "BEGIN IMMEDIATE"
-    )
-    connection.execute(
-        "INSERT INTO runs (run_id, manifest_id, state, created_at) "
-        "VALUES (?, ?, 'planned', ?)",
+        "INSERT INTO runs (run_id, manifest_id, state, created_at) VALUES (?, ?, 'planned', ?)",
         (RUN_ID, MANIFEST_ID, TIMESTAMP),
     )
     connection.execute("COMMIT")

@@ -136,10 +136,7 @@ def materialize_verified_replay_bundle(
         loaded.manifest,
         _read_effective_configuration(output_directory),
     )
-    if (
-        loaded.manifest_bytes != verified_source.manifest_bytes
-        or materialized_recipes != recipes
-    ):
+    if loaded.manifest_bytes != verified_source.manifest_bytes or materialized_recipes != recipes:
         raise ValueError("materialized replay bundle differs from its verified source")
     return loaded
 

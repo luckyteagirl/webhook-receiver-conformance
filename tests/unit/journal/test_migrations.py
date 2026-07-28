@@ -570,7 +570,7 @@ def _install_path_replacement_race(
     return state
 
 
-def test_golden_empty_database_migrates_through_frozen_v1_to_v3(tmp_path: Path) -> None:
+def test_golden_empty_database_migrates_through_frozen_v1_to_v4(tmp_path: Path) -> None:
     database = tmp_path / JOURNAL_FILENAME
     assert len(GOLDEN_V0_IMAGE) == 4096
     assert hashlib.sha256(GOLDEN_V0_IMAGE).hexdigest() == GOLDEN_V0_SHA256
@@ -602,9 +602,15 @@ def test_golden_empty_database_migrates_through_frozen_v1_to_v3(tmp_path: Path) 
                 checksum=MIGRATIONS[2].checksum,
                 applied_at=TIMESTAMP,
             ),
+            AppliedMigration(
+                migration_id=4,
+                name="add_attempt_response_staging",
+                checksum=MIGRATIONS[3].checksum,
+                applied_at=TIMESTAMP,
+            ),
         )
         assert MIGRATIONS[0].checksum == INITIAL_CHECKSUM
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
         assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:
@@ -644,6 +650,7 @@ def test_required_tables_and_foreign_keys_are_immediate(
         "event_dependencies",
         "deliveries",
         "attempts",
+        "attempt_response_staging",
         "attempt_records",
         "schedule_entries",
         "observer_series",
@@ -1289,7 +1296,7 @@ def test_changed_applied_migration_checksum_aborts_before_side_effect(
         journal.execute("SELECT migration_id, checksum FROM schema_migrations").fetchall()
     )
     assert after == before
-    assert journal.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert journal.execute("PRAGMA user_version").fetchone()[0] == 4
 
 
 def test_new_migration_applies_once_and_records_checksum(
@@ -1311,12 +1318,13 @@ def test_new_migration_applies_once_and_records_checksum(
     )
     journal.set_trace_callback(None)
     assert first == second_open
-    assert [record.migration_id for record in first] == [1, 2, 3]
+    assert [record.migration_id for record in first] == [1, 2, 3, 4]
     assert first[-1].checksum == MIGRATIONS[-1].checksum
-    assert journal.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert journal.execute("PRAGMA user_version").fetchone()[0] == 4
     assert sum("CREATE TABLE attempt_records" in statement for statement in trace) == 1
     assert sum("ADD COLUMN response_headers_elapsed_ns" in statement for statement in trace) == 1
-    backups = list(database_path.parent.glob(f"{database_path.name}.pre-v1-to-v3.*.bak"))
+    assert sum("CREATE TABLE attempt_response_staging" in statement for statement in trace) == 1
+    backups = list(database_path.parent.glob(f"{database_path.name}.pre-v1-to-v4.*.bak"))
     assert len(backups) == 1
     backup = sqlite3.connect(backups[0])
     try:
@@ -1336,7 +1344,7 @@ def test_new_migration_applies_once_and_records_checksum(
         journal.close()
 
 
-def test_v2_database_upgrades_to_v3_with_bounded_response_timing(
+def test_v2_database_upgrades_to_v4_with_timing_and_response_staging(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / JOURNAL_FILENAME
@@ -1350,6 +1358,15 @@ def test_v2_database_upgrades_to_v3_with_bounded_response_timing(
         str(row[1]) for row in journal.execute("PRAGMA table_xinfo(attempt_records)").fetchall()
     }
     assert "response_headers_elapsed_ns" in columns
+    assert (
+        journal.execute(
+            """
+                SELECT 1 FROM sqlite_schema
+                WHERE type = 'table' AND name = 'attempt_response_staging'
+                """
+        ).fetchone()
+        is not None
+    )
     with _write(journal):
         _insert_run(journal)
         _insert_scenario(journal)
@@ -1362,7 +1379,7 @@ def test_v2_database_upgrades_to_v3_with_bounded_response_timing(
     ).fetchone()
     assert persisted is not None
     assert tuple(persisted) == (123,)
-    backups = list(database_path.parent.glob(f"{database_path.name}.pre-v2-to-v3.*.bak"))
+    backups = list(database_path.parent.glob(f"{database_path.name}.pre-v2-to-v4.*.bak"))
     assert len(backups) == 1
     journal.close()
 
@@ -1389,7 +1406,7 @@ def test_upgrade_backup_binds_created_file_across_replacement_race(
         *args: object,
         **kwargs: object,
     ) -> sqlite3.Connection:
-        candidates = list(tmp_path.glob(f"{JOURNAL_FILENAME}.pre-v1-to-v3.*.bak"))
+        candidates = list(tmp_path.glob(f"{JOURNAL_FILENAME}.pre-v1-to-v4.*.bak"))
         assert len(candidates) == 1
         candidate = candidates[0]
         state["attempted"] = True
@@ -1411,7 +1428,7 @@ def test_upgrade_backup_binds_created_file_across_replacement_race(
         assert state == {"attempted": True, "blocked": True}
         assert victim.read_bytes() == victim_bytes
         assert not displaced.exists()
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
     else:
         with pytest.raises(MigrationExecutionError):
             apply_migrations(
@@ -1420,7 +1437,7 @@ def test_upgrade_backup_binds_created_file_across_replacement_race(
                 clock=lambda: FIXED_CLOCK,
             )
         assert state == {"attempted": True, "blocked": False}
-        candidate = next(tmp_path.glob(f"{JOURNAL_FILENAME}.pre-v1-to-v3.*.bak"))
+        candidate = next(tmp_path.glob(f"{JOURNAL_FILENAME}.pre-v1-to-v4.*.bak"))
         assert candidate.read_bytes() == victim_bytes
         assert displaced.is_file()
         assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
@@ -1442,7 +1459,7 @@ def test_explicit_disposable_upgrade_can_skip_backup(
         no_backup=True,
         clock=lambda: FIXED_CLOCK,
     )
-    assert list(database_path.parent.glob(f"{database_path.name}.pre-v1-to-v3.*.bak")) == []
+    assert list(database_path.parent.glob(f"{database_path.name}.pre-v1-to-v4.*.bak")) == []
     journal.close()
 
 
@@ -1507,7 +1524,7 @@ def test_unmanaged_and_future_databases_are_rejected_without_schema_changes(
     future_path.parent.mkdir()
     future = sqlite3.connect(future_path, isolation_level=None)
     configure_connection(future)
-    future.execute("PRAGMA user_version = 4")
+    future.execute("PRAGMA user_version = 5")
     with pytest.raises(UnsupportedDatabaseVersionError):
         apply_migrations(future)
     assert future.execute("SELECT name FROM sqlite_schema").fetchall() == []
@@ -1883,7 +1900,7 @@ def test_new_run_directories_and_database_request_owner_only_modes(
     )
     apply_migrations(connection, migrations=MIGRATIONS)
     connection.close()
-    backups = list(created.run_directory.glob(f"{created.database_path.name}.pre-v1-to-v3.*.bak"))
+    backups = list(created.run_directory.glob(f"{created.database_path.name}.pre-v1-to-v4.*.bak"))
     assert len(backups) == 1
     assert stat.S_IMODE(backups[0].stat().st_mode) == 0o600
 

@@ -31,7 +31,6 @@ from webhook_receiver_conformance.errors import (
 from webhook_receiver_conformance.journal.transitions import MAX_SAFE_INTEGER
 from webhook_receiver_conformance.recovery.models import (
     AttemptRecoveryItem,
-    RecoveryAmbiguity,
     RecoveryPlan,
     RecoveryScanContext,
 )
@@ -664,11 +663,7 @@ class ResumePolicyEngine:
             timestamp=timestamp,
         )
         pending = _pending_schedule(schedule)
-        ambiguous = tuple(
-            item
-            for item in context.recovery_plan.attempts
-            if item.ambiguity is not RecoveryAmbiguity.NONE
-        )
+        ambiguous = context.recovery_plan.unresolved_ambiguous_attempts
         _policy_item_limit(ambiguous, pending)
         if invocation.cancel_requested:
             if ambiguous:

@@ -9,10 +9,14 @@ stateDiagram-v2
   active --> eligible: retry schedule becomes eligible
   active --> satisfied: qualifying outcome or assertion policy
   active --> exhausted: no eligible attempt remains
-  active --> ambiguous: unresolved possible send
+  active --> ambiguous: explicitly sealed or legacy ambiguity
   active --> cancelled: cancelled
   satisfied --> [*]
   exhausted --> [*]
   ambiguous --> [*]
   cancelled --> [*]
   skipped --> [*]
+  note right of active
+    Resumable unknown_outcome keeps the delivery active.
+    An authorized redelivery creates a linked successor attempt.
+  end note

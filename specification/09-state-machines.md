@@ -24,10 +24,17 @@ The Mermaid sources under `diagrams/` are normative for allowed high-level trans
 | `failed` | none | yes | Comparable evidence violated a receiver assertion. |
 | `error` | none | yes | Required execution/evidence failed outside a comparable receiver assertion. |
 | `skipped` | none | yes | Policy explicitly allows the scenario to be skipped. |
-| `ambiguous` | none | yes | Possible receiver effect remains unresolved. |
+| `ambiguous` | none | yes | A legacy or explicitly sealed scenario result records unresolved receiver effect; resumable execution does not enter this state. |
 | `cancelled` | none | yes | Cancellation prevented completion. |
 
 A scenario cannot become `passed` while any required assertion is pending, running, failed, errored, unsupported under error policy, or cancelled.
+
+For a resumable post-send ambiguity, the physical attempt becomes terminal
+`unknown_outcome`, but the scenario projection remains `running` and its untouched
+assertions remain `pending`. The run moves to `paused`. This preserves the legal path
+for an explicitly authorized successor attempt without reopening a terminal scenario.
+Persisted journals that already contain terminal `ambiguous` scenario state are
+inspectable, but same-run continuation fails closed before journal mutation.
 
 ## Planned delivery states
 
@@ -38,11 +45,17 @@ A scenario cannot become `passed` while any required assertion is pending, runni
 | `active` | `eligible`, `satisfied`, `exhausted`, `ambiguous`, `cancelled` | no | A physical attempt is active or its durable outcome is being reduced. |
 | `satisfied` | none | yes | A qualifying terminal attempt or explicit assertion policy satisfied the delivery. |
 | `exhausted` | none | yes | No eligible attempt template remains and policy did not satisfy the delivery. |
-| `ambiguous` | none | yes | A possible send has no decisive terminal evidence. |
+| `ambiguous` | none | yes | A legacy or explicitly sealed delivery result has no decisive terminal evidence; resumable execution does not enter this state. |
 | `cancelled` | none | yes | Cancellation prevented completion. |
 | `skipped` | none | yes | A manifest-fixed condition or explicit policy skipped the delivery. |
 
 Retry wait is represented by a persistent schedule entry. It is not a delivery lifecycle state and never occupies a sleeping worker.
+
+For a resumable post-send ambiguity, the delivery remains `active`. Its
+`unknown_outcome` physical attempt is immutable, while an explicit dual-consent
+redelivery may create a linked successor attempt for the same planned delivery.
+Persisted journals that already contain terminal `ambiguous` delivery state are
+inspectable, but continuation cannot create or target a successor schedule.
 
 ## Physical attempt states and transaction boundaries
 

@@ -14,7 +14,6 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
 import anyio
-from anyio.lowlevel import checkpoint
 
 from webhook_receiver_conformance.errors import ErrorCategory
 from webhook_receiver_conformance.types import DiagnosticCode
@@ -495,15 +494,14 @@ class JournalService:
             operation=cast("JournalOperation[object]", operation),
             completed=anyio.Event(),
         )
-        try:
-            await self._send.send(request)
-        except (anyio.BrokenResourceError, anyio.ClosedResourceError) as error:
-            message = "journal service closed before accepting the operation"
-            raise JournalServiceClosedError(message) from error
-        self._accepted_operations += 1
         with anyio.CancelScope(shield=True):
+            try:
+                await self._send.send(request)
+            except (anyio.BrokenResourceError, anyio.ClosedResourceError) as error:
+                message = "journal service closed before accepting the operation"
+                raise JournalServiceClosedError(message) from error
+            self._accepted_operations += 1
             await request.completed.wait()
-        await checkpoint()
         if request.error is not None:
             raise request.error
         if request.result is _MISSING:

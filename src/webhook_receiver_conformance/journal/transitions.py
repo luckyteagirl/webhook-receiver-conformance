@@ -1,5 +1,5 @@
 """Executable lifecycle tables and typed journal transition contracts."""
-# ruff: noqa: D105, EM101, EM102, INP001, PLR2004, TRY003
+# ruff: noqa: C901, D105, EM101, EM102, INP001, PLR0912, PLR2004, TRY003
 
 from __future__ import annotations
 
@@ -485,6 +485,77 @@ class AttemptTransportEvidenceCommand:
     def request_header_names_json(self) -> bytes | None:
         """Return the canonical bounded JSON BLOB persisted for header names."""
         return canonical_request_header_names_json(self.request)
+
+
+@dataclass(frozen=True, slots=True)
+class AttemptResponseStagingCommand:
+    """Sanitized response result retained until terminal reduction is committed."""
+
+    terminal_state: AttemptState
+    terminal_outcome: AttemptTerminalOutcome
+    transport_evidence: AttemptTransportEvidenceCommand
+
+    def __post_init__(self) -> None:
+        if self.terminal_state not in {
+            AttemptState.SUCCEEDED,
+            AttemptState.REJECTED,
+            AttemptState.TRANSPORT_FAILED,
+        }:
+            raise ValueError("durable response staging requires a response-derived terminal state")
+        if type(self.terminal_outcome) is not AttemptTerminalOutcome:
+            raise TypeError("terminal_outcome must be an AttemptTerminalOutcome")
+        if type(self.transport_evidence) is not AttemptTransportEvidenceCommand:
+            raise TypeError("transport_evidence must be an AttemptTransportEvidenceCommand")
+        evidence = self.transport_evidence
+        if (
+            evidence.request is None
+            or evidence.response is None
+            or evidence.response.body_sha256 is None
+        ):
+            raise ValueError(
+                "durable response staging requires sanitized request and complete response metadata"
+            )
+        if evidence.classification is not self.terminal_outcome.classification:
+            raise ValueError("staged response classification differs from its terminal outcome")
+        if evidence.error is not None:
+            derived = (
+                AttemptState.TRANSPORT_FAILED,
+                evidence.state,
+                AttemptClassification.ENVIRONMENT_FAILURE,
+            )
+        elif 200 <= evidence.response.status <= 299:
+            derived = (
+                AttemptState.SUCCEEDED,
+                AttemptEvidenceState.ACKNOWLEDGED,
+                AttemptClassification.RECEIVER_ACCEPTED,
+            )
+        else:
+            derived = (
+                AttemptState.REJECTED,
+                AttemptEvidenceState.REJECTED,
+                AttemptClassification.RECEIVER_REJECTED,
+            )
+        if (
+            self.terminal_state is not derived[0]
+            or evidence.state is not derived[1]
+            or evidence.classification is not derived[2]
+        ):
+            raise ValueError("staged response evidence is incompatible with its terminal state")
+        if self.terminal_state is AttemptState.TRANSPORT_FAILED and evidence.state not in {
+            AttemptEvidenceState.TIMED_OUT,
+            AttemptEvidenceState.CONNECTION_FAILED,
+            AttemptEvidenceState.PROTOCOL_FAILED,
+        }:
+            raise ValueError("staged response transport failure has an invalid evidence state")
+        retry = self.terminal_outcome.retry_schedule
+        if retry is not None:
+            if self.terminal_state not in {
+                AttemptState.REJECTED,
+                AttemptState.TRANSPORT_FAILED,
+            }:
+                raise ValueError("only rejected or failed staged responses may schedule a retry")
+            if retry.predecessor_attempt_id != evidence.attempt_id:
+                raise ValueError("staged retry predecessor must equal the response attempt")
 
 
 @dataclass(frozen=True, slots=True)

@@ -86,8 +86,7 @@ def test_template_autoescapes_every_evidence_context_and_has_locked_csp() -> Non
 
 def test_configuration_has_no_tls_verification_bypass() -> None:
     schema_text = "\n".join(
-        path.read_text(encoding="utf-8")
-        for path in ROOT.joinpath("schemas").rglob("*.json")
+        path.read_text(encoding="utf-8") for path in ROOT.joinpath("schemas").rglob("*.json")
     ).casefold()
     assert '"verify"' not in schema_text
     assert "verify=false" not in schema_text
@@ -95,10 +94,7 @@ def test_configuration_has_no_tls_verification_bypass() -> None:
 
 def test_installed_distribution_exposes_only_the_owned_console_script() -> None:
     entry_points = list(distribution("webhook-receiver-conformance").entry_points)
-    assert [
-        (entry.group, entry.name, entry.value)
-        for entry in entry_points
-    ] == [
+    assert [(entry.group, entry.name, entry.value) for entry in entry_points] == [
         (
             "console_scripts",
             "webhook-conformance",
@@ -110,9 +106,9 @@ def test_installed_distribution_exposes_only_the_owned_console_script() -> None:
 def test_action_defaults_to_redacted_artifacts_and_least_privilege() -> None:
     action = ROOT.joinpath("action.yml").read_text(encoding="utf-8")
     wrapper = ROOT.joinpath(".github/actions/run_action.py").read_text(encoding="utf-8")
-    package_workflow = ROOT.joinpath(
-        ".github/workflows/package-test.yml"
-    ).read_text(encoding="utf-8")
+    package_workflow = ROOT.joinpath(".github/workflows/package-test.yml").read_text(
+        encoding="utf-8"
+    )
     assert 'default: "false"' in action
     assert '"blobs"' not in wrapper.split("_SAFE_ARTIFACT_NAMES", 1)[1].split(")", 1)[0]
     assert "permissions:\n  contents: read" in package_workflow

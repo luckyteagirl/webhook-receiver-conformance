@@ -28,8 +28,9 @@ exception messages and secrets from unexpected-error output.
    on prose.
 4. For a created run, inspect `run-state.json`, `result-summary.json`, and sanitized
    `deliveries.jsonl`. Keep event IDs, delivery IDs, and attempt IDs distinct.
-5. Use `inspect RUN_DIR` for the sanitized summary or
-   `inspect RUN_DIR --identifier ID` for an exact scenario/event/delivery filter.
+5. Use `inspect RUN_DIR` for the verified sanitized summary or supply both
+   `--kind KIND --identifier ID` for an exact scenario, event, delivery, attempt,
+   observation, assertion, or diagnostic causal chain.
 6. Request `--raw-artifacts` only when the sanitized evidence is insufficient. It emits
    an explicit sensitivity warning and lists paths; raw retention is not a normal
    reporting default.
@@ -38,7 +39,8 @@ Example:
 
 ```text
 uv run webhook-conformance inspect RUN_DIR
-uv run webhook-conformance --json inspect RUN_DIR --identifier EVENT_OR_DELIVERY_ID
+uv run webhook-conformance --json inspect RUN_DIR \
+  --kind attempt --identifier ATTEMPT_OR_RECORD_ID
 ```
 
 Replace `RUN_DIR` with the path printed by `run`.
@@ -52,19 +54,34 @@ business effect.
 ```text
 uv run webhook-conformance resume RUN_DIR
 uv run webhook-conformance resume RUN_DIR --on-ambiguous stop
+uv run webhook-conformance resume RUN_DIR \
+  --config webhook-conformance.yaml \
+  --on-ambiguous redeliver
 ```
 
-The 0.1.0 resume command requires one of `stop`, `observe`, `redeliver`,
-`assume-processed`, or `assume-not-processed` when state is ambiguous. Its current
-implementation reports the existing state and does not perform the named recovery
-action, so do not treat the option as evidence that receiver state changed.
+Without `--on-ambiguous`, resume performs a read-only integrity preview and exits 4
+before receiver or observer contact when an unknown send is present. With no unresolved
+send, it advances the owner epoch and executes only unconsumed schedules and pending
+assertions in the same run. Continued execution reloads fresh configuration and secret
+references, verifies their fingerprints and target against the bundle, preserves all
+prior evidence, then regenerates the complete report set.
 
-`replay` verifies bundle integrity and copies immutable files to a new execution
-directory, then returns exit 6 because the bundle contains no fresh signing-secret
-context:
+The explicit closed policies are `stop`, `observe`, and `redeliver`. Redelivery
+requires two independent consents: an immediate unused manifest attempt whose scenario
+retry predicate includes `timed_out`, plus `--on-ambiguous redeliver`. It creates a new
+physical attempt while leaving the unknown predecessor immutable. The v1 configuration
+and manifest formats do not declare a delivery-scoped decisive reconciliation rule, so
+`observe` currently fails closed and leaves the run ambiguous instead of inferring
+authority from ordinary observer assertions.
+
+`replay` verifies bundle integrity, requires fresh configuration and secret references
+whose safe fingerprints match the bundle, and executes into a new self-contained run.
+The source fixtures are not read:
 
 ```text
-uv run webhook-conformance replay .webhook-conformance/example-plan/run-manifest.json
+uv run webhook-conformance replay \
+  .webhook-conformance/example-plan/run-manifest.json \
+  --config webhook-conformance.yaml
 ```
 
 ## Report selection
@@ -86,9 +103,10 @@ uv run webhook-conformance report RUN_DIR --format json
 uv run webhook-conformance report RUN_DIR --format junit --format html
 ```
 
-With no `--format`, it verifies all three groups. It reads existing local files, computes
-their hashes and a normalized digest, and does not contact the receiver or mutate run
-state.
+With no `--format`, it selects all three groups. The command verifies the bundle and
+journal, regenerates the complete seven-file projection and artifact registry, and
+returns the selected records plus a normalized digest. It does not contact the receiver
+or alter authoritative journal state.
 
 Version 0.1 has no SARIF runtime reporter. Use JUnit for CI test presentation and JSON
 or JSON Lines when downstream tools need structured conformance evidence.

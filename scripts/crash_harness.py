@@ -104,10 +104,7 @@ CRASH_MATRIX: Final = (
         "sending or awaiting_response",
         "stop or explicitly reconcile",
         "unknown_outcome",
-        (
-            "tests/integration/test_attempt_lifecycle.py"
-            "::test_post_connection_timeout_is_unknown",
-        ),
+        ("tests/integration/test_attempt_lifecycle.py::test_post_connection_timeout_is_unknown",),
     ),
     CrashBoundary(
         "CRASH-P0-006",
@@ -116,8 +113,14 @@ CRASH_MATRIX: Final = (
         "derive terminal classification from durable response",
         "none",
         (
-            "tests/integration/test_assertion_lifecycle.py"
-            "::test_transport_lifecycle_persists_exact_terminal_classification",
+            "tests/integration/test_attempt_lifecycle.py"
+            "::test_crash_after_durable_response_recovers_exact_result_without_resend",
+            "tests/unit/recovery/test_scanner.py"
+            "::test_durable_response_recovery_derives_exact_terminal_result",
+            "tests/unit/recovery/test_scanner.py"
+            "::test_legacy_response_observed_migrates_to_v4_then_fails_closed",
+            "tests/integration/test_full_run_runner.py"
+            "::test_resume_reduces_v4_staged_response_and_delivery_before_resend",
         ),
     ),
     CrashBoundary(
@@ -213,6 +216,21 @@ CRASH_MATRIX: Final = (
             "::test_ordered_history_rebuilds_identical_lifecycle_projections",
         ),
     ),
+    CrashBoundary(
+        "CRASH-P0-016",
+        "after terminal attempt and retry decision before delivery reduction",
+        "terminal attempt with active delivery",
+        "reduce without a successor otherwise preserve active and claim once",
+        "none",
+        (
+            "tests/integration/test_attempt_lifecycle.py"
+            "::test_crash_after_durable_response_recovers_exact_result_without_resend",
+            "tests/integration/test_full_run_runner.py"
+            "::test_resume_reconciles_terminal_attempt_before_continuation_without_resend",
+            "tests/integration/test_full_run_runner.py"
+            "::test_resume_reduces_v4_staged_response_and_delivery_before_resend",
+        ),
+    ),
 )
 
 
@@ -305,9 +323,9 @@ def write_report(path: Path, report: dict[str, object]) -> None:
         metadata = path.lstat()
         if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
             raise ValueError("crash report target must be a regular file")
-    payload = (
-        json.dumps(report, ensure_ascii=True, indent=2, sort_keys=True) + "\n"
-    ).encode("utf-8")
+    payload = (json.dumps(report, ensure_ascii=True, indent=2, sort_keys=True) + "\n").encode(
+        "utf-8"
+    )
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{destination.name}.",
         suffix=".tmp",

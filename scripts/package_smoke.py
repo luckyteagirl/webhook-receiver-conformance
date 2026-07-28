@@ -32,10 +32,15 @@ class _Receiver(BaseHTTPRequestHandler):
         self.rfile.read(length)
         self.send_response(204)
         self.send_header("Content-Length", "0")
+        self.send_header("Connection", "close")
         self.end_headers()
 
     def log_message(self, format: str, *args: object) -> None:  # noqa: A002
         del format, args
+
+
+class _SmokeServer(ThreadingHTTPServer):
+    allow_reuse_address = False
 
 
 def normalized_manifest_digest(document: Mapping[str, object]) -> str:
@@ -117,7 +122,7 @@ def smoke_artifact(
             raise RuntimeError("unsupported schema did not exit 6")
         if any(project.rglob("run.sqlite3")):
             raise RuntimeError("unsupported schema created a run database")
-        server = ThreadingHTTPServer(("127.0.0.1", 8000), _Receiver)
+        server = _SmokeServer(("127.0.0.1", 8000), _Receiver)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
@@ -151,9 +156,7 @@ def smoke_artifact(
         if not isinstance(run_directory_value, str):
             raise RuntimeError("minimal local package run omitted run_directory")
         manifest = _json_file(Path(run_directory_value) / "run-manifest.json")
-        runner_results = (
-            _exercise_ephemeral_runners(artifact) if exercise_runners else {}
-        )
+        runner_results = _exercise_ephemeral_runners(artifact) if exercise_runners else {}
         return {
             "artifact": artifact.name,
             "artifact_digest": artifact_digest,
@@ -225,9 +228,8 @@ def _run(
         timeout=600,
     )
     if completed.returncode != 0:
-        raise RuntimeError(
-            f"command failed with exit {completed.returncode}: {completed.stderr.strip()}"
-        )
+        diagnostic = completed.stderr.strip() or completed.stdout.strip()
+        raise RuntimeError(f"command failed with exit {completed.returncode}: {diagnostic[:4096]}")
     return completed
 
 
@@ -278,8 +280,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     actual_digest = next(iter(digests))
     if options.expected_digest is not None and actual_digest != options.expected_digest:
         raise RuntimeError(
-            f"normalized manifest digest {actual_digest} does not match "
-            f"{options.expected_digest}"
+            f"normalized manifest digest {actual_digest} does not match {options.expected_digest}"
         )
     print(
         json.dumps(

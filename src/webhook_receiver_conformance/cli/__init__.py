@@ -43,8 +43,7 @@ def _version_fast_path(arguments: list[str]) -> bool:
     document = VERSION_METADATA.as_dict()
     if "--json" in arguments:
         sys.stdout.write(
-            json.dumps(document, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-            + "\n"
+            json.dumps(document, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n"
         )
         return True
     sys.stdout.write(

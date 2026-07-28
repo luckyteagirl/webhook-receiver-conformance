@@ -6,14 +6,18 @@ Version 0.1 supports CPython only:
 
 | Platform runner family | CPython 3.12 | CPython 3.13 | CPython 3.14 |
 | --- | --- | --- | --- |
-| Ubuntu (`ubuntu-24.04`) | Supported/tested | Supported/tested | Supported/tested |
-| macOS (`macos-14`) | Supported/tested | Supported/tested | Supported/tested |
-| Windows (`windows-2025`) | Supported/tested | Supported/tested | Supported/tested |
+| Ubuntu (`ubuntu-24.04`) | Supported | Supported | Supported |
+| macOS (`macos-14`) | Supported | Supported | Supported |
+| Windows (`windows-2025`) | Supported | Supported | Supported |
 
 The package metadata enforces `>=3.12,<3.15`, and
 `.github/workflows/package-test.yml` runs the exact matrix above. The compatibility
 promise does not extend to alternative Python implementations or experimental runtime
 modes. AnyIO uses its asyncio backend; Trio parity is not promised.
+
+“Supported” describes the release contract and mandatory CI matrix; it is not a claim
+that a workflow file executed. The command transcripts and unavailable runners for a
+particular local release candidate are recorded in `validation/final-scorecard.md`.
 
 The universal Python wheel is authoritative. The source distribution, non-root OCI
 image, and GitHub Action wrapper must preserve the same CLI and schema behavior. A
@@ -35,7 +39,7 @@ manifest schema 1.0
 observer protocol 1.0
 report schema 1.0
 generator hmac-sha256-context-v1
-sqlite user_version 3
+sqlite user_version 4
 ```
 
 The JSON form additionally exposes `task_index_schema`.

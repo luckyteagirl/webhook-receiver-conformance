@@ -26,6 +26,9 @@ _READ_CHUNK_BYTES: Final = 65_536
 _PATH_FIELD = "fixtures[].path"
 _OPEN_CLOEXEC: Final = getattr(os, "O_CLOEXEC", 0)
 _OPEN_NONBLOCK: Final = getattr(os, "O_NONBLOCK", 0)
+_SAFE_DIRECTORY_OPEN_SUPPORTED: Final = (
+    os.open in os.supports_dir_fd and hasattr(os, "O_DIRECTORY") and hasattr(os, "O_NOFOLLOW")
+)
 _WINDOWS_FILE_ATTRIBUTE_DIRECTORY: Final = 0x00000010
 _WINDOWS_FILE_ATTRIBUTE_DEVICE: Final = 0x00000040
 _WINDOWS_FILE_ATTRIBUTE_REPARSE_POINT: Final = 0x00000400
@@ -201,7 +204,7 @@ def _load_fixture_parts(
 def _open_contained_file(root: Path, parts: tuple[str, ...]) -> int:
     if os.name == "nt":
         return _open_contained_file_windows(root, parts)
-    if os.open in os.supports_dir_fd and hasattr(os, "O_DIRECTORY") and hasattr(os, "O_NOFOLLOW"):
+    if _SAFE_DIRECTORY_OPEN_SUPPORTED:
         return _open_contained_file_at(root, parts)
     raise OSError
 

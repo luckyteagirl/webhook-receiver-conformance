@@ -51,10 +51,12 @@ from .service import (
 )
 from .transitions import (
     MAX_CONDITION_BYTES,
+    MAX_OWNER_EPOCH,
     MAX_REPLAY_TRANSITIONS,
     MAX_SAFE_INTEGER,
     AttemptPhaseEvidence,
     AttemptPhaseEvidenceCommand,
+    AttemptResponseStagingCommand,
     AttemptScheduleClaim,
     AttemptTransportEvidenceCommand,
     CausalReference,
@@ -268,10 +270,18 @@ class _ApplyTransitionOperation:
     command: TransitionCommand[LifecycleState]
     crash_hook: TransitionCrashHook | None
     phase_evidence: AttemptPhaseEvidenceCommand | None = None
+    response_staging: AttemptResponseStagingCommand | None = None
     transport_evidence: AttemptTransportEvidenceCommand | None = None
 
-    def execute(self, transaction: JournalTransaction) -> CommittedTransition:
+    def execute(  # noqa: PLR0912, PLR0915
+        self,
+        transaction: JournalTransaction,
+    ) -> CommittedTransition:
         _validate_payload_scope(self.command)
+        _validate_response_staging_presence(
+            self.command,
+            self.response_staging,
+        )
         _validate_transport_evidence_presence(
             self.command,
             self.transport_evidence,
@@ -289,6 +299,12 @@ class _ApplyTransitionOperation:
                     transaction,
                     command=self.command,
                     evidence=self.phase_evidence,
+                )
+            if self.response_staging is not None:
+                _verify_attempt_response_staging(
+                    transaction,
+                    command=self.command,
+                    staging=self.response_staging,
                 )
             if self.transport_evidence is not None:
                 _verify_existing_attempt_record(
@@ -321,6 +337,12 @@ class _ApplyTransitionOperation:
                 command=self.command,
                 evidence=self.transport_evidence,
             )
+        _validate_terminal_response_staging(
+            transaction,
+            command=self.command,
+            staging=self.response_staging,
+            transport_evidence=self.transport_evidence,
+        )
 
         sequence = _next_transition_sequence(transaction, self.command.run_id)
         record = _record_from_command(self.command, sequence=sequence)
@@ -339,6 +361,12 @@ class _ApplyTransitionOperation:
             _call_crash_hook(
                 self.crash_hook,
                 AttemptMutationPhase.AFTER_PHASE_EVIDENCE,
+            )
+        if self.response_staging is not None:
+            _persist_attempt_response_staging(
+                transaction,
+                command=self.command,
+                staging=self.response_staging,
             )
         if self.transport_evidence is not None:
             evidence_sequence = _next_attempt_record_sequence(
@@ -370,6 +398,16 @@ class _ApplyTransitionOperation:
                 transaction,
                 run_id=self.command.run_id,
                 schedule=retry_schedule,
+            )
+        if (
+            self.command.entity_type is EntityType.ATTEMPT
+            and self.command.expected_state is AttemptState.RESPONSE_OBSERVED
+            and isinstance(self.command.new_state, AttemptState)
+            and self.command.new_state in _TERMINAL_ATTEMPT_STATES
+        ):
+            _consume_attempt_response_staging(
+                transaction,
+                command=self.command,
             )
         _call_crash_hook(
             self.crash_hook,
@@ -424,7 +462,121 @@ class _ClaimAttemptScheduleOperation:
             if consumed_epoch != command.owner_epoch:
                 raise IdempotencyConflictError("attempt schedule was consumed by another owner")
             _verify_claimed_attempt(transaction, self.claim, schedule)
+            existing = _verified_claim_transition(
+                transaction,
+                command=command,
+            )
+            return CommittedTransition(record=existing, idempotent_replay=True)
         return _ApplyTransitionOperation(command, self.crash_hook).execute(transaction)
+
+
+@dataclass(frozen=True, slots=True)
+class _RebindRecoverableAttemptOperation:
+    run_id: str
+    attempt_id: str
+    expected_state: AttemptState
+    owner_epoch: int
+
+    def execute(self, transaction: JournalTransaction) -> None:
+        current_owner = transaction.execute(
+            JournalStatement(
+                "SELECT owner_epoch FROM runs WHERE run_id = ?",
+                (self.run_id,),
+            )
+        )
+        if current_owner.rows != ((self.owner_epoch,),):
+            raise StaleOwnerEpochError("recovery lease rebind used a stale owner epoch")
+        result = transaction.execute(
+            JournalStatement(
+                """
+                SELECT
+                    attempts.state,
+                    attempts.owner_epoch,
+                    schedule_entries.schedule_entry_id,
+                    schedule_entries.consumed_at,
+                    schedule_entries.consumed_by_owner_epoch
+                FROM attempts
+                JOIN deliveries
+                  ON deliveries.run_id = attempts.run_id
+                 AND deliveries.scenario_id = attempts.scenario_id
+                 AND deliveries.delivery_id = attempts.delivery_id
+                JOIN schedule_entries
+                  ON schedule_entries.run_id = attempts.run_id
+                 AND schedule_entries.scenario_id = attempts.scenario_id
+                 AND schedule_entries.entity_type = 'attempt'
+                 AND schedule_entries.entity_id = attempts.attempt_plan_id
+                 AND schedule_entries.delivery_ordinal = deliveries.ordinal
+                 AND schedule_entries.attempt_ordinal = attempts.ordinal
+                WHERE attempts.run_id = ? AND attempts.attempt_id = ?
+                """,
+                (self.run_id, self.attempt_id),
+            )
+        )
+        if len(result.rows) != 1 or len(result.rows[0]) != 5:
+            raise ProjectionIntegrityError(
+                "recoverable attempt must have exactly one matching schedule"
+            )
+        row = result.rows[0]
+        if _text(row[0], name="recoverable attempt state") != self.expected_state.value:
+            raise IllegalTransitionError("recoverable attempt changed state before lease rebind")
+        attempt_owner = _integer(row[1], name="recoverable attempt owner_epoch")
+        consumed_at = row[3]
+        consumed_owner = row[4]
+        if attempt_owner > self.owner_epoch:
+            raise StaleOwnerEpochError("recoverable attempt belongs to a newer owner")
+        if self.expected_state is AttemptState.SCHEDULED:
+            if consumed_at is not None or consumed_owner is not None:
+                raise ProjectionIntegrityError("scheduled attempt has a consumed schedule")
+        else:
+            if consumed_at is None or consumed_owner is None:
+                raise ProjectionIntegrityError("claimed attempt lacks durable schedule consumption")
+            consumed_epoch = _integer(
+                consumed_owner,
+                name="recoverable schedule owner_epoch",
+            )
+            if consumed_epoch != attempt_owner:
+                raise ProjectionIntegrityError(
+                    "claimed attempt and consumed schedule owners disagree"
+                )
+            if consumed_epoch > self.owner_epoch:
+                raise StaleOwnerEpochError("claimed schedule belongs to a newer owner")
+            schedule_update = transaction.execute(
+                JournalStatement(
+                    """
+                    UPDATE schedule_entries
+                    SET consumed_by_owner_epoch = ?
+                    WHERE schedule_entry_id = ? AND run_id = ?
+                      AND consumed_at IS NOT NULL
+                      AND consumed_by_owner_epoch = ?
+                    """,
+                    (
+                        self.owner_epoch,
+                        _text(row[2], name="recoverable schedule_entry_id"),
+                        self.run_id,
+                        consumed_epoch,
+                    ),
+                )
+            )
+            if schedule_update.rowcount != 1:
+                raise ProjectionIntegrityError("claimed schedule lease rebind lost its guard")
+        attempt_update = transaction.execute(
+            JournalStatement(
+                """
+                UPDATE attempts
+                SET owner_epoch = ?
+                WHERE attempt_id = ? AND run_id = ? AND state = ? AND owner_epoch = ?
+                """,
+                (
+                    self.owner_epoch,
+                    self.attempt_id,
+                    self.run_id,
+                    self.expected_state.value,
+                    attempt_owner,
+                ),
+            )
+        )
+        if attempt_update.rowcount != 1:
+            raise ProjectionIntegrityError("attempt lease rebind lost its guard")
 
 
 @dataclass(frozen=True, slots=True)
@@ -587,6 +739,7 @@ class TransitionRepository:
         command: TransitionCommand[S],
         evidence: AttemptPhaseEvidenceCommand | None = None,
         *,
+        response_staging: AttemptResponseStagingCommand | None = None,
         transport_evidence: AttemptTransportEvidenceCommand | None = None,
     ) -> CommittedTransition:
         """Commit one attempt edge with its exact phase/final sanitized evidence."""
@@ -605,6 +758,15 @@ class TransitionRepository:
                 evidence,
             )
         if (
+            response_staging is not None
+            and type(response_staging) is not AttemptResponseStagingCommand
+        ):
+            raise TypeError("response_staging must be an AttemptResponseStagingCommand or None")
+        _validate_response_staging_presence(
+            cast("TransitionCommand[LifecycleState]", command),
+            response_staging,
+        )
+        if (
             transport_evidence is not None
             and type(transport_evidence) is not AttemptTransportEvidenceCommand
         ):
@@ -618,6 +780,7 @@ class TransitionRepository:
                 command=cast("TransitionCommand[LifecycleState]", command),
                 crash_hook=self._crash_hook,
                 phase_evidence=evidence,
+                response_staging=response_staging,
                 transport_evidence=transport_evidence,
             )
         )
@@ -630,6 +793,30 @@ class TransitionRepository:
         if type(claim) is not AttemptScheduleClaim:
             raise TypeError("claim must be an AttemptScheduleClaim")
         return await self._service.execute(_ClaimAttemptScheduleOperation(claim, self._crash_hook))
+
+    async def rebind_recoverable_attempt(
+        self,
+        run_id: str,
+        attempt_id: str,
+        *,
+        expected_state: AttemptState,
+        owner_epoch: int,
+    ) -> None:
+        """Rebind scheduled work or an expired pre-send claim to a fresh owner."""
+        validate_run_id(run_id)
+        validate_fresh_id(attempt_id, expected_kind=FreshIdKind.ATTEMPT)
+        if expected_state not in {AttemptState.SCHEDULED, AttemptState.CLAIMED}:
+            raise ValueError("only scheduled or claimed attempts can be rebound")
+        if type(owner_epoch) is not int or not 0 <= owner_epoch <= MAX_OWNER_EPOCH:
+            raise ValueError("owner_epoch must be a nonnegative SQLite int64")
+        await self._service.execute(
+            _RebindRecoverableAttemptOperation(
+                run_id=run_id,
+                attempt_id=attempt_id,
+                expected_state=expected_state,
+                owner_epoch=owner_epoch,
+            )
+        )
 
     async def history(
         self,
@@ -1984,6 +2171,35 @@ def _insert_claimed_attempt(
     schedule: tuple[object, ...],
 ) -> None:
     command = claim.claim_transition
+    prepared = transaction.execute(
+        JournalStatement(
+            """
+            SELECT run_id, scenario_id, event_id, delivery_id,
+                   attempt_plan_id, ordinal, state,
+                   predecessor_attempt_id, owner_epoch
+            FROM attempts
+            WHERE attempt_id = ?
+            """,
+            (claim.attempt_id,),
+        )
+    )
+    if prepared.rows:
+        expected = (
+            command.run_id,
+            _text(schedule[1], name="schedule scenario_id"),
+            claim.event_id,
+            claim.delivery_id,
+            _text(schedule[3], name="schedule attempt_plan_id"),
+            _integer(schedule[7], name="schedule attempt ordinal"),
+            AttemptState.SCHEDULED.value,
+            claim.predecessor_attempt_id,
+            command.owner_epoch,
+        )
+        if len(prepared.rows) != 1 or tuple(prepared.rows[0]) != expected:
+            raise IdempotencyConflictError(
+                "prepared physical attempt differs from its schedule claim"
+            )
+        return
     result = transaction.execute(
         JournalStatement(
             """
@@ -2036,6 +2252,35 @@ def _verify_claimed_attempt(
     )
     if not result.rows or tuple(result.rows[0]) != expected:
         raise IdempotencyConflictError("consumed schedule attempt differs from replay")
+
+
+def _verified_claim_transition(
+    transaction: JournalTransaction,
+    *,
+    command: TransitionCommand[LifecycleState],
+) -> TransitionRecord:
+    existing = _transition_by_idempotency_key(
+        transaction,
+        command.run_id,
+        command.idempotency_key,
+    )
+    if (
+        existing is None
+        or existing.transition_id != command.transition_id
+        or existing.run_id != command.run_id
+        or existing.entity_type is not EntityType.ATTEMPT
+        or existing.entity_id != command.entity_id
+        or existing.from_state is not AttemptState.SCHEDULED
+        or existing.to_state is not AttemptState.CLAIMED
+        or existing.trigger_category != command.trigger_category
+        or existing.causal_record_id is not None
+        or existing.logical_time_ns != command.logical_time_ns
+        or existing.owner_epoch > command.owner_epoch
+    ):
+        raise IdempotencyConflictError(
+            "rebound claim differs from its durable scheduled-to-claimed transition"
+        )
+    return existing
 
 
 _PHASE_EDGES: Mapping[
@@ -2169,6 +2414,223 @@ def _verify_attempt_phase_evidence(
         or (evidence.request_headers_hash is not None and row[3] != evidence.request_headers_hash)
     ):
         raise IdempotencyConflictError("attempt phase evidence replay differs")
+
+
+def _validate_response_staging_presence(
+    command: TransitionCommand[LifecycleState],
+    staging: AttemptResponseStagingCommand | None,
+) -> None:
+    is_response_observation = (
+        command.entity_type is EntityType.ATTEMPT
+        and command.expected_state is AttemptState.AWAITING_RESPONSE
+        and command.new_state is AttemptState.RESPONSE_OBSERVED
+    )
+    if is_response_observation != (staging is not None):
+        raise IllegalTransitionError(
+            "response-observed entry requires exactly one sanitized response staging record"
+        )
+    if staging is None:
+        return
+    evidence = staging.transport_evidence
+    if evidence.run_id != command.run_id:
+        raise CrossRunReferenceError("staged response belongs to a different run")
+    if evidence.attempt_id != command.entity_id:
+        raise IllegalTransitionError("staged response belongs to a different attempt")
+
+
+def _persist_attempt_response_staging(
+    transaction: JournalTransaction,
+    *,
+    command: TransitionCommand[LifecycleState],
+    staging: AttemptResponseStagingCommand,
+) -> None:
+    _validate_response_staging_presence(command, staging)
+    evidence = staging.transport_evidence
+    _validate_transport_evidence_identity(
+        transaction,
+        command=command,
+        evidence=evidence,
+    )
+    result = transaction.execute(
+        JournalStatement(
+            """
+            INSERT INTO attempt_response_staging (
+                attempt_id, record_id, run_id, scenario_id, event_id,
+                delivery_id, terminal_state, classification, evidence_state,
+                request_method, request_url_redacted, request_body_sha256,
+                request_byte_length, request_header_names_json,
+                response_status, response_body_sha256, response_captured_bytes,
+                response_truncated, error_category, error_message_redacted,
+                error_phase, response_headers_elapsed_ns,
+                retry_schedule_entry_id, retry_entity_id, retry_logical_time_ns,
+                retry_scenario_ordinal, retry_step_ordinal,
+                retry_delivery_ordinal, retry_attempt_ordinal,
+                retry_deterministic_tie_key, retry_idempotency_key,
+                retry_condition_json
+            ) VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )
+            """,
+            _attempt_response_staging_values(staging),
+        )
+    )
+    if result.rowcount != 1:
+        raise ProjectionIntegrityError("attempt response staging did not insert exactly one row")
+
+
+def _verify_attempt_response_staging(
+    transaction: JournalTransaction,
+    *,
+    command: TransitionCommand[LifecycleState],
+    staging: AttemptResponseStagingCommand,
+) -> None:
+    _validate_response_staging_presence(command, staging)
+    result = transaction.execute(
+        JournalStatement(
+            """
+            SELECT
+                attempt_id, record_id, run_id, scenario_id, event_id,
+                delivery_id, terminal_state, classification, evidence_state,
+                request_method, request_url_redacted, request_body_sha256,
+                request_byte_length, request_header_names_json,
+                response_status, response_body_sha256, response_captured_bytes,
+                response_truncated, error_category, error_message_redacted,
+                error_phase, response_headers_elapsed_ns,
+                retry_schedule_entry_id, retry_entity_id, retry_logical_time_ns,
+                retry_scenario_ordinal, retry_step_ordinal,
+                retry_delivery_ordinal, retry_attempt_ordinal,
+                retry_deterministic_tie_key, retry_idempotency_key,
+                retry_condition_json
+            FROM attempt_response_staging
+            WHERE run_id = ? AND attempt_id = ?
+            """,
+            (command.run_id, command.entity_id),
+        )
+    )
+    if len(result.rows) != 1 or tuple(result.rows[0]) != _attempt_response_staging_values(staging):
+        raise IdempotencyConflictError(
+            "attempt response staging replay differs from durable evidence"
+        )
+
+
+def _validate_terminal_response_staging(
+    transaction: JournalTransaction,
+    *,
+    command: TransitionCommand[LifecycleState],
+    staging: AttemptResponseStagingCommand | None,
+    transport_evidence: AttemptTransportEvidenceCommand | None,
+) -> None:
+    del staging
+    is_response_reduction = (
+        command.entity_type is EntityType.ATTEMPT
+        and command.expected_state is AttemptState.RESPONSE_OBSERVED
+        and isinstance(command.new_state, AttemptState)
+        and command.new_state in _TERMINAL_ATTEMPT_STATES
+    )
+    if not is_response_reduction:
+        return
+    if transport_evidence is None or command.attempt_outcome is None:
+        raise IllegalTransitionError("response reduction requires its staged terminal evidence")
+    result = transaction.execute(
+        JournalStatement(
+            """
+            SELECT
+                attempt_id, record_id, run_id, scenario_id, event_id,
+                delivery_id, terminal_state, classification, evidence_state,
+                request_method, request_url_redacted, request_body_sha256,
+                request_byte_length, request_header_names_json,
+                response_status, response_body_sha256, response_captured_bytes,
+                response_truncated, error_category, error_message_redacted,
+                error_phase, response_headers_elapsed_ns,
+                retry_schedule_entry_id, retry_entity_id, retry_logical_time_ns,
+                retry_scenario_ordinal, retry_step_ordinal,
+                retry_delivery_ordinal, retry_attempt_ordinal,
+                retry_deterministic_tie_key, retry_idempotency_key,
+                retry_condition_json
+            FROM attempt_response_staging
+            WHERE run_id = ? AND attempt_id = ?
+            """,
+            (command.run_id, command.entity_id),
+        )
+    )
+    expected = AttemptResponseStagingCommand(
+        terminal_state=cast("AttemptState", command.new_state),
+        terminal_outcome=command.attempt_outcome,
+        transport_evidence=transport_evidence,
+    )
+    if len(result.rows) != 1 or tuple(result.rows[0]) != _attempt_response_staging_values(expected):
+        raise ProjectionIntegrityError(
+            "terminal response reduction differs from durable staged evidence"
+        )
+
+
+def _consume_attempt_response_staging(
+    transaction: JournalTransaction,
+    *,
+    command: TransitionCommand[LifecycleState],
+) -> None:
+    result = transaction.execute(
+        JournalStatement(
+            """
+            DELETE FROM attempt_response_staging
+            WHERE run_id = ? AND attempt_id = ?
+            """,
+            (command.run_id, command.entity_id),
+        )
+    )
+    if result.rowcount != 1:
+        raise ProjectionIntegrityError(
+            "terminal response reduction did not consume exactly one staged result"
+        )
+
+
+def _attempt_response_staging_values(
+    staging: AttemptResponseStagingCommand,
+) -> tuple[SqlValue, ...]:
+    evidence = staging.transport_evidence
+    request = evidence.request
+    response = evidence.response
+    if request is None or response is None or response.body_sha256 is None:
+        raise IllegalTransitionError(
+            "response staging lacks complete sanitized request/response metadata"
+        )
+    error = evidence.error
+    retry = staging.terminal_outcome.retry_schedule
+    return (
+        evidence.attempt_id,
+        evidence.record_id,
+        evidence.run_id,
+        evidence.scenario_id,
+        evidence.event_id,
+        evidence.delivery_id,
+        staging.terminal_state.value,
+        staging.terminal_outcome.classification.value,
+        evidence.state.value,
+        request.method,
+        request.url_redacted,
+        request.body_sha256,
+        request.byte_length,
+        canonical_request_header_names_json(request),
+        response.status,
+        response.body_sha256,
+        response.captured_bytes,
+        int(response.truncated),
+        error.category if error is not None else None,
+        error.message_redacted if error is not None else None,
+        error.phase if error is not None else None,
+        evidence.response_headers_elapsed_ns,
+        retry.schedule_entry_id if retry is not None else None,
+        retry.entity_id if retry is not None else None,
+        retry.logical_time_ns if retry is not None else None,
+        retry.scenario_ordinal if retry is not None else None,
+        retry.step_ordinal if retry is not None else None,
+        retry.delivery_ordinal if retry is not None else None,
+        retry.attempt_ordinal if retry is not None else None,
+        retry.deterministic_tie_key if retry is not None else None,
+        retry.idempotency_key if retry is not None else None,
+        retry.condition_json if retry is not None else None,
+    )
 
 
 def _require_current_owner(

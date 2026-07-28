@@ -8,6 +8,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Final
 
+from anyio.lowlevel import checkpoint
+
 from webhook_receiver_conformance.domain.enums import (
     AttemptClassification,
     AttemptEvidenceState,
@@ -44,6 +46,7 @@ from webhook_receiver_conformance.journal.transitions import (
     MAX_SAFE_INTEGER,
     AttemptPhaseEvidence,
     AttemptPhaseEvidenceCommand,
+    AttemptResponseStagingCommand,
     AttemptScheduleClaim,
     AttemptTerminalOutcome,
     AttemptTransportEvidenceCommand,
@@ -258,18 +261,6 @@ class AttemptLifecycle:
             result,
             current,
         )
-        if (
-            result.outcome is AttemptOutcome.RESPONSE
-            and result.response is not None
-            and result.response.body_complete
-        ):
-            await self._apply_phase(
-                context,
-                current,
-                AttemptState.RESPONSE_OBSERVED,
-                AttemptPhaseEvidence.RESPONSE_OBSERVED,
-            )
-            current = AttemptState.RESPONSE_OBSERVED
         predecessor = ClassifiedPredecessor(
             attempt_id=context.attempt_id,
             attempt_ordinal=context.attempt_ordinal,
@@ -293,6 +284,7 @@ class AttemptLifecycle:
         )
         decision = retry_decider(predecessor) if retry_decider is not None else None
         retry_schedule = _retry_schedule(context, decision)
+        terminal_outcome = AttemptTerminalOutcome(classification, retry_schedule)
         transport_evidence = _transport_evidence(
             context,
             command,
@@ -301,6 +293,23 @@ class AttemptLifecycle:
             terminal_state=terminal_state,
             classification=classification,
         )
+        if (
+            result.outcome is AttemptOutcome.RESPONSE
+            and result.response is not None
+            and result.response.body_complete
+        ):
+            await self._apply_phase(
+                context,
+                current,
+                AttemptState.RESPONSE_OBSERVED,
+                AttemptPhaseEvidence.RESPONSE_OBSERVED,
+                response_staging=AttemptResponseStagingCommand(
+                    terminal_state=terminal_state,
+                    terminal_outcome=terminal_outcome,
+                    transport_evidence=transport_evidence,
+                ),
+            )
+            current = AttemptState.RESPONSE_OBSERVED
         await self._repository.apply_attempt(
             _transition(
                 context,
@@ -308,7 +317,7 @@ class AttemptLifecycle:
                 terminal_state,
                 trigger="attempt_outcome",
                 timestamp=self._clock.transition_timestamp(),
-                outcome=AttemptTerminalOutcome(classification, retry_schedule),
+                outcome=terminal_outcome,
             ),
             AttemptPhaseEvidenceCommand(terminal_phase),
             transport_evidence=transport_evidence,
@@ -379,6 +388,7 @@ class AttemptLifecycle:
         *,
         body_digest: str | None = None,
         headers_digest: str | None = None,
+        response_staging: AttemptResponseStagingCommand | None = None,
     ) -> None:
         await self._repository.apply_attempt(
             _transition(
@@ -393,7 +403,12 @@ class AttemptLifecycle:
                 request_blob_hash=body_digest,
                 request_headers_hash=headers_digest,
             ),
+            response_staging=response_staging,
         )
+        # The journal writer returns only after the phase transaction has a
+        # definitive outcome. Observe any pending attempt/outer deadline here,
+        # before the executor can advance to the next physical I/O phase.
+        await checkpoint()
 
 
 def prepare_realized_attempt(

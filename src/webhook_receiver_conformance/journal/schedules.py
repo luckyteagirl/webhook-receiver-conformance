@@ -47,14 +47,13 @@ _RUN_STATE_BY_RESULT = {
     ResultCategory.RECEIVER_FAILURE: RunState.COMPLETED,
     ResultCategory.ENVIRONMENT_ERROR: RunState.COMPLETED,
     ResultCategory.UNSUPPORTED: RunState.COMPLETED,
-    ResultCategory.AMBIGUOUS: RunState.PAUSED,
     ResultCategory.CANCELLED: RunState.CANCELLED,
     ResultCategory.HARNESS_ERROR: RunState.FAILED,
     ResultCategory.INVALID_INPUT: RunState.FAILED,
 }
 _MAX_SCHEDULE_ENTRY_ID = 96
 _MAX_TIE_KEY = 256
-_SCHEDULE_ROW_WIDTH = 12
+_SCHEDULE_ROW_WIDTH = 13
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +72,7 @@ class PersistedScheduleEntry:
     deterministic_tie_key: str
     condition_json: bytes | None
     predecessor_attempt_id: str | None
+    prepared_attempt_id: str | None
 
     def __post_init__(self) -> None:
         validate_run_id(self.run_id)
@@ -116,6 +116,11 @@ class PersistedScheduleEntry:
                 self.predecessor_attempt_id,
                 expected_kind=FreshIdKind.ATTEMPT,
             )
+        if self.prepared_attempt_id is not None:
+            validate_fresh_id(
+                self.prepared_attempt_id,
+                expected_kind=FreshIdKind.ATTEMPT,
+            )
         if (self.attempt_ordinal == 1) != (self.predecessor_attempt_id is None):
             raise ValueError("only an initial schedule may omit a predecessor")
 
@@ -149,6 +154,10 @@ class FullRunCompletionRequest:
             raise ValueError("owner_epoch must be a nonnegative SQLite int64")
         if type(self.result_category) is not ResultCategory:
             raise TypeError("result_category must be a ResultCategory")
+        if self.result_category is ResultCategory.AMBIGUOUS:
+            raise ValueError(
+                "paused ambiguity is resumable and cannot carry terminal completion metadata"
+            )
         _parse_timestamp(self.completed_at)
         if type(self.transition) is not TransitionCommand:
             raise TypeError("transition must be a TransitionCommand")
@@ -183,15 +192,48 @@ class _PendingScheduleOperation:
         result = transaction.execute(
             JournalStatement(
                 """
-                SELECT schedule_entry_id, run_id, scenario_id, entity_type,
-                       entity_id, logical_time_ns, scenario_ordinal,
-                       step_ordinal, delivery_ordinal, attempt_ordinal,
-                       deterministic_tie_key, condition_json
+                SELECT schedule_entries.schedule_entry_id,
+                       schedule_entries.run_id,
+                       schedule_entries.scenario_id,
+                       schedule_entries.entity_type,
+                       schedule_entries.entity_id,
+                       schedule_entries.logical_time_ns,
+                       schedule_entries.scenario_ordinal,
+                       schedule_entries.step_ordinal,
+                       schedule_entries.delivery_ordinal,
+                       schedule_entries.attempt_ordinal,
+                       schedule_entries.deterministic_tie_key,
+                       schedule_entries.condition_json,
+                       attempts.attempt_id
                 FROM schedule_entries
-                WHERE run_id = ? AND consumed_at IS NULL
-                ORDER BY logical_time_ns, scenario_ordinal, step_ordinal,
-                         delivery_ordinal, attempt_ordinal,
-                         deterministic_tie_key, schedule_entry_id
+                JOIN runs
+                  ON runs.run_id = schedule_entries.run_id
+                LEFT JOIN deliveries
+                  ON deliveries.run_id = schedule_entries.run_id
+                 AND deliveries.scenario_id = schedule_entries.scenario_id
+                 AND deliveries.ordinal = schedule_entries.delivery_ordinal
+                LEFT JOIN attempts
+                  ON attempts.run_id = schedule_entries.run_id
+                 AND attempts.scenario_id = schedule_entries.scenario_id
+                 AND attempts.delivery_id = deliveries.delivery_id
+                 AND attempts.attempt_plan_id = schedule_entries.entity_id
+                 AND attempts.ordinal = schedule_entries.attempt_ordinal
+                 AND attempts.state IN ('scheduled', 'claimed')
+                WHERE schedule_entries.run_id = ?
+                  AND (
+                    schedule_entries.consumed_at IS NULL
+                    OR (
+                        attempts.state = 'claimed'
+                        AND schedule_entries.consumed_by_owner_epoch = runs.owner_epoch
+                    )
+                  )
+                ORDER BY schedule_entries.logical_time_ns,
+                         schedule_entries.scenario_ordinal,
+                         schedule_entries.step_ordinal,
+                         schedule_entries.delivery_ordinal,
+                         schedule_entries.attempt_ordinal,
+                         schedule_entries.deterministic_tie_key,
+                         schedule_entries.schedule_entry_id
                 """,
                 (self.run_id,),
             )
@@ -305,6 +347,7 @@ def _schedule_entry(row: tuple[object, ...]) -> PersistedScheduleEntry:
         deterministic_tie_key=_text(row[10], "deterministic_tie_key"),
         condition_json=condition_json,
         predecessor_attempt_id=_predecessor(condition_json),
+        prepared_attempt_id=(None if row[12] is None else _text(row[12], "prepared_attempt_id")),
     )
 
 

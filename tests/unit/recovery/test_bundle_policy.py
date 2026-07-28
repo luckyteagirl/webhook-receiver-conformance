@@ -19,6 +19,7 @@ from webhook_receiver_conformance.journal.run_lock import RunLockMetadata
 from webhook_receiver_conformance.manifest.compiler import compile_run_bundle
 from webhook_receiver_conformance.recovery.bundle_policy import (
     derive_bundle_recovery_policy,
+    verify_bundle_recovery_manifest,
 )
 from webhook_receiver_conformance.recovery.models import (
     AttemptRecoveryAction,
@@ -334,6 +335,8 @@ def test_derivation_rejects_manifest_or_recovery_coordinate_mismatch(
 ) -> None:
     manifest = _compiled_retry_manifest(tmp_path)
     tampered = manifest.model_copy(update={"configuration_digest": f"sha256:{'f' * 64}"})
+    with pytest.raises(ResumePolicyIntegrityError, match="verified"):
+        verify_bundle_recovery_manifest(tampered)
     with pytest.raises(ResumePolicyIntegrityError, match="verified"):
         derive_bundle_recovery_policy(tampered, _recovery_plan(_attempt(manifest)))
 

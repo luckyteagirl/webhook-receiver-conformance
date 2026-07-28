@@ -383,6 +383,35 @@ class AssertionLifecycle:
             bundle.references,
         )
 
+    async def evaluate_recovered(
+        self,
+        context: AssertionRuntimeContext,
+        assertion: AssertionConfig,
+        bundle: AssertionEvidenceBundle,
+        *,
+        expected_state: AssertionState,
+    ) -> AssertionLifecycleResult:
+        """Evaluate durable evidence without repeating its external collection.
+
+        Recovery may find an assertion still ``pending`` after its observation
+        sample committed, or ``running`` after evaluation began but before the
+        terminal record committed. Both cases consume the same immutable sample
+        records; only the former needs the normal pending-to-running edge.
+        """
+        _validate_runtime_inputs(context, assertion)
+        _validate_bundle_for_assertion(assertion, bundle)
+        if expected_state is AssertionState.PENDING:
+            await self._start(context)
+        elif expected_state is not AssertionState.RUNNING:
+            raise ValueError("recovered assertion evaluation requires pending or running")
+        normalized = _evaluate_and_normalize(assertion, bundle.payload)
+        return await self._persist(
+            context,
+            assertion,
+            normalized,
+            bundle.references,
+        )
+
     async def evaluate_observer(
         self,
         context: AssertionRuntimeContext,

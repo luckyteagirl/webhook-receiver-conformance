@@ -107,10 +107,10 @@ async def test_shell_metacharacters_remain_one_literal_argument(tmp_path: Path) 
     response = await observer.invoke(
         ObserverRequest.model_validate(
             {
-                    "protocol_version": "1.0",
-                    "request_id": "request_01J00000000000000000000000",
-                    "operation": ObserverOperation.CAPABILITIES.value,
-                }
+                "protocol_version": "1.0",
+                "request_id": "request_01J00000000000000000000000",
+                "operation": ObserverOperation.CAPABILITIES.value,
+            }
         )
     )
     assert response.snapshot_id == hostile

@@ -1,8 +1,9 @@
 """Bounded fresh-process recovery scanning and conservative classification."""
-# ruff: noqa: INP001
+# ruff: noqa: C901, EM101, INP001, TRY003
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import MappingProxyType
@@ -12,24 +13,36 @@ from webhook_receiver_conformance.domain.enums import (
     AttemptClassification,
     AttemptEvidenceState,
     AttemptState,
+    DeliveryState,
     ObservationState,
     RunState,
 )
 from webhook_receiver_conformance.domain.identifiers import FreshIdKind, new_fresh_id
-from webhook_receiver_conformance.domain.models import TransportError
+from webhook_receiver_conformance.domain.models import (
+    RequestMetadata,
+    ResponseMetadata,
+    TransportError,
+)
 from webhook_receiver_conformance.errors import ErrorCategory
-from webhook_receiver_conformance.journal.repositories import TransitionRepository
+from webhook_receiver_conformance.journal.repositories import (
+    TRIGGER_ATTEMPT_OUTCOME,
+    TransitionRepository,
+)
 from webhook_receiver_conformance.journal.service import (
     JournalService,
     JournalStatement,
     JournalTransaction,
 )
 from webhook_receiver_conformance.journal.transitions import (
+    AttemptResponseStagingCommand,
     AttemptTerminalOutcome,
     AttemptTransportEvidenceCommand,
     CausalReference,
     CommittedTransition,
+    DeliverySatisfactionEvidence,
+    DeliverySatisfactionKind,
     EntityType,
+    RetrySchedule,
     TransitionCommand,
 )
 from webhook_receiver_conformance.scheduler.clocks import TransitionTimestamp
@@ -52,7 +65,8 @@ if TYPE_CHECKING:
 MAX_RECOVERY_ITEMS = 100_000
 SCAN_PAGE_SIZE = 1_000
 _RUN_ROW_COLUMN_COUNT = 2
-_ATTEMPT_ROW_COLUMN_COUNT = 13
+_ATTEMPT_ROW_COLUMN_COUNT = 14
+_RESPONSE_STAGING_COLUMN_COUNT = 32
 _OBSERVATION_ROW_COLUMN_COUNT = 4
 
 PHASE_CONTROLLED_PRE_TRANSPORT = DurableNoSendProof.CONTROLLED_PRE_TRANSPORT.value
@@ -201,6 +215,7 @@ class _AttemptRow:
     scenario_ordinal: int
     step_ordinal: int
     delivery_ordinal: int
+    predecessor_attempt_id: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,7 +231,16 @@ class _ScanRows:
     run_state: str
     owner_epoch: int
     attempts: tuple[_AttemptRow, ...]
+    response_staging: tuple[tuple[object, ...], ...]
     observations: tuple[_ObservationRow, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _DeliveryReductionRow:
+    run_id: str
+    delivery_id: str
+    attempt_id: str
+    attempt_state: AttemptState
 
 
 @dataclass(frozen=True, slots=True)
@@ -252,6 +276,7 @@ class _ScanOperation:
             message = "recovery inventory exceeds the bounded item limit"
             raise RecoveryResourceLimitError(message)
         attempts = _load_attempt_rows(transaction, self.run_id)
+        response_staging = _load_response_staging_rows(transaction, self.run_id)
         observations = _load_observation_rows(transaction, self.run_id)
         if len(attempts) + len(observations) != total:
             message = "recovery inventory changed during its transaction"
@@ -260,7 +285,86 @@ class _ScanOperation:
             run_state=_text(run.rows[0][0], name="run state"),
             owner_epoch=_integer(run.rows[0][1], name="run owner_epoch"),
             attempts=attempts,
+            response_staging=response_staging,
             observations=observations,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _DeliveryReductionOperation:
+    run_id: str
+
+    def execute(
+        self,
+        transaction: JournalTransaction,
+    ) -> tuple[_DeliveryReductionRow, ...]:
+        result = transaction.execute(
+            JournalStatement(
+                """
+                SELECT deliveries.delivery_id, attempts.attempt_id, attempts.state
+                FROM deliveries
+                JOIN attempts
+                  ON attempts.run_id = deliveries.run_id
+                 AND attempts.delivery_id = deliveries.delivery_id
+                WHERE deliveries.run_id = ?
+                  AND deliveries.state = 'active'
+                  AND attempts.state IN (
+                      'not_sent',
+                      'succeeded',
+                      'rejected',
+                      'transport_failed',
+                      'cancelled'
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM attempts AS successor
+                      WHERE successor.run_id = attempts.run_id
+                        AND successor.delivery_id = attempts.delivery_id
+                        AND successor.ordinal > attempts.ordinal
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM schedule_entries
+                      WHERE schedule_entries.run_id = deliveries.run_id
+                        AND schedule_entries.scenario_id = deliveries.scenario_id
+                        AND schedule_entries.delivery_ordinal = deliveries.ordinal
+                        AND (
+                            schedule_entries.consumed_at IS NULL
+                            OR EXISTS (
+                                SELECT 1
+                                FROM attempts AS prepared
+                                WHERE prepared.run_id = schedule_entries.run_id
+                                  AND prepared.scenario_id = schedule_entries.scenario_id
+                                  AND prepared.delivery_id = deliveries.delivery_id
+                                  AND prepared.attempt_plan_id = schedule_entries.entity_id
+                                  AND prepared.ordinal = schedule_entries.attempt_ordinal
+                                  AND prepared.state = 'claimed'
+                                  AND schedule_entries.consumed_by_owner_epoch = (
+                                      SELECT owner_epoch
+                                      FROM runs
+                                      WHERE runs.run_id = schedule_entries.run_id
+                                  )
+                            )
+                        )
+                  )
+                ORDER BY deliveries.scenario_id, deliveries.ordinal,
+                         attempts.ordinal, attempts.attempt_id
+                """,
+                (self.run_id,),
+            )
+        )
+        if len(result.rows) > MAX_RECOVERY_ITEMS:
+            raise RecoveryResourceLimitError(
+                "delivery recovery inventory exceeds the bounded item limit"
+            )
+        return tuple(
+            _DeliveryReductionRow(
+                run_id=self.run_id,
+                delivery_id=_text(row[0], name="delivery_id"),
+                attempt_id=_text(row[1], name="attempt_id"),
+                attempt_state=AttemptState(_text(row[2], name="attempt state")),
+            )
+            for row in result.rows
         )
 
 
@@ -311,12 +415,40 @@ class RecoveryScanner:
         except ValueError as error:
             message = "recovery run contains an undeclared state"
             raise RecoveryIntegrityError(message) from error
-        attempts = tuple(
-            sorted(
-                (_attempt_item(self._context.run_id, row) for row in rows.attempts),
-                key=lambda item: item.deterministic_key,
+        try:
+            staging_by_attempt = {
+                _text(row[0], name="staged response attempt_id"): _response_staging(row)
+                for row in rows.response_staging
+            }
+            if len(staging_by_attempt) != len(rows.response_staging):
+                raise RecoveryIntegrityError(
+                    "response staging contains duplicate attempt identities"
+                )
+            attempts = tuple(
+                sorted(
+                    (
+                        _attempt_item(
+                            self._context.run_id,
+                            row,
+                            staging_by_attempt.get(row.attempt_id),
+                        )
+                        for row in rows.attempts
+                    ),
+                    key=lambda item: item.deterministic_key,
+                )
             )
-        )
+        except RecoveryScannerError:
+            raise
+        except (TypeError, ValueError) as error:
+            raise RecoveryIntegrityError(
+                "durable response staging contains invalid evidence"
+            ) from error
+        if {item.attempt_id for item in attempts if item.response_staging is not None} != set(
+            staging_by_attempt
+        ):
+            raise RecoveryIntegrityError(
+                "durable response staging is not bound to response-observed attempts"
+            )
         observations = tuple(
             sorted(
                 (_observation_item(self._context.run_id, row) for row in rows.observations),
@@ -350,18 +482,38 @@ class RecoveryScanner:
         if plan.run_id != self._context.run_id or plan.owner_epoch != self._context.owner_epoch:
             message = "recovery plan belongs to a different owner context"
             raise RecoveryOwnerEpochError(message)
+        for item in plan.attempts:
+            if item.action is AttemptRecoveryAction.RESUME_SCHEDULED:
+                await self._repository.rebind_recoverable_attempt(
+                    item.run_id,
+                    item.attempt_id,
+                    expected_state=AttemptState.SCHEDULED,
+                    owner_epoch=plan.owner_epoch,
+                )
+            elif item.action is AttemptRecoveryAction.RECLAIM_EXPIRED_CLAIM:
+                await self._repository.rebind_recoverable_attempt(
+                    item.run_id,
+                    item.attempt_id,
+                    expected_state=AttemptState.CLAIMED,
+                    owner_epoch=plan.owner_epoch,
+                )
         committed_attempts: list[CommittedTransition] = []
         for item in plan.attempts:
             if not item.requires_transition:
                 continue
-            record_id = await self._repository.attempt_record_id(
-                item.run_id,
-                item.attempt_id,
-            )
-            evidence = _attempt_recovery_evidence(
-                item,
-                record_id=(new_fresh_id(FreshIdKind.RECORD) if record_id is None else record_id),
-            )
+            if item.response_staging is not None:
+                evidence = item.response_staging.transport_evidence
+            else:
+                record_id = await self._repository.attempt_record_id(
+                    item.run_id,
+                    item.attempt_id,
+                )
+                evidence = _attempt_recovery_evidence(
+                    item,
+                    record_id=(
+                        new_fresh_id(FreshIdKind.RECORD) if record_id is None else record_id
+                    ),
+                )
             committed_attempts.append(
                 await self._repository.apply_attempt(
                     _attempt_transition(item, plan.owner_epoch, timestamp),
@@ -379,7 +531,22 @@ class RecoveryScanner:
             for item in plan.observations
             if item.requires_transition
         ]
-        return (*committed_attempts, *committed_observations)
+        reductions = await self._service.execute(_DeliveryReductionOperation(plan.run_id))
+        committed_deliveries = [
+            await self._repository.apply(
+                _delivery_reduction_transition(
+                    item,
+                    owner_epoch=plan.owner_epoch,
+                    timestamp=timestamp,
+                )
+            )
+            for item in reductions
+        ]
+        return (
+            *committed_attempts,
+            *committed_observations,
+            *committed_deliveries,
+        )
 
 
 def classify_attempt_state(
@@ -460,7 +627,8 @@ def _load_attempt_rows(
                     attempts.owner_epoch,
                     scenarios.ordinal,
                     deliveries.step_ordinal,
-                    deliveries.ordinal
+                    deliveries.ordinal,
+                    attempts.predecessor_attempt_id
                 FROM attempts
                 JOIN scenarios
                   ON scenarios.run_id = attempts.run_id
@@ -483,6 +651,54 @@ def _load_attempt_rows(
             parsed = _attempt_row(row)
             rows.append(parsed)
             last_attempt_id = parsed.attempt_id
+        if len(result.rows) < SCAN_PAGE_SIZE:
+            break
+    return tuple(rows)
+
+
+def _load_response_staging_rows(
+    transaction: JournalTransaction,
+    run_id: str,
+) -> tuple[tuple[object, ...], ...]:
+    rows: list[tuple[object, ...]] = []
+    last_attempt_id = ""
+    while True:
+        result = transaction.execute(
+            JournalStatement(
+                """
+                SELECT
+                    attempt_id, record_id, run_id, scenario_id, event_id,
+                    delivery_id, terminal_state, classification, evidence_state,
+                    request_method, request_url_redacted, request_body_sha256,
+                    request_byte_length, request_header_names_json,
+                    response_status, response_body_sha256,
+                    response_captured_bytes, response_truncated,
+                    error_category, error_message_redacted, error_phase,
+                    response_headers_elapsed_ns,
+                    retry_schedule_entry_id, retry_entity_id,
+                    retry_logical_time_ns, retry_scenario_ordinal,
+                    retry_step_ordinal, retry_delivery_ordinal,
+                    retry_attempt_ordinal, retry_deterministic_tie_key,
+                    retry_idempotency_key, retry_condition_json
+                FROM attempt_response_staging
+                WHERE run_id = ? AND attempt_id > ?
+                ORDER BY attempt_id
+                LIMIT ?
+                """,
+                (run_id, last_attempt_id, SCAN_PAGE_SIZE),
+            )
+        )
+        if not result.rows:
+            break
+        for row in result.rows:
+            if len(row) != _RESPONSE_STAGING_COLUMN_COUNT:
+                raise RecoveryIntegrityError("response staging recovery row has an invalid shape")
+            materialized = tuple(row)
+            rows.append(materialized)
+            last_attempt_id = _text(
+                materialized[0],
+                name="staged response attempt_id",
+            )
         if len(result.rows) < SCAN_PAGE_SIZE:
             break
     return tuple(rows)
@@ -553,6 +769,10 @@ def _attempt_row(row: Sequence[object]) -> _AttemptRow:
         scenario_ordinal=_integer(row[10], name="scenario ordinal"),
         step_ordinal=_integer(row[11], name="step ordinal"),
         delivery_ordinal=_integer(row[12], name="delivery ordinal"),
+        predecessor_attempt_id=_optional_text(
+            row[13],
+            name="predecessor_attempt_id",
+        ),
     )
 
 
@@ -568,7 +788,11 @@ def _observation_row(row: Sequence[object]) -> _ObservationRow:
     )
 
 
-def _attempt_item(run_id: str, row: _AttemptRow) -> AttemptRecoveryItem:
+def _attempt_item(
+    run_id: str,
+    row: _AttemptRow,
+    response_staging: AttemptResponseStagingCommand | None,
+) -> AttemptRecoveryItem:
     try:
         state = AttemptState(row.state)
     except ValueError as error:
@@ -577,6 +801,12 @@ def _attempt_item(run_id: str, row: _AttemptRow) -> AttemptRecoveryItem:
     _validate_attempt_projection(row, state)
     raw_proof = _durable_no_send_proof(row.phase)
     action, ambiguity, target = classify_attempt_state(state, raw_proof)
+    if action is AttemptRecoveryAction.REDUCE_DURABLE_RESPONSE:
+        if response_staging is None:
+            raise RecoveryIntegrityError("response-observed attempt lacks durable response staging")
+        target = response_staging.terminal_state
+    elif response_staging is not None:
+        raise RecoveryIntegrityError("non-response-observed attempt retains response staging")
     proof = (
         raw_proof if action is AttemptRecoveryAction.TERMINATE_NOT_SENT else DurableNoSendProof.NONE
     )
@@ -595,6 +825,136 @@ def _attempt_item(run_id: str, row: _AttemptRow) -> AttemptRecoveryItem:
         action=action,
         ambiguity=ambiguity,
         target_state=target,
+        predecessor_attempt_id=row.predecessor_attempt_id,
+        response_staging=response_staging,
+    )
+
+
+def _response_staging(
+    row: Sequence[object],
+) -> AttemptResponseStagingCommand:
+    if len(row) != _RESPONSE_STAGING_COLUMN_COUNT:
+        raise RecoveryIntegrityError("response staging recovery row has an invalid shape")
+    headers_blob = row[13]
+    if type(headers_blob) is not bytes:
+        raise RecoveryIntegrityError("staged request header names are not a BLOB")
+    try:
+        headers_value = json.loads(headers_blob)
+    except (UnicodeDecodeError, json.JSONDecodeError) as caught:
+        raise RecoveryIntegrityError("staged request header names are malformed") from caught
+    if type(headers_value) is not list or any(
+        type(item) is not str for item in cast("list[object]", headers_value)
+    ):
+        raise RecoveryIntegrityError("staged request header names are malformed")
+    request_method = _text(row[9], name="staged request method")
+    if request_method != "POST":
+        raise RecoveryIntegrityError("staged request method is unsupported")
+    truncated = _integer(row[17], name="staged response truncated")
+    if truncated not in {0, 1}:
+        raise RecoveryIntegrityError("staged response truncated flag is invalid")
+    error: TransportError | None = None
+    if row[18] is not None:
+        error = TransportError(
+            category=_text(row[18], name="staged error category"),
+            message_redacted=_text(
+                row[19],
+                name="staged redacted error message",
+            ),
+            phase=_optional_text(row[20], name="staged error phase"),
+        )
+    attempt_id = _text(row[0], name="staged response attempt_id")
+    scenario_id = _text(row[3], name="staged response scenario_id")
+    retry: RetrySchedule | None = None
+    if row[22] is not None:
+        condition = row[31]
+        if condition is not None and type(condition) is not bytes:
+            raise RecoveryIntegrityError("staged retry condition is not a BLOB")
+        retry = RetrySchedule(
+            schedule_entry_id=_text(
+                row[22],
+                name="staged retry schedule_entry_id",
+            ),
+            scenario_id=scenario_id,
+            entity_type="attempt",
+            entity_id=_text(row[23], name="staged retry entity_id"),
+            logical_time_ns=_integer(
+                row[24],
+                name="staged retry logical_time_ns",
+            ),
+            scenario_ordinal=_integer(
+                row[25],
+                name="staged retry scenario ordinal",
+            ),
+            step_ordinal=_integer(
+                row[26],
+                name="staged retry step ordinal",
+            ),
+            delivery_ordinal=_integer(
+                row[27],
+                name="staged retry delivery ordinal",
+            ),
+            attempt_ordinal=_integer(
+                row[28],
+                name="staged retry attempt ordinal",
+            ),
+            deterministic_tie_key=_text(
+                row[29],
+                name="staged retry deterministic tie key",
+            ),
+            idempotency_key=_text(
+                row[30],
+                name="staged retry idempotency key",
+            ),
+            predecessor_attempt_id=attempt_id,
+            condition_json=condition,
+        )
+    classification = AttemptClassification(_text(row[7], name="staged response classification"))
+    return AttemptResponseStagingCommand(
+        terminal_state=AttemptState(_text(row[6], name="staged response terminal state")),
+        terminal_outcome=AttemptTerminalOutcome(classification, retry),
+        transport_evidence=AttemptTransportEvidenceCommand(
+            record_id=_text(row[1], name="staged response record_id"),
+            run_id=_text(row[2], name="staged response run_id"),
+            scenario_id=scenario_id,
+            event_id=_text(row[4], name="staged response event_id"),
+            delivery_id=_text(row[5], name="staged response delivery_id"),
+            attempt_id=attempt_id,
+            state=AttemptEvidenceState(_text(row[8], name="staged response evidence state")),
+            classification=classification,
+            request=RequestMetadata(
+                method="POST",
+                url_redacted=_text(
+                    row[10],
+                    name="staged redacted request URL",
+                ),
+                body_sha256=_text(
+                    row[11],
+                    name="staged request body digest",
+                ),
+                byte_length=_integer(
+                    row[12],
+                    name="staged request byte length",
+                ),
+                header_names=tuple(cast("list[str]", headers_value)),
+            ),
+            response=ResponseMetadata(
+                status=_integer(row[14], name="staged response status"),
+                body_sha256=_text(
+                    row[15],
+                    name="staged response body digest",
+                ),
+                captured_bytes=_integer(
+                    row[16],
+                    name="staged response captured bytes",
+                ),
+                truncated=bool(truncated),
+            ),
+            error=error,
+            response_headers_elapsed_ns=_optional_integer(
+                row[21],
+                name="staged response headers elapsed",
+            ),
+        ),
     )
 
 
@@ -662,12 +1022,21 @@ def _attempt_transition(
         target = AttemptState.NOT_SENT
     elif item.target_state is AttemptState.UNKNOWN_OUTCOME:
         target = AttemptState.UNKNOWN_OUTCOME
+    elif (
+        item.action is AttemptRecoveryAction.REDUCE_DURABLE_RESPONSE
+        and item.response_staging is not None
+        and item.target_state is item.response_staging.terminal_state
+    ):
+        target = item.response_staging.terminal_state
     else:
         message = "attempt recovery item has no automatic terminal transition"
         raise RecoveryIntegrityError(message)
     if target is AttemptState.UNKNOWN_OUTCOME:
         classification = AttemptClassification.AMBIGUOUS
         trigger = TRIGGER_RECOVERY_INTERRUPTED_SEND
+    elif item.response_staging is not None:
+        classification = item.response_staging.terminal_outcome.classification
+        trigger = "recovery_response_reduction"
     else:
         classification = (
             AttemptClassification.HARNESS_FAILURE
@@ -691,7 +1060,11 @@ def _attempt_transition(
             target.value,
         ),
         causal_reference=CausalReference(item.run_id, item.attempt_id),
-        attempt_outcome=AttemptTerminalOutcome(classification),
+        attempt_outcome=(
+            item.response_staging.terminal_outcome
+            if item.response_staging is not None
+            else AttemptTerminalOutcome(classification)
+        ),
     )
 
 
@@ -765,6 +1138,49 @@ def _observation_transition(
             ObservationState.ERROR.value,
         ),
         causal_reference=CausalReference(item.run_id, item.observation_id),
+    )
+
+
+def _delivery_reduction_transition(
+    item: _DeliveryReductionRow,
+    *,
+    owner_epoch: int,
+    timestamp: TransitionTimestamp,
+) -> TransitionCommand[DeliveryState]:
+    target = {
+        AttemptState.SUCCEEDED: DeliveryState.SATISFIED,
+        AttemptState.CANCELLED: DeliveryState.CANCELLED,
+        AttemptState.NOT_SENT: DeliveryState.EXHAUSTED,
+        AttemptState.REJECTED: DeliveryState.EXHAUSTED,
+        AttemptState.TRANSPORT_FAILED: DeliveryState.EXHAUSTED,
+    }.get(item.attempt_state)
+    if target is None:
+        raise RecoveryIntegrityError("delivery recovery cannot reduce from a nonterminal attempt")
+    cause = CausalReference(item.run_id, item.attempt_id)
+    return TransitionCommand(
+        run_id=item.run_id,
+        transition_id=_transition_id(item.delivery_id, target.value),
+        entity_type=EntityType.DELIVERY,
+        entity_id=item.delivery_id,
+        expected_state=DeliveryState.ACTIVE,
+        new_state=target,
+        trigger_category=TRIGGER_ATTEMPT_OUTCOME,
+        timestamp=timestamp,
+        owner_epoch=owner_epoch,
+        idempotency_key=_idempotency_key(
+            item.delivery_id,
+            DeliveryState.ACTIVE.value,
+            target.value,
+        ),
+        causal_reference=cause,
+        delivery_satisfaction=(
+            DeliverySatisfactionEvidence(
+                DeliverySatisfactionKind.ATTEMPT,
+                cause,
+            )
+            if target is DeliveryState.SATISFIED
+            else None
+        ),
     )
 
 

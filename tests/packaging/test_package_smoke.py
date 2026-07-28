@@ -16,6 +16,7 @@ import yaml
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
+    from http.server import ThreadingHTTPServer
     from types import ModuleType
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -49,8 +50,7 @@ def test_workflow_covers_every_supported_platform_and_python() -> None:
     assert "pipx==1.7.1" in text
     assert "--exercise-runners" in text
     assert (
-        "--expected-digest "
-        "sha256:66c361e5c82d111575e14811d86e3ed7f03eb3a13018aa4d5d5c30ac26681e35"
+        "--expected-digest sha256:66c361e5c82d111575e14811d86e3ed7f03eb3a13018aa4d5d5c30ac26681e35"
     ) in text
     assert "@11bd71901bbe5b1630ceea73d27597364c9af683" in text
     assert "@42375524e23c412d93fb67b49958b491fce71c38" in text
@@ -78,6 +78,12 @@ def test_normalized_digest_ignores_only_declared_platform_fields() -> None:
     changed = {**second, "value": 8}
     assert digest(first) == digest(second)
     assert digest(first) != digest(changed)
+
+
+def test_smoke_server_rejects_reused_listener_address() -> None:
+    module = _smoke_module()
+    server_type = cast("type[ThreadingHTTPServer]", module._SmokeServer)  # noqa: SLF001
+    assert server_type.allow_reuse_address is False
 
 
 @pytest.fixture(scope="module")

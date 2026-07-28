@@ -30,6 +30,7 @@ from webhook_receiver_conformance.observers.protocol import (
 
 REQUEST_ID = "request_01J00000000000000000000000"
 CANARY = "ambient-parent-secret-canary"
+_CURRENT_INTERPRETER = str(Path(sys.executable).resolve(strict=True))
 _RESPONSE = """{
     "protocol_version": "1.0",
     "request_id": request["request_id"],
@@ -238,7 +239,7 @@ async def test_timeout_kills_descendant_session_before_canary_write(tmp_path: Pa
     )
     code = (
         "import subprocess,sys,time;"
-        f"subprocess.Popen([sys.executable,'-c',{descendant!r}]);"
+        f"subprocess.Popen([{_CURRENT_INTERPRETER!r},'-c',{descendant!r}]);"
         "time.sleep(60)"
     )
     observer = CommandObserver(_config(code, timeout="20ms"), project_root=tmp_path)
@@ -270,6 +271,36 @@ def test_working_directory_escape_and_symlink_are_rejected(tmp_path: Path) -> No
             _config(_NOMINAL_CODE, working_directory="link"),
             project_root=tmp_path,
         )
+
+
+def test_pinned_current_interpreter_launcher_symlink_is_canonicalized() -> None:
+    current = Path(sys.executable)
+    if not current.is_symlink():
+        pytest.skip("the active interpreter launcher is not a symlink")
+
+    trusted = command_module._safe_executable(  # pyright: ignore[reportPrivateUsage]
+        current
+    )
+    base_executable = vars(sys).get("_base_executable")
+    assert isinstance(base_executable, str)
+    assert trusted == Path(base_executable).resolve(strict=True)
+    assert trusted.is_file()
+    assert not trusted.is_symlink()
+
+
+def test_attacker_controlled_interpreter_symlink_remains_rejected(tmp_path: Path) -> None:
+    trusted = Path(sys.executable).resolve(strict=True)
+    attacker_link = tmp_path / "attacker-controlled-python"
+    try:
+        attacker_link.symlink_to(trusted)
+    except OSError as error:
+        pytest.skip(f"symlink creation unavailable: {type(error).__name__}")
+    wire = _config(_NOMINAL_CODE).to_wire()
+    wire["argv"] = [str(attacker_link), "-c", _NOMINAL_CODE]
+    config = CommandObserverConfig.model_validate(wire)
+    with pytest.raises(CommandObserverError) as captured:
+        CommandObserver(config, project_root=tmp_path)
+    assert str(captured.value.diagnostic.code) == "OBSERVER_EXECUTABLE_INVALID"
 
 
 @pytest.mark.anyio
@@ -338,7 +369,7 @@ async def test_outer_cancellation_propagates_and_kills_descendant(tmp_path: Path
     code = (
         "import os,subprocess,sys,time;"
         "os.close(0);"
-        f"subprocess.Popen([sys.executable,'-c',{descendant!r}]);"
+        f"subprocess.Popen([{_CURRENT_INTERPRETER!r},'-c',{descendant!r}]);"
         "time.sleep(60)"
     )
     observer = CommandObserver(_config(code, timeout="10s"), project_root=tmp_path)

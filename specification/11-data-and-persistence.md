@@ -41,6 +41,7 @@ Writes use explicit `BEGIN IMMEDIATE`. The journal service is the only writer. L
 | `event_dependencies` | `(event_id, dependency_event_id)` | same scenario; no self-edge; DAG validated before insert |
 | `deliveries` | `delivery_id` | event_id FK, ordinal UNIQUE per scenario, logical_time_ns, state |
 | `attempts` | `attempt_id` | delivery_id FK, ordinal UNIQUE per delivery, state, phase, request hash, outcome category |
+| `attempt_response_staging` | `attempt_id` | immutable, bounded, sanitized complete-response metadata plus exact terminal classification and optional retry schedule; consumed by terminal reduction |
 | `schedule_entries` | `schedule_entry_id` | entity type/id, logical time, deterministic tie key, condition, consumed_at |
 | `observer_series` | `observation_id` | scenario/event/checkpoint/observer identity |
 | `observation_samples` | `sample_id` | observation_id FK, sample_sequence UNIQUE, status, evidence blob |
@@ -65,8 +66,12 @@ Every foreign key is immediate unless a migration has a documented need for defe
 1. **Plan import:** run + all manifest entities in one transaction or none.
 2. **Claim:** schedule entry consumption, lease/owner epoch, and entity transition in one transaction.
 3. **Before send:** attempt row and `sending` transition commit before the executor may release request bytes.
-4. **After transport:** one terminal attempt transition and sanitized evidence append in one transaction.
-5. **Retry scheduling:** terminal result and conditional next schedule entry in one transaction.
+4. **Response observed:** the `response_observed` transition and its bounded,
+   sanitized response staging row commit atomically before terminal reduction.
+5. **After transport:** terminal attempt transition, sanitized evidence append,
+   optional retry schedule, and response-staging consumption commit in one transaction.
+   Fresh-process recovery performs this same reduction from the staging row without
+   contacting the receiver again.
 6. **Observation:** one sample and state transition in one transaction.
 7. **Assertion:** evaluation, evidence links, and assertion state in one transaction.
 8. **Run terminal:** scenario reductions, run category, and report-generation checkpoint in one transaction.

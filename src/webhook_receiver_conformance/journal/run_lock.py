@@ -345,6 +345,36 @@ class RunLock:
         """Return whether this owner released its retained lock handle."""
         return self._closed
 
+    def require_owner(
+        self,
+        run_directory: str | os.PathLike[str],
+        *,
+        run_id: str,
+        owner_epoch: int,
+    ) -> None:
+        """Verify that this still-live guard owns the exact requested run epoch."""
+        if self._closed:
+            message = "a released run lock cannot authorize execution"
+            raise RunLockError(message)
+        directory = _validate_run_directory(run_directory)
+        validated_run_id = validate_run_id(run_id)
+        _validate_nonnegative_integer(
+            owner_epoch,
+            name="owner_epoch",
+            maximum=MAX_OWNER_EPOCH,
+        )
+        if (
+            self._lock_path != directory / LOCK_FILENAME
+            or self.metadata.run_id != validated_run_id
+            or self.metadata.owner_epoch != owner_epoch
+        ):
+            message = "run-lock ownership does not match the requested run epoch"
+            raise RunLockEpochError(message)
+        _verify_descriptor_path_identity(self._descriptor, self._lock_path)
+        if _read_metadata(self._descriptor) != self.metadata:
+            message = "run-lock metadata changed while ownership was retained"
+            raise RunLockMetadataError(message)
+
     def release(self) -> None:
         """Release ownership and remove only the still-identical lock path."""
         if self._closed:

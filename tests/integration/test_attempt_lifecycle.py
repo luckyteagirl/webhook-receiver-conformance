@@ -165,6 +165,15 @@ class _InjectedCrashError(RuntimeError):
     pass
 
 
+@dataclass(frozen=True, slots=True)
+class _ResponseRecoveryCase:
+    response: bytes
+    target: AttemptState
+    classification: str
+    evidence_state: str
+    retry_status: int | None = None
+
+
 @dataclass(slots=True)
 class _CrashOnOccurrence:
     target: TransitionMutationPhase | AttemptMutationPhase
@@ -560,7 +569,10 @@ async def test_terminal_failpoints_expose_no_partial_attempt_record(
         with pytest.raises(_InjectedCrashError, match=phase.value):
             await lifecycle.execute(
                 _context(attempt_id),
-                HttpAttemptCommand(policy=_policy(), body=b"x"),
+                HttpAttemptCommand(
+                    policy=_policy(),
+                    body=b"secret-canary-response-staging",
+                ),
             )
         assert await _rows(service, "SELECT state FROM attempts") == (("response_observed",),)
         assert await _rows(service, "SELECT COUNT(*) FROM attempt_records") == ((0,),)
@@ -573,6 +585,139 @@ async def test_terminal_failpoints_expose_no_partial_attempt_record(
         plan = await RecoveryScanner(reopened, _recovery_context(run)).scan()
         assert plan.attempts[0].prior_state is AttemptState.RESPONSE_OBSERVED
         assert plan.attempts[0].action is AttemptRecoveryAction.REDUCE_DURABLE_RESPONSE
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "case",
+    [
+        _ResponseRecoveryCase(
+            response=b"HTTP/1.1 204 No Content\r\n\r\n",
+            target=AttemptState.SUCCEEDED,
+            classification="receiver_accepted",
+            evidence_state="acknowledged",
+        ),
+        _ResponseRecoveryCase(
+            response=b"HTTP/1.1 503 Retry\r\nContent-Length: 0\r\n\r\n",
+            target=AttemptState.REJECTED,
+            classification="receiver_rejected",
+            evidence_state="rejected",
+            retry_status=503,
+        ),
+    ],
+)
+async def test_crash_after_durable_response_recovers_exact_result_without_resend(
+    tmp_path: Path,
+    case: _ResponseRecoveryCase,
+) -> None:
+    run = create_run_database(tmp_path, run_id=RUN_ID)
+    clock = RuntimeClock(ClockPolicy(ClockMode.REAL))
+    attempt_id = new_fresh_id(FreshIdKind.ATTEMPT)
+    connector = _Connector(case.response)
+
+    def decide(predecessor: ClassifiedPredecessor) -> RetryDecision:
+        assert case.retry_status is not None
+        assert predecessor.predicate is RetryPredicate.RETRYABLE_STATUS
+        assert predecessor.status_code == case.retry_status
+        condition = json.dumps(
+            {
+                "classification": "receiver_rejected",
+                "disposition": "scheduled",
+                "logical_due_ns": 10,
+                "next_attempt_ordinal": 2,
+                "predecessor_attempt_id": attempt_id,
+                "predecessor_attempt_ordinal": 1,
+                "predicate": "retryable_status",
+                "status_code": case.retry_status,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode()
+        return RetryDecision(
+            RetryDisposition.SCHEDULED,
+            attempt_id,
+            1,
+            2,
+            NEXT_ATTEMPT_PLAN_ID,
+            "retry.response.schedule",
+            "retry.response.schedule.key",
+            10,
+            RetryPredicate.RETRYABLE_STATUS,
+            condition,
+            None,
+        )
+
+    async with JournalService.open(run.database_path) as service:
+        await _seed(service)
+        lifecycle = AttemptLifecycle(
+            repository=TransitionRepository(
+                service,
+                crash_hook=_CrashOnOccurrence(
+                    AttemptMutationPhase.AFTER_PHASE_EVIDENCE,
+                    6,
+                ),
+            ),
+            executor=_executor(connector),
+            clock=clock,
+        )
+        await lifecycle.claim(_claim(attempt_id, clock))
+        with pytest.raises(
+            _InjectedCrashError,
+            match=AttemptMutationPhase.AFTER_PHASE_EVIDENCE.value,
+        ):
+            await lifecycle.execute(
+                _context(attempt_id),
+                HttpAttemptCommand(policy=_policy(), body=b"x"),
+                retry_decider=(decide if case.retry_status is not None else None),
+                retryable_status=(
+                    (lambda status: status == case.retry_status)
+                    if case.retry_status is not None
+                    else None
+                ),
+            )
+        assert len(connector.streams) == 1
+        assert b"secret-canary-response-staging" not in run.database_path.read_bytes()
+        sent_before_recovery = tuple(connector.streams[0].sent)
+        assert await _rows(
+            service,
+            """
+            SELECT attempts.state, attempt_response_staging.terminal_state,
+                   attempt_response_staging.classification
+            FROM attempts
+            JOIN attempt_response_staging
+              ON attempt_response_staging.attempt_id = attempts.attempt_id
+            """,
+        ) == (("response_observed", case.target.value, case.classification),)
+
+        scanner = RecoveryScanner(service, _recovery_context(run))
+        plan = await scanner.scan()
+        assert plan.attempts[0].target_state is case.target
+        await scanner.apply(plan, timestamp=clock.transition_timestamp())
+
+        assert len(connector.streams) == 1
+        assert tuple(connector.streams[0].sent) == sent_before_recovery
+        assert await _rows(
+            service,
+            "SELECT state, outcome_category FROM attempts",
+        ) == ((case.target.value, case.classification),)
+        assert await _rows(
+            service,
+            "SELECT state, classification FROM attempt_records",
+        ) == ((case.evidence_state, case.classification),)
+        assert await _rows(
+            service,
+            "SELECT count(*) FROM attempt_response_staging",
+        ) == ((0,),)
+        assert await _rows(
+            service,
+            """
+            SELECT count(*) FROM schedule_entries
+            WHERE attempt_ordinal = 2 AND consumed_at IS NULL
+            """,
+        ) == ((int(case.retry_status is not None),),)
+        assert await _rows(service, "SELECT state FROM deliveries") == (
+            ("active" if case.retry_status is not None else "satisfied",),
+        )
 
 
 @pytest.mark.anyio

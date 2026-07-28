@@ -9,6 +9,7 @@ from enum import StrEnum
 from typing import Final, Protocol, cast, runtime_checkable
 
 import anyio
+from anyio.lowlevel import checkpoint
 
 from webhook_receiver_conformance.domain.enums import ObservationState, ObservationStatus
 from webhook_receiver_conformance.domain.identifiers import (
@@ -152,7 +153,12 @@ class ObservationJournal(Protocol):
         plan: ObservationPollPlan,
         timestamp: TransitionTimestamp,
     ) -> None:
-        """Create and move one series from scheduled to running."""
+        """Create and move one series from scheduled to running.
+
+        Implementations must not return until the commit has a definitive outcome.
+        Once accepted, commit ownership remains structured and cannot be detached
+        from the calling task.
+        """
         ...
 
     async def append_sample(
@@ -160,7 +166,11 @@ class ObservationJournal(Protocol):
         plan: ObservationPollPlan,
         sample: ObservationSampleCommit,
     ) -> None:
-        """Append one sample and atomically apply its terminal edge when present."""
+        """Append one sample and atomically apply its terminal edge when present.
+
+        Implementations obey the same definitive-outcome and no-background-work
+        constraint as ``begin_series``.
+        """
         ...
 
 
@@ -199,7 +209,12 @@ class ObservationPollResult:
 class ObservationPoller:
     """Invoke one observer series without hidden backoff or background work."""
 
-    __slots__ = ("_clock", "_fresh_id", "_journal", "_observer")
+    __slots__ = (
+        "_clock",
+        "_fresh_id",
+        "_journal",
+        "_observer",
+    )
 
     def __init__(
         self,
@@ -236,11 +251,20 @@ class ObservationPoller:
         if not callable(predicate):
             raise TypeError("predicate must be callable")
 
-        await self._journal.begin_series(plan, self._clock.transition_timestamp())
-        sample_ids: list[str] = []
-        deadline = self._clock.deadline_after(plan.within_ns)
         request = plan.request
         sample_sequence = 1
+        await self._journal.begin_series(
+            plan,
+            self._clock.transition_timestamp(),
+        )
+        try:
+            await checkpoint()
+        except anyio.get_cancelled_exc_class():
+            await self._cancel(plan, request, sample_sequence=sample_sequence)
+            raise
+
+        sample_ids: list[str] = []
+        deadline = self._clock.deadline_after(plan.within_ns)
         last_response: ObserverResponse | None = None
         valid_evidence_seen = False
 
@@ -289,19 +313,7 @@ class ObservationPoller:
             try:
                 response = await self._invoke_with_deadline(plan, request, deadline)
             except anyio.get_cancelled_exc_class():
-                record = self._error_record(
-                    plan,
-                    request,
-                    sample_sequence=sample_sequence,
-                    category="cancelled",
-                    message="Observer invocation was cancelled.",
-                )
-                with anyio.CancelScope(shield=True):
-                    await self._append(
-                        plan,
-                        record,
-                        terminal_state=ObservationState.CANCELLED,
-                    )
+                await self._cancel(plan, request, sample_sequence=sample_sequence)
                 raise
             except TimeoutError:
                 record = self._timeout_record(
@@ -557,16 +569,24 @@ class ObservationPoller:
         sample_sequence: int,
         deadline: MonotonicDeadline,
     ) -> tuple[ObserverRequest, int]:
-        remaining_ns = deadline.remaining_ns(self._clock)
-        if remaining_ns:
-            await self._clock.sleep_physical(min(plan.poll_interval_ns, remaining_ns))
-        return (
-            retry_observe_request(
-                request,
-                self._fresh_id(FreshIdKind.SAMPLE),
-            ),
-            sample_sequence + 1,
+        next_request = retry_observe_request(
+            request,
+            self._fresh_id(FreshIdKind.SAMPLE),
         )
+        next_sequence = sample_sequence + 1
+        remaining_ns = deadline.remaining_ns(self._clock)
+        try:
+            await checkpoint()
+            if remaining_ns:
+                await self._clock.sleep_physical(min(plan.poll_interval_ns, remaining_ns))
+        except anyio.get_cancelled_exc_class():
+            await self._cancel(
+                plan,
+                next_request,
+                sample_sequence=next_sequence,
+            )
+            raise
+        return (next_request, next_sequence)
 
     async def _append(
         self,
@@ -582,6 +602,28 @@ class ObservationPoller:
                 timestamp=self._clock.transition_timestamp(),
                 terminal_state=terminal_state,
             ),
+        )
+        if terminal_state is not None:
+            await checkpoint()
+
+    async def _cancel(
+        self,
+        plan: ObservationPollPlan,
+        request: ObserverRequest,
+        *,
+        sample_sequence: int,
+    ) -> None:
+        record = self._error_record(
+            plan,
+            request,
+            sample_sequence=sample_sequence,
+            category="cancelled",
+            message="Observer invocation was cancelled.",
+        )
+        await self._append(
+            plan,
+            record,
+            terminal_state=ObservationState.CANCELLED,
         )
 
     def _response_record(

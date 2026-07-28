@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Protocol
 import anyio
 from anyio.to_thread import run_sync
 
+from webhook_receiver_conformance.domain.enums import RunState
 from webhook_receiver_conformance.errors import (
     ErrorCategory,
     ExitCode,
@@ -20,6 +21,7 @@ from webhook_receiver_conformance.errors import (
 )
 from webhook_receiver_conformance.journal.resume import (
     ResumeJournalPreflight,
+    ResumeJournalProjectionError,
     ResumePolicyJournal,
     advance_resume_owner_epoch,
     load_resume_schedule,
@@ -28,10 +30,16 @@ from webhook_receiver_conformance.journal.resume import (
 from webhook_receiver_conformance.journal.run_lock import (
     FilesystemProbe,
     ProcessInspector,
+    RunLock,
     RunLockTakeoverEvent,
     acquire_run_lock,
 )
 from webhook_receiver_conformance.journal.service import JournalService
+from webhook_receiver_conformance.manifest.models import RunManifest
+from webhook_receiver_conformance.recovery.bundle_policy import (
+    derive_bundle_recovery_policy,
+    verify_bundle_recovery_manifest,
+)
 from webhook_receiver_conformance.recovery.models import (
     RecoveryPlan,
     RecoveryScanContext,
@@ -114,6 +122,33 @@ class ObservationCallback(Protocol):
         ...
 
 
+class ResumePreparationCallback(Protocol):
+    """Validate execution inputs while ownership is held and before mutation."""
+
+    def __call__(
+        self,
+        preflight: ResumeJournalPreflight,
+        ownership: RunLock,
+        /,
+    ) -> Awaitable[object]:
+        """Return prepared continuation state without mutating the journal."""
+        ...
+
+
+class ResumeContinuationCallback(Protocol):
+    """Continue one mutable resume while the same ownership guard is retained."""
+
+    def __call__(
+        self,
+        result: ResumeResult,
+        ownership: RunLock,
+        prepared: object,
+        /,
+    ) -> Awaitable[object]:
+        """Execute the resumed run and return a caller-owned terminal result."""
+        ...
+
+
 @dataclass(frozen=True, slots=True)
 class ResumeRequest:
     """Validated inputs for one local resume invocation."""
@@ -121,6 +156,8 @@ class ResumeRequest:
     run_directory: Path
     invocation: ResumeInvocationPolicy = field(default_factory=ResumeInvocationPolicy)
     bundle_policy: BundleRecoveryPolicy = field(default_factory=BundleRecoveryPolicy)
+    manifest: RunManifest | None = None
+    defer_redeliveries: bool = False
     take_over: bool = True
 
     def __post_init__(self) -> None:
@@ -133,6 +170,12 @@ class ResumeRequest:
             raise TypeError("invocation must be a ResumeInvocationPolicy")
         if type(self.bundle_policy) is not BundleRecoveryPolicy:
             raise TypeError("bundle_policy must be a BundleRecoveryPolicy")
+        if self.manifest is not None and type(self.manifest) is not RunManifest:
+            raise TypeError("manifest must be a RunManifest or None")
+        if self.manifest is not None and self.bundle_policy != BundleRecoveryPolicy():
+            raise ValueError("manifest-derived and explicit bundle policies are mutually exclusive")
+        if type(self.defer_redeliveries) is not bool:
+            raise TypeError("defer_redeliveries must be a boolean")
         if type(self.take_over) is not bool:
             raise TypeError("take_over must be a boolean")
 
@@ -166,6 +209,14 @@ class ResumeResult:
     def observer_contact_possible(self) -> bool:
         """Return whether an injected observation callback was invoked."""
         return self.observations_invoked > 0
+
+
+@dataclass(frozen=True, slots=True)
+class ResumeWorkflowResult:
+    """Recovery result plus an optional same-ownership continuation result."""
+
+    recovery: ResumeResult
+    continuation: object | None
 
 
 class ResumeService:
@@ -219,16 +270,59 @@ class ResumeService:
 
     async def resume(self, request: ResumeRequest) -> ResumeResult:
         """Run one structured resume without implicit network or observer work."""
+        workflow = await self._resume_workflow(
+            request,
+            prepare=None,
+            continuation=None,
+        )
+        return workflow.recovery
+
+    async def resume_and_continue(
+        self,
+        request: ResumeRequest,
+        *,
+        prepare: ResumePreparationCallback,
+        continuation: ResumeContinuationCallback,
+    ) -> ResumeWorkflowResult:
+        """Validate, recover, and continue under one retained run ownership guard."""
+        if not callable(prepare):
+            raise TypeError("prepare must be an async callable")
+        if not callable(continuation):
+            raise TypeError("continuation must be an async callable")
+        return await self._resume_workflow(
+            request,
+            prepare=prepare,
+            continuation=continuation,
+        )
+
+    async def _resume_workflow(
+        self,
+        request: ResumeRequest,
+        *,
+        prepare: ResumePreparationCallback | None,
+        continuation: ResumeContinuationCallback | None,
+    ) -> ResumeWorkflowResult:
         if type(request) is not ResumeRequest:
             raise TypeError("request must be a ResumeRequest")
+        if request.manifest is not None:
+            verify_bundle_recovery_manifest(request.manifest)
         preflight = await run_sync(
             partial(
                 preflight_resume_journal,
                 request.run_directory,
             )
         )
+        if preflight.run_state in {
+            RunState.COMPLETED,
+            RunState.CANCELLED,
+            RunState.FAILED,
+        }:
+            raise ResumeJournalProjectionError("terminal run cannot be resumed")
         if request.invocation.on_ambiguous is None and preflight.contains_ambiguity:
-            return _read_only_ambiguous_result(preflight)
+            return ResumeWorkflowResult(
+                recovery=_read_only_ambiguous_result(preflight),
+                continuation=None,
+            )
         fresh_epoch = preflight.owner_epoch + 1
         lock = acquire_run_lock(
             preflight.run_directory,
@@ -241,7 +335,24 @@ class ResumeService:
             hostname=self._hostname,
         )
         with lock:
+            prepared = None if prepare is None else await prepare(preflight, lock)
             async with JournalService.open(preflight.database_path) as service:
+                migrated_preflight = await run_sync(
+                    partial(
+                        preflight_resume_journal,
+                        preflight.run_directory,
+                    )
+                )
+                if (
+                    migrated_preflight.run_id != preflight.run_id
+                    or migrated_preflight.owner_epoch != preflight.owner_epoch
+                    or migrated_preflight.run_state is not preflight.run_state
+                    or migrated_preflight.database_path != preflight.database_path
+                ):
+                    raise ResumeJournalProjectionError(
+                        "resume journal identity changed during migration"
+                    )
+                preflight = migrated_preflight
                 await advance_resume_owner_epoch(
                     service,
                     run_id=preflight.run_id,
@@ -271,25 +382,36 @@ class ResumeService:
                         scan_context=scan_context,
                         recovery_plan=recovery_plan,
                     ),
-                    bundle_policy=request.bundle_policy,
+                    bundle_policy=(
+                        derive_bundle_recovery_policy(request.manifest, recovery_plan)
+                        if request.manifest is not None
+                        else request.bundle_policy
+                    ),
                     invocation=request.invocation,
                     schedule=schedule,
                     timestamp=timestamp,
                 )
-                self._require_callbacks(policy_plan)
+                self._require_callbacks(
+                    policy_plan,
+                    defer_redeliveries=request.defer_redeliveries,
+                )
                 application = await self._policy_engine.apply(
                     policy_plan,
                     journal=ResumePolicyJournal(service),
                 )
-                redeliveries_invoked = await _invoke_redeliveries(
-                    policy_plan,
-                    callback=self._redelivery,
+                redeliveries_invoked = (
+                    0
+                    if request.defer_redeliveries
+                    else await _invoke_redeliveries(
+                        policy_plan,
+                        callback=self._redelivery,
+                    )
                 )
                 observations_invoked = await _invoke_observations(
                     policy_plan,
                     callback=self._observation,
                 )
-                return ResumeResult(
+                result = ResumeResult(
                     status=_status(policy_plan.disposition),
                     run_id=preflight.run_id,
                     owner_epoch=fresh_epoch,
@@ -306,9 +428,23 @@ class ResumeService:
                     redeliveries_invoked=redeliveries_invoked,
                     observations_invoked=observations_invoked,
                 )
+            continued = (
+                None
+                if continuation is None or result.status is not ResumeStatus.CONTINUE
+                else await continuation(result, lock, prepared)
+            )
+            return ResumeWorkflowResult(
+                recovery=result,
+                continuation=continued,
+            )
 
-    def _require_callbacks(self, plan: ResumePolicyPlan) -> None:
-        if plan.redeliveries and self._redelivery is None:
+    def _require_callbacks(
+        self,
+        plan: ResumePolicyPlan,
+        *,
+        defer_redeliveries: bool,
+    ) -> None:
+        if plan.redeliveries and self._redelivery is None and not defer_redeliveries:
             raise ResumeCallbackRequiredError(
                 "explicit redelivery policy requires an injected async callback"
             )
@@ -335,6 +471,29 @@ async def resume_run(
     ).resume(request)
 
 
+async def resume_and_continue(
+    request: ResumeRequest,
+    *,
+    prepare: ResumePreparationCallback,
+    continuation: ResumeContinuationCallback,
+    clock: RuntimeClock | None = None,
+    policy_engine: ResumePolicyEngine | None = None,
+    redelivery: RedeliveryCallback | None = None,
+    observation: ObservationCallback | None = None,
+) -> ResumeWorkflowResult:
+    """Validate, recover, and continue with one retained ownership guard."""
+    return await ResumeService(
+        clock=clock,
+        policy_engine=policy_engine,
+        redelivery=redelivery,
+        observation=observation,
+    ).resume_and_continue(
+        request,
+        prepare=prepare,
+        continuation=continuation,
+    )
+
+
 def resume_run_sync(
     request: ResumeRequest,
     *,
@@ -348,6 +507,31 @@ def resume_run_sync(
         partial(
             resume_run,
             request,
+            clock=clock,
+            policy_engine=policy_engine,
+            redelivery=redelivery,
+            observation=observation,
+        )
+    )
+
+
+def resume_and_continue_sync(
+    request: ResumeRequest,
+    *,
+    prepare: ResumePreparationCallback,
+    continuation: ResumeContinuationCallback,
+    clock: RuntimeClock | None = None,
+    policy_engine: ResumePolicyEngine | None = None,
+    redelivery: RedeliveryCallback | None = None,
+    observation: ObservationCallback | None = None,
+) -> ResumeWorkflowResult:
+    """Run one same-ownership resume workflow synchronously for the CLI."""
+    return anyio.run(
+        partial(
+            resume_and_continue,
+            request,
+            prepare=prepare,
+            continuation=continuation,
             clock=clock,
             policy_engine=policy_engine,
             redelivery=redelivery,

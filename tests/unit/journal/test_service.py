@@ -361,20 +361,24 @@ async def test_operation_cancellation_rolls_back_without_partial_write(tmp_path:
 
 
 @pytest.mark.anyio
-async def test_post_enqueue_caller_cancellation_waits_for_durable_commit(
+async def test_post_enqueue_caller_cancellation_returns_commit_before_checkpoint(
     tmp_path: Path,
 ) -> None:
     cancelled_class = anyio.get_cancelled_exc_class()
     async with JournalService.create(tmp_path / JOURNAL_FILENAME) as service:
         cancellation_observed = False
+        commit_returned = False
         with anyio.CancelScope() as caller_scope:
             try:
                 await service.execute(
                     _CancelCallerAfterWrite(_insert_run_statement(), caller_scope)
                 )
+                commit_returned = True
+                await checkpoint()
             except cancelled_class:
                 cancellation_observed = True
 
+        assert commit_returned
         assert cancellation_observed
         assert await _run_count(service) == 1
 

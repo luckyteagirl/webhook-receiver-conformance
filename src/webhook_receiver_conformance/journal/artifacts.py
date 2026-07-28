@@ -15,6 +15,7 @@ from pathlib import Path, PurePosixPath
 from typing import Final
 
 from anyio import CancelScope
+from anyio.lowlevel import checkpoint
 from anyio.to_thread import run_sync
 
 from webhook_receiver_conformance.domain.identifiers import validate_run_id
@@ -361,6 +362,10 @@ class ArtifactRegistry:
                 abandon_on_cancel=False,
             )
         try:
+            # Snapshotting is pre-transaction work. Deliver cancellation that
+            # arrived while the descriptor was shielded before accepting a journal
+            # mutation; once execute() accepts the write, commit-wins applies.
+            await checkpoint()
             committed = await self._service.execute(
                 _ReplaceArtifactRegistry(
                     run_id=stable_run_id,

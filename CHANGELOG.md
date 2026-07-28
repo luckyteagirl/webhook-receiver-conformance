@@ -24,6 +24,10 @@ bundle, observer, and report contracts use their documented 1.0 schema versions.
 
 This is the first packaged release, so there is no earlier production data migration.
 Pre-release bundles should be regenerated with 0.1.0 before relying on replay.
+Existing pre-release journals migrate transactionally through SQLite schema version 4.
+Version 4 adds sanitized response staging so a crash after a durable HTTP response can
+recover its exact terminal classification without resending the request. Legacy
+`response_observed` rows that predate this evidence fail closed during resume.
 
 ### Security
 
@@ -34,4 +38,4 @@ network targets are re-authorized for each invocation.
 ### Schema
 
 Configuration, bundle manifest, observer, evidence, and report schemas are versioned.
-SQLite journal schema version 3 is migrated transactionally by the runtime.
+SQLite journal schema version 4 is migrated transactionally by the runtime.

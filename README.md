@@ -92,19 +92,33 @@ The installed command tree is:
 version  init  validate  plan  run  resume  replay  inspect  report
 ```
 
-`validate` and `plan` do not contact the receiver. `run` in 0.1.0 executes the realized
-HTTP delivery recipes and reduces the observed HTTP outcomes to a terminal result. The
-observer adapters, polling/assertion engines, and their contract suites exist, but the
-0.1.0 CLI run path does not yet orchestrate them: its generated observation and
-assertion streams are empty. Consequently, the quickstart example's passing CLI result
-demonstrates the delivery path only. The complete example validates and plans observer
-configuration, while the shared observer test kit exercises both observer transports
-directly. See [Observer integration](docs/observers.md).
+`validate` and `plan` do not contact the receiver. `run` executes every realized
+delivery through the durable scheduler, including configured waits, concurrency,
+conditional retries, transport assertions, and all built-in observer-backed assertion
+families. Attempts, observations, and assertions commit to the SQLite journal before
+the final JSON/JSON Lines, JUnit, and HTML projections are generated. See
+[Observer integration](docs/observers.md).
 
-`replay` currently verifies and copies an immutable bundle, then exits as unsupported
-because bundles intentionally omit a fresh secret context. `resume` currently inspects
-run state and requires an explicit policy for ambiguous state; it does not redeliver.
-`report` verifies selected local report files and emits their normalized digest.
+`run --manifest BUNDLE --config CONFIG` verifies and loads an existing immutable
+bundle instead of planning from fixture sources. The fresh configuration must supply
+matching target policy and secret fingerprints; source fixtures are not rediscovered.
+Before any public-target nonce challenge, the command freezes a private verified
+bundle snapshot and anonymous request-body spool. Execution consumes that snapshot
+once, so later changes to the selected bundle cannot change transmitted fixture bytes.
+
+`resume` verifies the existing bundle and journal, advances the owner epoch, and
+continues only unconsumed schedules and pending assertions in the same run. Continued
+execution requires fresh `--config` secret references whose fingerprints and target
+match the bundle. An ambiguous possible send remains read-only by default. Redelivery
+requires both a manifest-fixed `timed_out` retry node and the explicit
+`--on-ambiguous redeliver` option; the original unknown attempt remains immutable.
+
+`replay` verifies an immutable bundle, requires fresh configuration and secret
+references that match its digest-bound target and fingerprints, and executes a new
+self-contained run without fixture discovery or random generation. `inspect` verifies
+the bundle, journal, artifact registry, and exact causal links without network access.
+`report` regenerates the complete report set from journal truth and returns the
+normalized digest for the selected formats.
 
 ## Documentation map
 

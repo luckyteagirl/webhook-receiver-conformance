@@ -12,13 +12,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+import pytest
 import yaml
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
     from types import ModuleType
-
-    import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 ACTION = cast(
@@ -242,6 +241,47 @@ def test_adapter_preserves_cli_exit_and_stages_only_redacted_artifacts(
     summary_text = summary.read_text(encoding="utf-8")
     assert "blobs/" in summary_text
     assert "observer stdout and stderr" in summary_text
+
+
+@pytest.mark.parametrize("command", ["resume", "replay"])
+def test_action_forwards_fresh_config_public_authorization_and_noninteractive_mode(
+    tmp_path: Path,
+    command: str,
+) -> None:
+    module = _adapter()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    environment = {
+        "GITHUB_WORKSPACE": str(workspace),
+        "INPUT_COMMAND": command,
+        "INPUT_CONFIG": "config/fresh.yaml",
+        "INPUT_ARTIFACT_DIRECTORY": "action-artifacts",
+        "INPUT_AUTHORIZE_PUBLIC_TARGET": "receiver.example:443",
+        "INPUT_NONINTERACTIVE": "true",
+    }
+    if command == "resume":
+        environment["INPUT_RUN_DIRECTORY"] = "runs/interrupted"
+    else:
+        environment["INPUT_MANIFEST"] = "bundle/run-manifest.json"
+
+    arguments_builder = cast(
+        "Callable[[Mapping[str, str], str, Path], list[str]]",
+        module.__dict__["_arguments"],
+    )
+    arguments = arguments_builder(
+        environment,
+        command,
+        workspace / "action-artifacts",
+    )
+
+    assert arguments[:3] == ["--json", "--non-interactive", command]
+    assert arguments[arguments.index("--config") + 1] == str(workspace / "config" / "fresh.yaml")
+    assert arguments[arguments.index("--authorize-public-target") + 1] == ("receiver.example:443")
+    if command == "resume":
+        assert arguments[arguments.index("--on-ambiguous") + 1] == "stop"
+        assert "fail" not in arguments
+    else:
+        assert arguments[arguments.index("--output") + 1] == "action-artifacts/replay"
 
 
 def _action_outputs(path: Path) -> dict[str, str]:

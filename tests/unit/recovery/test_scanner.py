@@ -23,8 +23,10 @@ from webhook_receiver_conformance.journal.repositories import (
 )
 from webhook_receiver_conformance.journal.run_lock import RunLockMetadata
 from webhook_receiver_conformance.journal.schema import (
+    MIGRATIONS,
     RunDatabase,
     create_run_database,
+    open_journal_database,
 )
 from webhook_receiver_conformance.journal.service import (
     BatchOperation,
@@ -70,7 +72,7 @@ WALL_TEXT = "2026-07-27T19:34:56.000000Z"
 LIVE_TIMESTAMP = TransitionTimestamp(WALL_TIME, 123_456)
 FIXTURE_HASH = f"sha256:{'b' * 64}"
 CANARY_TEXT = "secret-canary-do-not-retain"
-EXPECTED_AUTOMATIC_TRANSITIONS = 6
+EXPECTED_AUTOMATIC_TRANSITIONS = 7
 
 
 def _planned(prefix: str, ordinal: int) -> str:
@@ -91,6 +93,7 @@ def anyio_backend() -> str:
 class _AttemptSeed:
     state: AttemptState
     phase: str | None = None
+    response_terminal_state: AttemptState = AttemptState.SUCCEEDED
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,9 +154,9 @@ def _attempt_statement(seed: _AttemptSeed, ordinal: int) -> JournalStatement:
         """
         INSERT INTO attempts (
             attempt_id, run_id, scenario_id, event_id, delivery_id,
-            ordinal, state, phase, outcome_category,
+            attempt_plan_id, ordinal, state, phase, outcome_category,
             terminal_recorded_at, owner_epoch
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             _planned("attempt_", ordinal + 1),
@@ -161,12 +164,113 @@ def _attempt_statement(seed: _AttemptSeed, ordinal: int) -> JournalStatement:
             SCENARIO_ID,
             EVENT_ID,
             DELIVERY_ID,
+            _planned("attempt_plan_", ordinal + 1),
             ordinal,
             seed.state.value,
             seed.phase,
             classification,
             terminal_time,
             OWNER_EPOCH,
+        ),
+    )
+
+
+def _schedule_statement(seed: _AttemptSeed, ordinal: int) -> JournalStatement | None:
+    if seed.state not in {
+        AttemptState.SCHEDULED,
+        AttemptState.CLAIMED,
+        AttemptState.RESPONSE_OBSERVED,
+    }:
+        return None
+    consumed = seed.state is not AttemptState.SCHEDULED
+    return JournalStatement(
+        """
+        INSERT INTO schedule_entries (
+            schedule_entry_id, run_id, scenario_id, entity_type, entity_id,
+            logical_time_ns, scenario_ordinal, step_ordinal, delivery_ordinal,
+            attempt_ordinal, deterministic_tie_key, idempotency_key,
+            consumed_at, consumed_by_owner_epoch
+        ) VALUES (?, ?, ?, 'attempt', ?, 0, 0, 0, 0, ?, ?, ?, ?, ?)
+        """,
+        (
+            f"recovery.schedule.{ordinal}",
+            RUN_ID,
+            SCENARIO_ID,
+            _planned("attempt_plan_", ordinal + 1),
+            ordinal,
+            f"recovery.{ordinal}",
+            f"recovery.schedule.{ordinal}",
+            WALL_TEXT if consumed else None,
+            OWNER_EPOCH if consumed else None,
+        ),
+    )
+
+
+def _response_staging_statement(
+    seed: _AttemptSeed,
+    ordinal: int,
+) -> JournalStatement | None:
+    if seed.state is not AttemptState.RESPONSE_OBSERVED:
+        return None
+    terminal_state = seed.response_terminal_state
+    classification, evidence_state, status, error_category, error_message, error_phase = {
+        AttemptState.SUCCEEDED: (
+            AttemptClassification.RECEIVER_ACCEPTED.value,
+            "acknowledged",
+            204,
+            None,
+            None,
+            None,
+        ),
+        AttemptState.REJECTED: (
+            AttemptClassification.RECEIVER_REJECTED.value,
+            "rejected",
+            503,
+            None,
+            None,
+            None,
+        ),
+        AttemptState.TRANSPORT_FAILED: (
+            AttemptClassification.ENVIRONMENT_FAILURE.value,
+            "protocol_failed",
+            599,
+            "protocol_error",
+            "bounded response failed terminal protocol validation",
+            "response_body",
+        ),
+    }[terminal_state]
+    return JournalStatement(
+        """
+        INSERT INTO attempt_response_staging (
+            attempt_id, record_id, run_id, scenario_id, event_id,
+            delivery_id, terminal_state, classification, evidence_state,
+            request_method, request_url_redacted, request_body_sha256,
+            request_byte_length, request_header_names_json,
+            response_status, response_body_sha256, response_captured_bytes,
+            response_truncated, error_category, error_message_redacted,
+            error_phase
+        ) VALUES (
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, 'POST',
+            'http://127.0.0.1/[REDACTED]', ?, 1, ?, ?, ?, 0, 0, ?, ?, ?
+        )
+        """,
+        (
+            _planned("attempt_", ordinal + 1),
+            _planned("record_", ordinal + 1),
+            RUN_ID,
+            SCENARIO_ID,
+            EVENT_ID,
+            DELIVERY_ID,
+            terminal_state.value,
+            classification,
+            evidence_state,
+            FIXTURE_HASH,
+            b'["content-type"]',
+            status,
+            FIXTURE_HASH,
+            error_category,
+            error_message,
+            error_phase,
         ),
     )
 
@@ -218,6 +322,16 @@ async def _seed_database(
     statements = (
         *_base_statements(),
         *(_attempt_statement(seed, ordinal) for ordinal, seed in enumerate(attempts)),
+        *(
+            statement
+            for ordinal, seed in enumerate(attempts)
+            if (statement := _schedule_statement(seed, ordinal)) is not None
+        ),
+        *(
+            statement
+            for ordinal, seed in enumerate(attempts)
+            if (statement := _response_staging_statement(seed, ordinal)) is not None
+        ),
         *(_observation_statement(state, ordinal) for ordinal, state in enumerate(observations)),
     )
     async with JournalService.open(run.database_path) as service:
@@ -398,7 +512,109 @@ def test_observation_classifier_covers_the_authoritative_state_set(
 
 
 @pytest.mark.anyio
-async def test_fresh_process_scan_and_apply_are_deterministic_conservative_and_offline(
+@pytest.mark.parametrize(
+    ("target", "classification", "evidence_state"),
+    [
+        (
+            AttemptState.SUCCEEDED,
+            AttemptClassification.RECEIVER_ACCEPTED,
+            "acknowledged",
+        ),
+        (
+            AttemptState.REJECTED,
+            AttemptClassification.RECEIVER_REJECTED,
+            "rejected",
+        ),
+        (
+            AttemptState.TRANSPORT_FAILED,
+            AttemptClassification.ENVIRONMENT_FAILURE,
+            "protocol_failed",
+        ),
+    ],
+)
+async def test_durable_response_recovery_derives_exact_terminal_result(
+    tmp_path: Path,
+    target: AttemptState,
+    classification: AttemptClassification,
+    evidence_state: str,
+) -> None:
+    run = await _seed_database(
+        tmp_path,
+        (
+            _AttemptSeed(
+                AttemptState.RESPONSE_OBSERVED,
+                response_terminal_state=target,
+            ),
+        ),
+    )
+    async with JournalService.open(run.database_path) as service:
+        scanner = RecoveryScanner(service, _context(run))
+        plan = await scanner.scan()
+        assert plan.attempts[0].action is AttemptRecoveryAction.REDUCE_DURABLE_RESPONSE
+        assert plan.attempts[0].target_state is target
+        await scanner.apply(plan, timestamp=LIVE_TIMESTAMP)
+
+        assert await _rows(
+            service,
+            "SELECT state, outcome_category FROM attempts",
+        ) == ((target.value, classification.value),)
+        assert await _rows(
+            service,
+            "SELECT state, classification FROM attempt_records",
+        ) == ((evidence_state, classification.value),)
+        assert await _rows(
+            service,
+            "SELECT count(*) FROM attempt_response_staging",
+        ) == ((0,),)
+
+
+@pytest.mark.anyio
+async def test_legacy_response_observed_migrates_to_v4_then_fails_closed(
+    tmp_path: Path,
+) -> None:
+    run = create_run_database(
+        tmp_path,
+        run_id=RUN_ID,
+        migrations=MIGRATIONS[:3],
+    )
+    legacy = open_journal_database(
+        run.database_path,
+        migrations=MIGRATIONS[:3],
+    )
+    try:
+        legacy.execute("BEGIN IMMEDIATE")
+        for statement in (
+            *_base_statements(),
+            _attempt_statement(
+                _AttemptSeed(AttemptState.RESPONSE_OBSERVED),
+                0,
+            ),
+            _schedule_statement(
+                _AttemptSeed(AttemptState.RESPONSE_OBSERVED),
+                0,
+            ),
+        ):
+            assert statement is not None
+            legacy.execute(statement.sql, statement.parameters)
+        legacy.execute("COMMIT")
+    finally:
+        legacy.close()
+
+    async with JournalService.open(run.database_path) as service:
+        assert await _rows(
+            service,
+            "SELECT max(migration_id) FROM schema_migrations",
+        ) == ((4,),)
+        scanner = RecoveryScanner(service, _context(run))
+        with pytest.raises(
+            RecoveryIntegrityError,
+            match="lacks durable response staging",
+        ):
+            await scanner.scan()
+
+
+@pytest.mark.anyio
+async def test_fresh_process_scan_and_apply_are_deterministic_conservative_and_offline(  # noqa: PLR0915
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -461,6 +677,8 @@ async def test_fresh_process_scan_and_apply_are_deterministic_conservative_and_o
         assert plan.attempts[6].target_state is AttemptState.UNKNOWN_OUTCOME
         assert plan.attempts[6].durable_no_send_proof is DurableNoSendProof.NONE
         assert plan.attempts[7].target_state is AttemptState.UNKNOWN_OUTCOME
+        assert plan.attempts[8].target_state is AttemptState.SUCCEEDED
+        assert plan.attempts[8].response_staging is not None
         assert plan.attempts[13].action is AttemptRecoveryAction.PRESERVE_UNKNOWN_OUTCOME
 
         committed = await scanner.apply(plan, timestamp=LIVE_TIMESTAMP)
@@ -500,6 +718,10 @@ async def test_fresh_process_scan_and_apply_are_deterministic_conservative_and_o
             AttemptState.UNKNOWN_OUTCOME.value,
             AttemptClassification.AMBIGUOUS.value,
         )
+        assert states[8][1:] == (
+            AttemptState.SUCCEEDED.value,
+            AttemptClassification.RECEIVER_ACCEPTED.value,
+        )
         assert states[13][1:] == (
             AttemptState.UNKNOWN_OUTCOME.value,
             AttemptClassification.AMBIGUOUS.value,
@@ -526,12 +748,18 @@ async def test_fresh_process_scan_and_apply_are_deterministic_conservative_and_o
             TRIGGER_RECOVERY_NO_SEND_PROOF,
             TRIGGER_RECOVERY_INTERRUPTED_SEND,
             TRIGGER_RECOVERY_INTERRUPTED_OBSERVER,
+            "recovery_response_reduction",
         }
         assert await _rows(
             service,
-            "SELECT count(*) FROM schedule_entries WHERE run_id = ?",
+            """
+            SELECT attempt_ordinal, consumed_by_owner_epoch
+            FROM schedule_entries
+            WHERE run_id = ?
+            ORDER BY attempt_ordinal
+            """,
             (RUN_ID,),
-        ) == ((0,),)
+        ) == ((0, None), (1, OWNER_EPOCH), (8, OWNER_EPOCH))
         attempt_records = await _rows(
             service,
             """
@@ -586,7 +814,13 @@ async def test_fresh_process_scan_and_apply_are_deterministic_conservative_and_o
                 "recovery_interrupted_send",
                 AttemptState.AWAITING_RESPONSE.value,
             ),
+            (8, "acknowledged", AttemptClassification.RECEIVER_ACCEPTED.value, None, None),
         )
+        assert await _rows(
+            service,
+            "SELECT count(*) FROM attempt_response_staging WHERE run_id = ?",
+            (RUN_ID,),
+        ) == ((0,),)
 
 
 @pytest.mark.anyio

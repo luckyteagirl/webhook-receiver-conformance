@@ -104,22 +104,19 @@ def main(environ: Mapping[str, str] | None = None) -> int:
         return _setup_failure(source, str(error))
 
 
-def _arguments(
+def _arguments(  # noqa: PLR0912
     source: Mapping[str, str],
     command: str,
     artifact_directory: Path,
 ) -> list[str]:
-    arguments = ["--json", command]
+    arguments = ["--json", "--non-interactive", command]
     config = _workspace_path(source, _input(source, "CONFIG", default="webhook-conformance.yaml"))
-    if command in {"validate", "plan", "run"}:
+    if command in {"validate", "plan", "run", "resume", "replay"}:
         arguments.extend(["--config", str(config)])
     if command == "plan":
         arguments.extend(["--out", str(artifact_directory / "plan")])
     elif command == "run":
         arguments.extend(["--output", _project_relative(source, artifact_directory)])
-        authorization = _input(source, "AUTHORIZE_PUBLIC_TARGET", default="")
-        if authorization:
-            arguments.extend(["--authorize-public-target", authorization])
     elif command == "replay":
         manifest = _input(source, "MANIFEST", default="")
         if not manifest:
@@ -128,7 +125,7 @@ def _arguments(
             [
                 str(_workspace_path(source, manifest)),
                 "--output",
-                str(artifact_directory / "replay"),
+                _project_relative(source, artifact_directory / "replay"),
             ]
         )
     elif command in {"resume", "inspect", "report"}:
@@ -137,12 +134,16 @@ def _arguments(
             raise ValueError(f"run-directory is required for {command}")
         arguments.append(str(_workspace_path(source, run_directory)))
         if command == "resume":
-            arguments.extend(["--on-ambiguous", "fail"])
+            arguments.extend(["--on-ambiguous", "stop"])
         if command == "inspect" and _boolean_input(source, "INCLUDE_RAW_ARTIFACTS"):
             arguments.append("--raw-artifacts")
         if command == "report":
             for report_format in _formats(source):
                 arguments.extend(["--format", report_format])
+    if command in {"run", "resume", "replay"}:
+        authorization = _input(source, "AUTHORIZE_PUBLIC_TARGET", default="")
+        if authorization:
+            arguments.extend(["--authorize-public-target", authorization])
     return arguments
 
 

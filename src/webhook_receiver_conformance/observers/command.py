@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import signal
 import stat
+import sys
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,6 +49,31 @@ _CORRELATION_REQUEST_ID = "WEBHOOK_CONFORMANCE_REQUEST_ID"
 _CORRELATION_SAMPLE_ID = "WEBHOOK_CONFORMANCE_SAMPLE_ID"
 _CORRELATION_PROTOCOL_VERSION = "WEBHOOK_CONFORMANCE_PROTOCOL_VERSION"
 _WINDOWS_REPARSE_ATTRIBUTE = 0x400
+
+
+def _pin_current_interpreter() -> tuple[Path, Path, int, int] | None:
+    """Pin the exact active interpreter launcher to its canonical file identity."""
+    base_executable = getattr(sys, "_base_executable", None)
+    if type(base_executable) is not str or not base_executable:
+        return None
+    launcher = Path(sys.executable).absolute()
+    try:
+        target = launcher.resolve(strict=True)
+        base_target = Path(base_executable).resolve(strict=True)
+        metadata = target.lstat()
+    except (OSError, RuntimeError):
+        return None
+    if (
+        target != base_target
+        or not stat.S_ISREG(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or bool(getattr(metadata, "st_file_attributes", 0) & _WINDOWS_REPARSE_ATTRIBUTE)
+    ):
+        return None
+    return launcher, target, metadata.st_dev, metadata.st_ino
+
+
+_CURRENT_INTERPRETER: Final = _pin_current_interpreter()
 
 
 class CommandObserverError(RuntimeError):
@@ -289,6 +315,10 @@ def _safe_executable(path: Path) -> Path:
         metadata = absolute.lstat()
     except OSError as error:
         raise _configuration_error("OBSERVER_EXECUTABLE_NOT_FOUND") from error
+    if os.name == "posix" and stat.S_ISLNK(metadata.st_mode):
+        trusted_interpreter = _trusted_interpreter_target(absolute)
+        if trusted_interpreter is not None:
+            return trusted_interpreter
     if (
         not stat.S_ISREG(metadata.st_mode)
         or stat.S_ISLNK(metadata.st_mode)
@@ -296,6 +326,31 @@ def _safe_executable(path: Path) -> Path:
     ):
         raise _configuration_error("OBSERVER_EXECUTABLE_INVALID")
     return absolute
+
+
+def _trusted_interpreter_target(launcher: Path) -> Path | None:
+    """Return the pinned target only for this process's unchanged venv launcher."""
+    binding = _CURRENT_INTERPRETER
+    if binding is None:
+        return None
+    expected_launcher, expected_target, expected_device, expected_inode = binding
+    if launcher != expected_launcher:
+        return None
+    try:
+        target = launcher.resolve(strict=True)
+        metadata = target.lstat()
+    except (OSError, RuntimeError):
+        return None
+    if (
+        target != expected_target
+        or metadata.st_dev != expected_device
+        or metadata.st_ino != expected_inode
+        or not stat.S_ISREG(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or bool(getattr(metadata, "st_file_attributes", 0) & _WINDOWS_REPARSE_ATTRIBUTE)
+    ):
+        return None
+    return target
 
 
 def _safe_directory(path: Path, *, root: Path) -> Path:

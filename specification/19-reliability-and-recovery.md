@@ -16,6 +16,7 @@ The tool guarantees durable accounting of planned work and explicit uncertainty.
 | After a bounded response is durable, before terminal classification | `response_observed` | Receiver processed/answered | Rebuild the deterministic terminal classification from durable response evidence | No |
 | After terminal attempt commit, before retry schedule commit | Terminal attempt, no retry entry | Known outcome | Atomic transaction requirement prevents split; integrity error if detected | No if implementation conforms |
 | After retry schedule commit | Terminal + schedule entry | Known outcome | Resume claims schedule once | No |
+| After terminal attempt and retry decision commit, before delivery reduction | Terminal attempt; delivery remains `active` | Known outcome | If no successor schedule is pending, reduce the delivery from the latest terminal attempt; otherwise preserve `active` and claim the successor once | No |
 | During observer invocation | Observation `scheduled` or `running` | Delivery state unchanged | Append `timed_out`, `error`, or `cancelled`; retry only when capabilities permit | Observer evidence only |
 | After observer response, before sample commit | No terminal sample | Receiver state may have changed | Re-query with the same logical request ID and a fresh sample ID | Not a network-send ambiguity |
 | After sample commit, before assertion commit | Sample durable, assertion pending | Evidence known | Reevaluate idempotently | No |

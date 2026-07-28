@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from webhook_receiver_conformance.domain.enums import AttemptState
+from webhook_receiver_conformance.domain.enums import AttemptState, RunState
 from webhook_receiver_conformance.domain.identifiers import validate_run_id
 from webhook_receiver_conformance.errors import ErrorCategory
 from webhook_receiver_conformance.recovery.policy import (
@@ -47,8 +47,8 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 _MAX_OWNER_EPOCH = (2**63) - 1
-_RUN_ROW_COLUMNS = 2
-_SCHEDULE_ROW_COLUMNS = 10
+_RUN_ROW_COLUMNS = 3
+_SCHEDULE_ROW_COLUMNS = 11
 _DECISION_ROW_COLUMNS = 10
 
 
@@ -86,12 +86,15 @@ class ResumeJournalPreflight:
     database_path: Path
     run_id: str
     owner_epoch: int
+    run_state: RunState
     integrity: ResumeIntegrityReport
     ambiguous_attempt_ids: tuple[str, ...]
 
     def __post_init__(self) -> None:
         validate_run_id(self.run_id)
         _owner_epoch(self.owner_epoch)
+        if type(self.run_state) is not RunState:
+            raise TypeError("run_state must be a RunState")
         if type(self.integrity) is not ResumeIntegrityReport:
             raise TypeError("integrity must be a ResumeIntegrityReport")
         if type(self.ambiguous_attempt_ids) is not tuple:
@@ -126,7 +129,9 @@ def preflight_resume_journal(
             busy_timeout_ms=busy_timeout_ms,
         )
         validate_migration_output(connection)
-        run_id, owner_epoch = _load_run_identity(connection)
+        run_id, owner_epoch, run_state = _load_run_identity(connection)
+        if _has_response_staging_projection(connection):
+            _validate_response_staging_projection(connection, run_id)
         ambiguous_attempt_ids = _load_ambiguous_attempt_ids(connection, run_id)
     except ResumeJournalError:
         raise
@@ -144,6 +149,7 @@ def preflight_resume_journal(
         database_path=database_path,
         run_id=run_id,
         owner_epoch=owner_epoch,
+        run_state=run_state,
         integrity=integrity,
         ambiguous_attempt_ids=ambiguous_attempt_ids,
     )
@@ -270,13 +276,35 @@ class _LoadSchedule:
                         attempt_ordinal,
                         deterministic_tie_key,
                         consumed_at,
-                        consumed_by_owner_epoch
+                        consumed_by_owner_epoch,
+                        EXISTS (
+                            SELECT 1
+                            FROM attempts
+                            JOIN deliveries
+                              ON deliveries.run_id = attempts.run_id
+                             AND deliveries.scenario_id = attempts.scenario_id
+                             AND deliveries.delivery_id = attempts.delivery_id
+                            WHERE attempts.run_id = schedule_entries.run_id
+                              AND attempts.scenario_id = schedule_entries.scenario_id
+                              AND attempts.attempt_plan_id = schedule_entries.entity_id
+                              AND attempts.ordinal = schedule_entries.attempt_ordinal
+                              AND deliveries.ordinal = schedule_entries.delivery_ordinal
+                              AND attempts.state = 'claimed'
+                              AND attempts.owner_epoch = ?
+                              AND schedule_entries.consumed_by_owner_epoch = ?
+                        )
                     FROM schedule_entries
                     WHERE run_id = ? AND schedule_entry_id > ?
                     ORDER BY schedule_entry_id
                     LIMIT ?
                     """,
-                    (self.run_id, last_entry_id, MAX_RESULT_ROWS),
+                    (
+                        self.owner_epoch,
+                        self.owner_epoch,
+                        self.run_id,
+                        last_entry_id,
+                        MAX_RESULT_ROWS,
+                    ),
                 )
             )
             if not result.rows:
@@ -362,16 +390,24 @@ def _configure_read_only_connection(
     connection.execute(f"PRAGMA busy_timeout = {busy_timeout_ms}")
 
 
-def _load_run_identity(connection: sqlite3.Connection) -> tuple[str, int]:
+def _load_run_identity(connection: sqlite3.Connection) -> tuple[str, int, RunState]:
     rows = connection.execute(
-        "SELECT run_id, owner_epoch FROM runs ORDER BY run_id LIMIT 2"
+        "SELECT run_id, owner_epoch, state FROM runs ORDER BY run_id LIMIT 2"
     ).fetchall()
     if len(rows) != 1 or len(rows[0]) != _RUN_ROW_COLUMNS:
         raise ResumeJournalProjectionError("resume journal must contain exactly one run projection")
     return (
         validate_run_id(_text(rows[0][0], name="run_id")),
         _owner_epoch(rows[0][1]),
+        _run_state(rows[0][2]),
     )
+
+
+def _run_state(value: object) -> RunState:
+    try:
+        return RunState(_text(value, name="run state"))
+    except ValueError as error:
+        raise ResumeJournalProjectionError("resume run projection has an invalid state") from error
 
 
 def _load_ambiguous_attempt_ids(
@@ -383,6 +419,12 @@ def _load_ambiguous_attempt_ids(
         SELECT attempt_id
         FROM attempts
         WHERE run_id = ?
+          AND NOT EXISTS (
+              SELECT 1
+              FROM attempts AS successor
+              WHERE successor.run_id = attempts.run_id
+                AND successor.predecessor_attempt_id = attempts.attempt_id
+          )
           AND (
               state IN ('sending', 'awaiting_response', 'unknown_outcome')
               OR (
@@ -411,6 +453,57 @@ def _load_ambiguous_attempt_ids(
     return tuple(_text(row[0], name="ambiguous attempt_id") for row in rows)
 
 
+def _validate_response_staging_projection(
+    connection: sqlite3.Connection,
+    run_id: str,
+) -> None:
+    mismatch = connection.execute(
+        """
+        SELECT attempts.attempt_id, attempts.state,
+               attempt_response_staging.attempt_id
+        FROM attempts
+        LEFT JOIN attempt_response_staging
+          ON attempt_response_staging.run_id = attempts.run_id
+         AND attempt_response_staging.attempt_id = attempts.attempt_id
+        WHERE attempts.run_id = ?
+          AND (
+              (
+                  attempts.state = 'response_observed'
+                  AND attempt_response_staging.attempt_id IS NULL
+              )
+              OR (
+                  attempts.state <> 'response_observed'
+                  AND attempt_response_staging.attempt_id IS NOT NULL
+              )
+          )
+        ORDER BY attempts.attempt_id
+        LIMIT 1
+        """,
+        (run_id,),
+    ).fetchone()
+    if mismatch is None:
+        return
+    if mismatch[1] == AttemptState.RESPONSE_OBSERVED.value:
+        raise ResumeJournalProjectionError(
+            "response-observed attempt lacks durable response staging"
+        )
+    raise ResumeJournalProjectionError(
+        "non-response-observed attempt retains durable response staging"
+    )
+
+
+def _has_response_staging_projection(connection: sqlite3.Connection) -> bool:
+    row = connection.execute(
+        """
+        SELECT 1
+        FROM sqlite_schema
+        WHERE type = 'table' AND name = 'attempt_response_staging'
+        LIMIT 1
+        """
+    ).fetchone()
+    return row == (1,)
+
+
 def _require_owner_epoch(
     transaction: JournalTransaction,
     *,
@@ -434,8 +527,13 @@ def _schedule_item(
         raise ResumeJournalProjectionError("schedule row has an invalid shape")
     consumed_at = row[8]
     consumed_epoch = row[9]
+    reclaimed_claim = _integer(row[10], name="schedule reclaimed-claim flag")
+    if reclaimed_claim not in {0, 1}:
+        raise ResumeJournalProjectionError("schedule reclaimed-claim flag is invalid")
     if (consumed_at is None) != (consumed_epoch is None):
         raise ResumeJournalProjectionError("schedule consumption evidence is incomplete")
+    if reclaimed_claim and consumed_at is None:
+        raise ResumeJournalProjectionError("reclaimed schedule lacks consumption evidence")
     return (
         ScheduleItem(
             schedule_entry_id=_text(row[0], name="schedule_entry_id"),
@@ -450,7 +548,7 @@ def _schedule_item(
                 name="schedule deterministic_tie_key",
             ),
         ),
-        consumed_at is not None,
+        consumed_at is not None and not reclaimed_claim,
     )
 
 

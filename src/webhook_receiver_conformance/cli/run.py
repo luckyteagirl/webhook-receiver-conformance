@@ -126,7 +126,7 @@ def register_run_command(
         manifest: Path | None = typer.Option(
             None,
             "--manifest",
-            help="Existing immutable bundle; unsupported by the first-run slice.",
+            help="Existing immutable bundle or run-manifest.json to verify and execute.",
         ),
         output: Path | None = typer.Option(
             None,

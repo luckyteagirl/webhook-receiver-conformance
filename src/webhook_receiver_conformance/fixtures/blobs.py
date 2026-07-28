@@ -37,6 +37,14 @@ _FILE_MODE: Final = 0o600
 _OPEN_CLOEXEC: Final = getattr(os, "O_CLOEXEC", 0)
 _READ_CHUNK_BYTES: Final = 65_536
 _MAX_MEDIA_TYPE_LENGTH: Final = 255
+_SAFE_DIRECTORY_DESCRIPTORS_SUPPORTED: Final = (
+    os.open in os.supports_dir_fd
+    and os.mkdir in os.supports_dir_fd
+    and os.unlink in os.supports_dir_fd
+    and os.link in os.supports_dir_fd
+    and hasattr(os, "O_DIRECTORY")
+    and hasattr(os, "O_NOFOLLOW")
+)
 _WINDOWS_DELETE: Final = 0x00010000
 _WINDOWS_FILE_ATTRIBUTE_DEVICE: Final = 0x00000040
 _WINDOWS_FILE_ATTRIBUTE_DIRECTORY: Final = 0x00000010
@@ -493,14 +501,7 @@ def _write_all(descriptor: int, body: bytes) -> None:
 
 
 def _supports_safe_directory_descriptors() -> bool:
-    return (
-        os.open in os.supports_dir_fd
-        and os.mkdir in os.supports_dir_fd
-        and os.unlink in os.supports_dir_fd
-        and os.link in os.supports_dir_fd
-        and hasattr(os, "O_DIRECTORY")
-        and hasattr(os, "O_NOFOLLOW")
-    )
+    return _SAFE_DIRECTORY_DESCRIPTORS_SUPPORTED
 
 
 def _open_blob_shard_at(

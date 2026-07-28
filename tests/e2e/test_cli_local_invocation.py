@@ -16,10 +16,9 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 _EVENT_BODY = (
-    b'{"id":"evt_cli_e2e","type":"payment.succeeded",'
-    b'"data":{"order_id":"order_cli_e2e"}}\n'
+    b'{"id":"evt_cli_e2e","type":"payment.succeeded","data":{"order_id":"order_cli_e2e"}}\n'
 )
-_EXPECTED_REQUEST_COUNT = 2
+_EXPECTED_REQUEST_COUNT = 3
 
 
 class _RecordingServer(ThreadingHTTPServer):
@@ -43,7 +42,9 @@ class _AcceptedWebhookHandler(BaseHTTPRequestHandler):
         del format, args
 
 
-def test_installed_cli_runs_replays_and_inspects_a_local_bundle(tmp_path: Path) -> None:
+def test_installed_cli_runs_loads_replays_and_inspects_a_local_bundle(  # noqa: PLR0915
+    tmp_path: Path,
+) -> None:
     server = _RecordingServer(("127.0.0.1", 0), _AcceptedWebhookHandler)
     server.requests = []
     thread = threading.Thread(
@@ -109,6 +110,32 @@ def test_installed_cli_runs_replays_and_inspects_a_local_bundle(tmp_path: Path) 
         assert inspection_document["failed_assertion_chains"] == 0
 
         fixture.unlink()
+        loaded_run = _invoke(
+            (
+                str(executable),
+                "--json",
+                "run",
+                "--manifest",
+                str(first_run / "run-manifest.json"),
+                "--config",
+                str(config),
+                "--output",
+                "artifacts",
+            ),
+            cwd=project,
+            environment=environment,
+        )
+        assert loaded_run.returncode == 0, loaded_run.stderr
+        loaded_document = _single_json_document(loaded_run.stdout)
+        assert loaded_document["command"] == "run"
+        assert loaded_document["manifest_id"] == run_document["manifest_id"]
+        assert loaded_document["verdict"] == "pass"
+        loaded_run_directory = Path(cast("str", loaded_document["run_directory"]))
+        assert loaded_run_directory != first_run
+        assert loaded_run_directory.is_dir()
+        assert len(server.requests) == _EXPECTED_REQUEST_COUNT - 1
+        assert server.requests[1] == server.requests[0]
+
         replay = _invoke(
             (
                 str(executable),
@@ -128,10 +155,10 @@ def test_installed_cli_runs_replays_and_inspects_a_local_bundle(tmp_path: Path) 
         assert replay_document["command"] == "replay"
         assert replay_document["verdict"] == "pass"
         second_run = Path(cast("str", replay_document["run_directory"]))
-        assert second_run != first_run
+        assert second_run not in {first_run, loaded_run_directory}
         assert second_run.is_dir()
         assert len(server.requests) == _EXPECTED_REQUEST_COUNT
-        assert server.requests[1] == server.requests[0]
+        assert server.requests[2] == server.requests[0]
     finally:
         server.shutdown()
         server.server_close()

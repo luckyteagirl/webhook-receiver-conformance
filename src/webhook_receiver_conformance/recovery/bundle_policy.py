@@ -30,6 +30,20 @@ from webhook_receiver_conformance.scheduler.retries import RetryPredicate
 _AMBIGUOUS_REDELIVERY_PREDICATE: Final = RetryPredicate.TIMED_OUT
 
 
+def verify_bundle_recovery_manifest(manifest: RunManifest) -> None:
+    """Fail before recovery mutation when immutable policy material is inconsistent."""
+    if type(manifest) is not RunManifest:
+        raise TypeError("manifest must be a RunManifest")
+    try:
+        manifest.verify_id()
+        _manifest_generator(manifest)
+        _scenario_index(manifest)
+    except (TypeError, ValueError) as error:
+        raise ResumePolicyIntegrityError(
+            "recovery policy requires a verified, internally consistent manifest"
+        ) from error
+
+
 def derive_bundle_recovery_policy(
     manifest: RunManifest,
     recovery_plan: RecoveryPlan,
@@ -49,19 +63,14 @@ def derive_bundle_recovery_policy(
         raise TypeError("manifest must be a RunManifest")
     if type(recovery_plan) is not RecoveryPlan:
         raise TypeError("recovery_plan must be a RecoveryPlan")
-    try:
-        manifest.verify_id()
-        generator = _manifest_generator(manifest)
-        scenarios = _scenario_index(manifest)
-    except (TypeError, ValueError) as error:
-        raise ResumePolicyIntegrityError(
-            "recovery policy requires a verified, internally consistent manifest"
-        ) from error
+    verify_bundle_recovery_manifest(manifest)
+    generator = _manifest_generator(manifest)
+    scenarios = _scenario_index(manifest)
 
     used_ordinals = _used_attempt_ordinals(recovery_plan)
     ambiguous = tuple(
         item
-        for item in recovery_plan.attempts
+        for item in recovery_plan.unresolved_ambiguous_attempts
         if item.ambiguity is RecoveryAmbiguity.POSSIBLE_RECEIVER_EFFECT
         and (
             item.prior_state is AttemptState.UNKNOWN_OUTCOME
@@ -219,4 +228,7 @@ def _retry_predicates(
         return None
 
 
-__all__ = ["derive_bundle_recovery_policy"]
+__all__ = [
+    "derive_bundle_recovery_policy",
+    "verify_bundle_recovery_manifest",
+]

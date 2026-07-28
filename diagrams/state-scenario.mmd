@@ -12,7 +12,7 @@ stateDiagram-v2
   running --> failed: comparable assertion fails
   running --> error: environment or harness error
   running --> skipped: explicit skip policy
-  running --> ambiguous: unresolved possible send
+  running --> ambiguous: explicitly sealed or legacy ambiguity
   running --> cancelled: cancelled
   passed --> [*]
   failed --> [*]
@@ -20,3 +20,7 @@ stateDiagram-v2
   skipped --> [*]
   ambiguous --> [*]
   cancelled --> [*]
+  note right of running
+    Resumable unknown_outcome keeps the scenario
+    running and its assertions pending while the run pauses.
+  end note

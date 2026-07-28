@@ -36,8 +36,8 @@ def test_generated_matrix_has_complete_p0_boundary_coverage() -> None:
     coverage = cast("dict[str, object]", report["coverage"])
     matrix = cast("list[dict[str, object]]", report["matrix"])
     assert coverage == {
-        "p0_total": 15,
-        "p0_covered": 15,
+        "p0_total": 16,
+        "p0_covered": 16,
         "p0_percent": 100,
         "uncovered": [],
     }
