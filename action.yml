@@ -1,0 +1,90 @@
+name: Webhook Receiver Conformance
+description: Run the local-first webhook receiver conformance harness with sanitized outputs.
+author: Webhook Receiver Conformance contributors
+
+inputs:
+  command:
+    description: validate, plan, run, resume, replay, inspect, report, or version.
+    required: false
+    default: run
+  config:
+    description: Project-relative configuration path.
+    required: false
+    default: webhook-conformance.yaml
+  manifest:
+    description: Manifest or immutable bundle path for replay.
+    required: false
+    default: ""
+  run-directory:
+    description: Existing local run directory for resume, inspect, or report.
+    required: false
+    default: ""
+  artifact-directory:
+    description: Project-relative directory for local action artifacts.
+    required: false
+    default: .webhook-conformance/action
+  formats:
+    description: Comma-separated report formats requested by the workflow.
+    required: false
+    default: json,junit,html
+  retention-days:
+    description: Advisory retention value for a later explicit upload step.
+    required: false
+    default: "7"
+  noninteractive:
+    description: Fail closed instead of prompting.
+    required: false
+    default: "true"
+  authorize-public-target:
+    description: Exact HOST:PORT public-target authorization; omit for local targets.
+    required: false
+    default: ""
+  include-raw-artifacts:
+    description: Expose raw artifacts only after an explicit sensitive-data opt-in.
+    required: false
+    default: "false"
+  version:
+    description: Expected harness version supplied by the calling workflow.
+    required: false
+    default: "0.1.0"
+
+outputs:
+  run-id:
+    description: Run identifier when the command creates or reads a run.
+    value: ${{ steps.execute.outputs.run-id }}
+  manifest-id:
+    description: Immutable manifest identifier when available.
+    value: ${{ steps.execute.outputs.manifest-id }}
+  result-category:
+    description: Stable terminal result category.
+    value: ${{ steps.execute.outputs.result-category }}
+  exit-code:
+    description: Stable webhook-conformance process exit code.
+    value: ${{ steps.execute.outputs.exit-code }}
+  report-directory:
+    description: Sanitized artifact directory safe for an explicit upload step.
+    value: ${{ steps.execute.outputs.report-directory }}
+
+runs:
+  using: composite
+  steps:
+    - id: execute
+      shell: pwsh
+      env:
+        INPUT_COMMAND: ${{ inputs.command }}
+        INPUT_CONFIG: ${{ inputs.config }}
+        INPUT_MANIFEST: ${{ inputs.manifest }}
+        INPUT_RUN_DIRECTORY: ${{ inputs.run-directory }}
+        INPUT_ARTIFACT_DIRECTORY: ${{ inputs.artifact-directory }}
+        INPUT_FORMATS: ${{ inputs.formats }}
+        INPUT_RETENTION_DAYS: ${{ inputs.retention-days }}
+        INPUT_NONINTERACTIVE: ${{ inputs.noninteractive }}
+        INPUT_AUTHORIZE_PUBLIC_TARGET: ${{ inputs.authorize-public-target }}
+        INPUT_INCLUDE_RAW_ARTIFACTS: ${{ inputs.include-raw-artifacts }}
+        INPUT_VERSION: ${{ inputs.version }}
+        NO_COLOR: "1"
+        WEBHOOK_CONFORMANCE_CI: "1"
+      run: |
+        $ErrorActionPreference = "Stop"
+        uv run --project "${{ github.action_path }}" --locked python "${{ github.action_path }}/.github/actions/run_action.py"
+        exit $LASTEXITCODE
