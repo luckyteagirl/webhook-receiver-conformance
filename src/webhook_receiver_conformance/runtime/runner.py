@@ -222,6 +222,83 @@ class ObserverAssertionExecutor(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class ObserverAssertionRunScope:
+    """Same-run durable resources available only while the journal is open."""
+
+    service: JournalService
+    clock: RuntimeClock
+    config: ProjectConfig
+    project_root: Path
+    runtime_public_authorization: str | None
+    owner_epoch: int
+
+    def __post_init__(self) -> None:
+        if type(self.service) is not JournalService:
+            raise TypeError("service must be a JournalService")
+        if type(self.clock) is not RuntimeClock:
+            raise TypeError("clock must be a RuntimeClock")
+        if type(self.config) is not ProjectConfig:
+            raise TypeError("config must be a ProjectConfig")
+        if not isinstance(  # pyright: ignore[reportUnnecessaryIsInstance]
+            self.project_root,
+            Path,
+        ):
+            raise TypeError("project_root must be a pathlib.Path")
+        if self.runtime_public_authorization is not None and (
+            type(self.runtime_public_authorization) is not str
+            or not self.runtime_public_authorization
+        ):
+            raise ValueError("runtime_public_authorization must be nonempty text or None")
+        if type(self.owner_epoch) is not int or self.owner_epoch < 0:
+            raise ValueError("owner_epoch must be a nonnegative integer")
+
+
+@dataclass(frozen=True, slots=True)
+class ObserverAssertionCoordinates:
+    """Exact manifest/report coordinates for one observer assertion."""
+
+    scenario_ordinal: int
+    assertion_ordinal: int
+    observation_ordinal: int
+
+    def __post_init__(self) -> None:
+        for value, name in (
+            (self.scenario_ordinal, "scenario_ordinal"),
+            (self.assertion_ordinal, "assertion_ordinal"),
+            (self.observation_ordinal, "observation_ordinal"),
+        ):
+            if type(value) is not int or value < 0:
+                message = f"{name} must be a nonnegative integer"
+                raise ValueError(message)
+
+
+class ScopedObserverAssertionExecutor(Protocol):
+    """Run-bound executor with durable scope and exact report coordinates."""
+
+    async def evaluate_scoped(
+        self,
+        lifecycle: AssertionLifecycle,
+        context: AssertionRuntimeContext,
+        assertion: AssertionConfig,
+        attempts: tuple[PersistedAttemptEvidence, ...],
+        coordinates: ObserverAssertionCoordinates,
+    ) -> ObserverAssertionExecution:
+        """Collect and persist one observer assertion in its open run scope."""
+        ...
+
+
+class ObserverAssertionExecutorFactory(Protocol):
+    """Bind an observer executor only after the run journal and clock exist."""
+
+    def create(
+        self,
+        scope: ObserverAssertionRunScope,
+    ) -> ScopedObserverAssertionExecutor:
+        """Create one executor that cannot outlive the supplied open run scope."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
 class VerticalSliceRunRequest:
     """Resolved, secret-safe inputs for one fresh local execution."""
 
@@ -531,6 +608,7 @@ class FullRunRunner:
         "_clock_factory",
         "_executor_factory",
         "_journal",
+        "_observer_assertion_factory",
         "_observer_assertions",
     )
 
@@ -541,6 +619,7 @@ class FullRunRunner:
         executor_factory: ExecutorFactory | None = None,
         clock_factory: ClockFactory | None = None,
         observer_assertion_executor: ObserverAssertionExecutor | None = None,
+        observer_assertion_executor_factory: ObserverAssertionExecutorFactory | None = None,
     ) -> None:
         if not callable(getattr(journal, "initialize", None)):
             raise TypeError("journal must implement initialize")
@@ -552,10 +631,20 @@ class FullRunRunner:
             getattr(observer_assertion_executor, "evaluate", None)
         ):
             raise TypeError("observer_assertion_executor must implement evaluate")
+        if observer_assertion_executor_factory is not None and not callable(
+            getattr(observer_assertion_executor_factory, "create", None)
+        ):
+            raise TypeError("observer_assertion_executor_factory must implement create")
+        if (
+            observer_assertion_executor is not None
+            and observer_assertion_executor_factory is not None
+        ):
+            raise ValueError("observer assertion executor and factory are mutually exclusive")
         self._journal = journal
         self._executor_factory = _default_executor if executor_factory is None else executor_factory
         self._clock_factory = _default_clock if clock_factory is None else clock_factory
         self._observer_assertions = observer_assertion_executor
+        self._observer_assertion_factory = observer_assertion_executor_factory
 
     async def run(self, request: FullRunRequest) -> FullRunResult:
         """Compile and execute every persisted transport schedule to completion."""
@@ -663,6 +752,11 @@ class FullRunRunner:
                 signers=request.signers,
                 generator=generator,
             )
+            scoped_observer_executor = self._scoped_observer_executor(
+                service,
+                clock=clock,
+                request=request,
+            )
             (
                 assertion_records,
                 observations,
@@ -678,6 +772,7 @@ class FullRunRunner:
                 attempts=attempts,
                 delivery_verdicts=delivery_verdicts,
                 observer_executor=self._observer_assertions,
+                scoped_observer_executor=scoped_observer_executor,
             )
             verdict = reduce_terminal_verdicts(
                 tuple(item.result_category for item in scenario_results)
@@ -752,6 +847,30 @@ class FullRunRunner:
             exit_code=verdict.exit_code,
             summary_path=run.run_directory / "result-summary.json",
         )
+
+    def _scoped_observer_executor(
+        self,
+        service: JournalService,
+        *,
+        clock: RuntimeClock,
+        request: FullRunRequest,
+    ) -> ScopedObserverAssertionExecutor | None:
+        factory = self._observer_assertion_factory
+        if factory is None:
+            return None
+        executor = factory.create(
+            ObserverAssertionRunScope(
+                service=service,
+                clock=clock,
+                config=request.config,
+                project_root=request.project_root,
+                runtime_public_authorization=request.runtime_public_authorization,
+                owner_epoch=request.owner_epoch,
+            )
+        )
+        if not callable(getattr(executor, "evaluate_scoped", None)):
+            raise TypeError("observer assertion executor factory returned an invalid executor")
+        return executor
 
 
 async def _execute_schedules(  # noqa: C901
@@ -938,6 +1057,7 @@ async def _evaluate_full_assertions(
     attempts: tuple[FullAttemptResult, ...],
     delivery_verdicts: Mapping[str, TerminalVerdict],
     observer_executor: ObserverAssertionExecutor | None,
+    scoped_observer_executor: ScopedObserverAssertionExecutor | None,
 ) -> tuple[
     tuple[tuple[AssertionEvaluation, int, int], ...],
     tuple[ObservationReportRecord, ...],
@@ -965,6 +1085,7 @@ async def _evaluate_full_assertions(
             strict=True,
         )
     ):
+        observation_ordinal = 0
         scenario_attempts = tuple(
             persisted[item.attempt_id]
             for item in attempts
@@ -997,6 +1118,21 @@ async def _evaluate_full_assertions(
                     attempts=scenario_attempts,
                 )
                 execution = ObserverAssertionExecution(result)
+            elif scoped_observer_executor is not None:
+                execution = await scoped_observer_executor.evaluate_scoped(
+                    lifecycle,
+                    context,
+                    assertion,
+                    scenario_attempts,
+                    ObserverAssertionCoordinates(
+                        scenario_ordinal=scenario_ordinal,
+                        assertion_ordinal=assertion_ordinal,
+                        observation_ordinal=observation_ordinal,
+                    ),
+                )
+                observation_ordinal += 1
+                if type(execution) is not ObserverAssertionExecution:
+                    raise TypeError("observer assertion executor returned an invalid result")
             elif observer_executor is not None:
                 execution = await observer_executor.evaluate(
                     lifecycle,
@@ -1791,8 +1927,12 @@ __all__ = [
     "FullRunRunner",
     "FullScenarioResult",
     "JournalLifecycle",
+    "ObserverAssertionCoordinates",
     "ObserverAssertionExecution",
     "ObserverAssertionExecutor",
+    "ObserverAssertionExecutorFactory",
+    "ObserverAssertionRunScope",
+    "ScopedObserverAssertionExecutor",
     "VerticalSliceRunRequest",
     "VerticalSliceRunResult",
     "VerticalSliceRunner",

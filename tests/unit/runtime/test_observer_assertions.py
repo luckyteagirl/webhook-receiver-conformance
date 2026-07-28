@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -175,7 +174,7 @@ def test_project_builder_constructs_closed_command_and_http_adapters(
     command_config = CommandObserverConfig.model_validate(
         {
             "type": "command",
-            "argv": [sys.executable, "-c", "raise SystemExit(0)"],
+            "argv": ["python", "-c", "raise SystemExit(0)"],
             "timeout": "1s",
         }
     )
@@ -187,7 +186,10 @@ def test_project_builder_constructs_closed_command_and_http_adapters(
         project_root=tmp_path,
         observer_secrets={},
         clock=_clock(),
-        command_policy=CommandLaunchPolicy(environment={}),
+        command_policy=CommandLaunchPolicy.for_current_interpreter(
+            "python",
+            environment={},
+        ),
     ).build()
     assert type(command_adapters["command_probe"]) is CommandObserver
 

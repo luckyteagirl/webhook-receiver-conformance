@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import json
+import sqlite3
 import threading
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -30,6 +32,10 @@ from webhook_receiver_conformance.network.transport import (
     AnyIOConnector,
     AnyIOResolver,
 )
+from webhook_receiver_conformance.runtime.observer_assertions import (
+    CommandLaunchPolicy,
+    ProjectObserverAssertionExecutorFactory,
+)
 from webhook_receiver_conformance.runtime.runner import (
     FullRunRequest,
     FullRunRunner,
@@ -41,6 +47,38 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 _FINGERPRINT = "sha256:" + ("a5" * 32)
+_FALSE_COUNT_OBSERVER = """\
+import json
+import sys
+
+request = json.loads(sys.stdin.buffer.readline())
+capabilities = {
+    "evidence_types": ["integer"],
+    "evidence_keys": ["processing_count"],
+    "read_only": True,
+    "idempotent": True,
+    "max_queries": 64,
+    "supports_pending": True,
+    "stable_snapshot_ids": True,
+}
+response = {
+    "protocol_version": "1.0",
+    "request_id": request["request_id"],
+    "status": "ok",
+    "capabilities": capabilities,
+    "snapshot_id": "receiver-state-1",
+    "evidence": [],
+    "error": None,
+}
+if request["operation"] == "observe":
+    response["evidence"] = [{
+        "key": "processing_count",
+        "value_type": "integer",
+        "value": 0,
+        "sensitive": False,
+    }]
+sys.stdout.write(json.dumps(response, separators=(",", ":")))
+"""
 
 
 class _SequenceServer(ThreadingHTTPServer):
@@ -429,6 +467,109 @@ async def test_absent_observer_capability_is_never_a_pass(tmp_path: Path) -> Non
 
     assert result.result_category is ResultCategory.UNSUPPORTED
     assert result.assertions[0].result is not AssertionResult.PASS
+
+
+@pytest.mark.anyio
+async def test_false_configured_observer_assertion_is_journaled_exported_and_fails_run(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    artifacts = project / "runs"
+    artifacts.mkdir()
+    (project / "observer.py").write_text(_FALSE_COUNT_OBSERVER, encoding="utf-8")
+    with _receiver([204]) as receiver:
+        port = receiver.server_address[1]
+        base = _config(
+            project,
+            port,
+            steps=[{"deliver": {"event": "event"}}],
+            assertions=[
+                {
+                    "id": "processed_once",
+                    "type": "processing-count",
+                    "query": {
+                        "observer": "receiver_state",
+                        "key": "processing_count",
+                        "parameters": {},
+                    },
+                    "comparator": "eq",
+                    "expected": 1,
+                }
+            ],
+        )
+        wire = cast(
+            "dict[str, object]",
+            base.model_dump(mode="json", exclude_none=True),
+        )
+        wire["observers"] = {
+            "receiver_state": {
+                "type": "command",
+                "argv": ["python", "observer.py"],
+                "timeout": "2s",
+                "working_directory": ".",
+            }
+        }
+        config = ProjectConfig.model_validate(wire)
+        observer_factory = ProjectObserverAssertionExecutorFactory(
+            config=config,
+            project_root=project,
+            observer_secrets={},
+            command_policy=CommandLaunchPolicy.for_current_interpreter(
+                "python",
+                environment={},
+            ),
+        )
+        runner = FullRunRunner(
+            journal=JournalLifecycleRepository(),
+            executor_factory=_executor_factory,
+            observer_assertion_executor_factory=observer_factory,
+        )
+        result = await runner.run(_request(config, project, artifacts))
+        repeated = await runner.run(_request(config, project, artifacts))
+
+    assert result.result_category is ResultCategory.RECEIVER_FAILURE
+    assert result.assertions[0].result is AssertionResult.FAIL
+    assert len(result.observations) == 1
+    assert result.observations[0].record.status.value == "ok"
+    assert result.observations[0].record.evidence[0].typed_value == 0
+    assert (
+        repeated.observations[0].record.observation_id
+        == result.observations[0].record.observation_id
+    )
+
+    with sqlite3.connect(result.database_path) as connection:
+        samples = connection.execute(
+            """
+            SELECT status, sample_sequence
+            FROM observation_samples
+            """
+        ).fetchall()
+        evaluations = connection.execute(
+            """
+            SELECT result
+            FROM assertion_evaluations
+            """
+        ).fetchall()
+        links = connection.execute(
+            """
+            SELECT evidence_kind
+            FROM evidence_links
+            """
+        ).fetchall()
+    assert samples == [("ok", 1)]
+    assert evaluations == [("fail",)]
+    assert links == [("observation",)]
+
+    exported = tuple(
+        json.loads(line)
+        for line in (result.run_directory / "observations.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    )
+    assert len(exported) == 1
+    assert exported[0]["status"] == "ok"
+    assert exported[0]["evidence"][0]["value"] == 0
 
 
 @pytest.mark.anyio

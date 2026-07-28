@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import secrets
+import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -58,6 +60,7 @@ from webhook_receiver_conformance.journal.repositories import (
     AssertionEvidenceReference,
     AssertionRepository,
     ObservationRepository,
+    PersistedAttemptEvidence,
 )
 from webhook_receiver_conformance.network.dialer import PinnedDestinationDialer
 from webhook_receiver_conformance.network.policy import (
@@ -91,6 +94,7 @@ from webhook_receiver_conformance.observers.protocol import (
     ObserverResponseStatus,
     ObserverWireError,
 )
+from webhook_receiver_conformance.reporting.json_reports import ObservationReportRecord
 from webhook_receiver_conformance.runtime.assertions import (
     AssertionEvidenceBundle,
     AssertionLifecycle,
@@ -98,6 +102,11 @@ from webhook_receiver_conformance.runtime.assertions import (
     AssertionRuntimeContext,
 )
 from webhook_receiver_conformance.runtime.observations import ObservationRuntime
+from webhook_receiver_conformance.runtime.runner import (
+    ObserverAssertionCoordinates,
+    ObserverAssertionExecution,
+    ObserverAssertionRunScope,
+)
 from webhook_receiver_conformance.runtime.verdicts import TerminalVerdict
 from webhook_receiver_conformance.secrets import SecretHandle
 
@@ -142,6 +151,7 @@ type ObserverExecutorFactory = Callable[
     [ProjectConfig, HttpObserverConfig, RuntimeClock],
     HttpAttemptExecutor,
 ]
+_MAX_EXECUTABLE_ALIAS_LENGTH = 128
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,6 +160,7 @@ class CommandLaunchPolicy:
 
     executable_search_paths: tuple[Path, ...] = ()
     allowlisted_executable_names: frozenset[str] = frozenset()
+    current_interpreter_aliases: frozenset[str] = frozenset()
     environment: Mapping[str, str] | None = None
 
     def __post_init__(self) -> None:
@@ -161,11 +172,30 @@ class CommandLaunchPolicy:
             type(item) is not str or not item for item in self.allowlisted_executable_names
         ):
             raise TypeError("allowlisted_executable_names must contain nonempty strings")
+        if type(self.current_interpreter_aliases) is not frozenset or any(
+            not _safe_executable_alias(item) for item in self.current_interpreter_aliases
+        ):
+            raise ValueError(
+                "current_interpreter_aliases must contain bounded bare executable names"
+            )
         if self.environment is not None and not isinstance(  # pyright: ignore[reportUnnecessaryIsInstance]
             self.environment,
             Mapping,
         ):
             raise TypeError("environment must be a mapping or None")
+
+    @classmethod
+    def for_current_interpreter(
+        cls,
+        *aliases: str,
+        environment: Mapping[str, str] | None = None,
+    ) -> CommandLaunchPolicy:
+        """Map explicit configured aliases to this exact Python interpreter."""
+        selected = aliases or ("python",)
+        return cls(
+            current_interpreter_aliases=frozenset(selected),
+            environment=environment,
+        )
 
 
 _DEFAULT_COMMAND_POLICY = CommandLaunchPolicy()
@@ -321,7 +351,7 @@ class ProjectObserverAdapterBuilder:
             if type(observer_config) is CommandObserverConfig:
                 policy = self._command_policy
                 observers[observer_id] = CommandObserver(
-                    observer_config,
+                    _apply_current_interpreter_alias(observer_config, policy),
                     project_root=self._project_root,
                     environ=policy.environment,
                     executable_search_paths=policy.executable_search_paths,
@@ -532,16 +562,7 @@ class ScenarioObserverAssertionRuntime:
         self,
         observer: Observer,
     ) -> ObserverResponse | Diagnostic | None:
-        request = ObserverRequest(
-            protocol_version="1.0",
-            request_id=self._request_id(),
-            operation=ObserverOperation.CAPABILITIES,
-        )
-        try:
-            return await observer.invoke(request)
-        except Exception as error:
-            diagnostic = getattr(error, "diagnostic", None)
-            return diagnostic if type(diagnostic) is Diagnostic else None
+        return await _request_capabilities(observer, self._request_id)
 
     async def _run_one(
         self,
@@ -551,86 +572,339 @@ class ScenarioObserverAssertionRuntime:
         observer: Observer,
         capability_result: ObserverResponse | Diagnostic | None,
     ) -> CommittedObserverAssertion:
-        assertion = item.assertion
-        queries = derive_observer_queries(assertion)
-        invocation_timeout_ns = self._invocation_timeouts[observer_id]
-        handshake_failed = type(capability_result) is not ObserverResponse
-        capabilities = (
-            _fallback_capabilities(queries) if handshake_failed else capability_result.capabilities
-        )
-        request = ObserverRequest(
-            protocol_version="1.0",
-            request_id=self._request_id(),
-            operation=ObserverOperation.OBSERVE,
-            sample_id=self._fresh_id(FreshIdKind.SAMPLE),
-            run_id=item.context.run_id,
-            scenario_id=item.context.scenario_id,
-            event_id=item.event_id,
-            checkpoint=item.checkpoint,
-            queries=queries,
-        )
-        plan = _poll_plan(
+        return await _evaluate_planned_assertion(
             item,
             observer_id=observer_id,
-            request=request,
-            capabilities=capabilities,
-            invocation_timeout_ns=invocation_timeout_ns,
-        )
-        active_observer: Observer = observer
-        if handshake_failed:
-            active_observer = _FailedObserver(cast("Diagnostic | None", capability_result))
-        observation_runtime = ObservationRuntime(
-            observer=active_observer,
-            repository=self._observations,
+            observer=observer,
+            capability_result=capability_result,
+            invocation_timeout_ns=self._invocation_timeouts[observer_id],
+            observation_repository=self._observations,
             clock=self._clock,
             owner_epoch=self._owner_epoch,
             fresh_id=self._fresh_id,
+            request_id=self._request_id,
+            lifecycle=self._assertions,
         )
-        poll_result = await observation_runtime.poll(
-            plan,
-            _poll_predicate(assertion),
+
+
+class ProjectObserverAssertionExecutorFactory:
+    """Bind configured observer adapters to the runner's open journal and clock."""
+
+    __slots__ = (
+        "_command_policy",
+        "_config",
+        "_executor_factory",
+        "_fresh_id",
+        "_http_policies",
+        "_project_root",
+        "_request_id",
+        "_runtime_public_authorization",
+        "_secrets",
+    )
+
+    def __init__(
+        self,
+        *,
+        config: ProjectConfig,
+        project_root: Path,
+        observer_secrets: Mapping[str, SecretHandle],
+        command_policy: CommandLaunchPolicy = _DEFAULT_COMMAND_POLICY,
+        http_policies: Mapping[str, HttpProbePolicies] | None = None,
+        runtime_public_authorization: str | None = None,
+        executor_factory: ObserverExecutorFactory | None = None,
+        fresh_id: FreshIdFactory = new_fresh_id,
+        request_id: RequestIdFactory | None = None,
+    ) -> None:
+        if type(config) is not ProjectConfig:
+            raise TypeError("config must be a ProjectConfig")
+        if not isinstance(  # pyright: ignore[reportUnnecessaryIsInstance]
+            project_root,
+            Path,
+        ):
+            raise TypeError("project_root must be a pathlib.Path")
+        if not isinstance(  # pyright: ignore[reportUnnecessaryIsInstance]
+            observer_secrets,
+            Mapping,
+        ):
+            raise TypeError("observer_secrets must be a mapping")
+        if type(command_policy) is not CommandLaunchPolicy:
+            raise TypeError("command_policy must be a CommandLaunchPolicy")
+        if http_policies is not None and not isinstance(  # pyright: ignore[reportUnnecessaryIsInstance]
+            http_policies,
+            Mapping,
+        ):
+            raise TypeError("http_policies must be a mapping or None")
+        if not callable(fresh_id):
+            raise TypeError("fresh_id must be callable")
+        if request_id is not None and not callable(request_id):
+            raise TypeError("request_id must be callable or None")
+        self._config = config
+        self._project_root = project_root
+        self._secrets = observer_secrets
+        self._command_policy = command_policy
+        self._http_policies = http_policies
+        self._runtime_public_authorization = runtime_public_authorization
+        self._executor_factory = executor_factory
+        self._fresh_id = fresh_id
+        self._request_id = request_id
+
+    def create(
+        self,
+        scope: ObserverAssertionRunScope,
+    ) -> RunnerObserverAssertionExecutor:
+        """Create a runner adapter bound to the supplied open run scope."""
+        if type(scope) is not ObserverAssertionRunScope:
+            raise TypeError("scope must be an ObserverAssertionRunScope")
+        if scope.config != self._config or scope.project_root != self._project_root:
+            raise ValueError("observer factory configuration differs from the active run")
+        if scope.runtime_public_authorization != self._runtime_public_authorization:
+            raise ValueError("observer factory runtime authorization differs from the active run")
+        observers = ProjectObserverAdapterBuilder(
+            config=self._config,
+            project_root=self._project_root,
+            observer_secrets=self._secrets,
+            clock=scope.clock,
+            command_policy=self._command_policy,
+            http_policies=self._http_policies,
+            runtime_public_authorization=self._runtime_public_authorization,
+            executor_factory=self._executor_factory,
+        ).build()
+        return RunnerObserverAssertionExecutor(
+            observers=observers,
+            invocation_timeouts_ns=_configured_invocation_timeouts(self._config),
+            observation_repository=ObservationRepository(scope.service),
+            clock=scope.clock,
+            owner_epoch=scope.owner_epoch,
+            fresh_id=self._fresh_id,
+            request_id=self._request_id,
         )
-        samples = await observation_runtime.samples(plan)
-        references = tuple(
-            AssertionEvidenceReference(
+
+
+class RunnerObserverAssertionExecutor:
+    """Runner protocol adapter for one open journal/clock execution scope."""
+
+    __slots__ = (
+        "_capabilities",
+        "_clock",
+        "_fresh_id",
+        "_invocation_timeouts",
+        "_observations",
+        "_observers",
+        "_owner_epoch",
+        "_request_id",
+    )
+
+    def __init__(
+        self,
+        *,
+        observers: Mapping[str, Observer],
+        invocation_timeouts_ns: Mapping[str, int],
+        observation_repository: ObservationRepository,
+        clock: RuntimeClock,
+        owner_epoch: int,
+        fresh_id: FreshIdFactory = new_fresh_id,
+        request_id: RequestIdFactory | None = None,
+    ) -> None:
+        _validate_observer_runtime_inputs(
+            observers,
+            invocation_timeouts_ns=invocation_timeouts_ns,
+            owner_epoch=owner_epoch,
+            fresh_id=fresh_id,
+        )
+        self._observers = MappingProxyType(dict(observers))
+        self._invocation_timeouts = MappingProxyType(dict(invocation_timeouts_ns))
+        self._observations = observation_repository
+        self._clock = clock
+        self._owner_epoch = owner_epoch
+        self._fresh_id = fresh_id
+        self._request_id = _new_request_id if request_id is None else request_id
+        self._capabilities: dict[str, ObserverResponse | Diagnostic | None] = {}
+
+    async def evaluate_scoped(
+        self,
+        lifecycle: AssertionLifecycle,
+        context: AssertionRuntimeContext,
+        assertion: AssertionConfig,
+        attempts: tuple[PersistedAttemptEvidence, ...],
+        coordinates: ObserverAssertionCoordinates,
+    ) -> ObserverAssertionExecution:
+        """Collect, persist, and export one runner-selected observer assertion."""
+        if type(lifecycle) is not AssertionLifecycle:
+            raise TypeError("lifecycle must be an AssertionLifecycle")
+        if type(context) is not AssertionRuntimeContext:
+            raise TypeError("context must be an AssertionRuntimeContext")
+        if not _is_observer_assertion(assertion):
+            raise TypeError("runner adapter requires a built-in observer assertion")
+        if (
+            type(attempts) is not tuple
+            or not attempts
+            or any(type(item) is not PersistedAttemptEvidence for item in attempts)
+        ):
+            raise ValueError("runner observer assertions require persisted attempt evidence")
+        if type(coordinates) is not ObserverAssertionCoordinates:
+            raise TypeError("coordinates must be ObserverAssertionCoordinates")
+        typed_assertion = cast("ObserverAssertionConfig", assertion)
+        witness = attempts[-1]
+        if (
+            witness.attempt.run_id != context.run_id
+            or witness.attempt.scenario_id != context.scenario_id
+        ):
+            raise ValueError("selected observer scope attempt differs from assertion context")
+        observer_id = _observer_id(typed_assertion)
+        observer = self._observers.get(observer_id)
+        if observer is None:
+            message = f"configured observer {observer_id!r} is unavailable"
+            raise ValueError(message)
+        if observer_id not in self._capabilities:
+            self._capabilities[observer_id] = await _request_capabilities(
+                observer,
+                self._request_id,
+            )
+        item = ScenarioObserverAssertion(
+            context=context,
+            assertion=typed_assertion,
+            observation_id=_runner_observation_id(
+                context,
+                observer_id=observer_id,
+                event_id=witness.attempt.event_id,
+            ),
+            checkpoint=f"assertion:{context.assertion_id}",
+            event_id=witness.attempt.event_id,
+        )
+        committed = await _evaluate_planned_assertion(
+            item,
+            observer_id=observer_id,
+            observer=observer,
+            capability_result=self._capabilities[observer_id],
+            invocation_timeout_ns=self._invocation_timeouts[observer_id],
+            observation_repository=self._observations,
+            clock=self._clock,
+            owner_epoch=self._owner_epoch,
+            fresh_id=self._fresh_id,
+            request_id=self._request_id,
+            lifecycle=lifecycle,
+        )
+        return ObserverAssertionExecution(
+            lifecycle=committed.assertion,
+            observations=tuple(
+                ObservationReportRecord(
+                    record=record,
+                    scenario_ordinal=coordinates.scenario_ordinal,
+                    observation_ordinal=coordinates.observation_ordinal,
+                )
+                for record in committed.observations
+            ),
+        )
+
+
+async def _request_capabilities(
+    observer: Observer,
+    request_id: RequestIdFactory,
+) -> ObserverResponse | Diagnostic | None:
+    request = ObserverRequest(
+        protocol_version="1.0",
+        request_id=request_id(),
+        operation=ObserverOperation.CAPABILITIES,
+    )
+    try:
+        return await observer.invoke(request)
+    except Exception as error:
+        diagnostic = getattr(error, "diagnostic", None)
+        return diagnostic if type(diagnostic) is Diagnostic else None
+
+
+async def _evaluate_planned_assertion(
+    item: ScenarioObserverAssertion,
+    *,
+    observer_id: str,
+    observer: Observer,
+    capability_result: ObserverResponse | Diagnostic | None,
+    invocation_timeout_ns: int,
+    observation_repository: ObservationRepository,
+    clock: RuntimeClock,
+    owner_epoch: int,
+    fresh_id: FreshIdFactory,
+    request_id: RequestIdFactory,
+    lifecycle: AssertionLifecycle,
+) -> CommittedObserverAssertion:
+    assertion = item.assertion
+    queries = derive_observer_queries(assertion)
+    handshake_failed = type(capability_result) is not ObserverResponse
+    capabilities = (
+        _fallback_capabilities(queries) if handshake_failed else capability_result.capabilities
+    )
+    request = ObserverRequest(
+        protocol_version="1.0",
+        request_id=request_id(),
+        operation=ObserverOperation.OBSERVE,
+        sample_id=fresh_id(FreshIdKind.SAMPLE),
+        run_id=item.context.run_id,
+        scenario_id=item.context.scenario_id,
+        event_id=item.event_id,
+        checkpoint=item.checkpoint,
+        queries=queries,
+    )
+    plan = _poll_plan(
+        item,
+        observer_id=observer_id,
+        request=request,
+        capabilities=capabilities,
+        invocation_timeout_ns=invocation_timeout_ns,
+    )
+    active_observer: Observer = observer
+    if handshake_failed:
+        active_observer = _FailedObserver(cast("Diagnostic | None", capability_result))
+    observation_runtime = ObservationRuntime(
+        observer=active_observer,
+        repository=observation_repository,
+        clock=clock,
+        owner_epoch=owner_epoch,
+        fresh_id=fresh_id,
+    )
+    poll_result = await observation_runtime.poll(
+        plan,
+        _poll_predicate(assertion),
+    )
+    samples = await observation_runtime.samples(plan)
+    references = tuple(
+        AssertionEvidenceReference(
+            AssertionEvidenceKind.OBSERVATION,
+            sample.sample_id,
+        )
+        for sample in samples
+    )
+    bundle = AssertionEvidenceBundle(
+        payload=_assertion_payload(assertion, poll_result, request, capabilities),
+        references=references,
+    )
+
+    async def supply() -> AssertionEvidenceBundle:
+        return bundle
+
+    if handshake_failed:
+        assertion_result = await lifecycle.evaluate(
+            item.context,
+            cast("AssertionConfig", assertion),
+            bundle,
+        )
+    else:
+        assertion_result = await lifecycle.evaluate_observer(
+            item.context,
+            cast("AssertionConfig", assertion),
+            _evaluation_capabilities(plan),
+            supply,
+            capability_reference=AssertionEvidenceReference(
                 AssertionEvidenceKind.OBSERVATION,
-                sample.sample_id,
-            )
-            for sample in samples
+                item.observation_id,
+            ),
         )
-        bundle = AssertionEvidenceBundle(
-            payload=_assertion_payload(assertion, poll_result, request, capabilities),
-            references=references,
-        )
-
-        async def supply() -> AssertionEvidenceBundle:
-            return bundle
-
-        if handshake_failed:
-            assertion_result = await self._assertions.evaluate(
-                item.context,
-                cast("AssertionConfig", assertion),
-                bundle,
-            )
-        else:
-            evaluation_capabilities = _evaluation_capabilities(plan)
-            assertion_result = await self._assertions.evaluate_observer(
-                item.context,
-                cast("AssertionConfig", assertion),
-                evaluation_capabilities,
-                supply,
-                capability_reference=AssertionEvidenceReference(
-                    AssertionEvidenceKind.OBSERVATION,
-                    item.observation_id,
-                ),
-            )
-        return CommittedObserverAssertion(
-            plan=plan,
-            poll_result=poll_result,
-            observations=samples,
-            assertion=assertion_result,
-            verdict=assertion_result.normalized.verdict,
-        )
+    return CommittedObserverAssertion(
+        plan=plan,
+        poll_result=poll_result,
+        observations=samples,
+        assertion=assertion_result,
+        verdict=assertion_result.normalized.verdict,
+    )
 
 
 class _CapturedObserverError(RuntimeError):
@@ -853,6 +1127,99 @@ def _evaluation_capabilities(
     )
 
 
+def _configured_invocation_timeouts(
+    config: ProjectConfig,
+) -> Mapping[str, int]:
+    result: dict[str, int] = {}
+    for name, observer in config.observers.items():
+        if type(observer) is CommandObserverConfig:
+            result[name] = observer.timeout.nanoseconds
+        elif type(observer) is HttpObserverConfig:
+            result[name] = observer.timeouts.total.nanoseconds
+        else:
+            raise TypeError("project contains an unknown observer configuration")
+    return MappingProxyType(result)
+
+
+def _validate_observer_runtime_inputs(
+    observers: Mapping[str, Observer],
+    *,
+    invocation_timeouts_ns: Mapping[str, int],
+    owner_epoch: int,
+    fresh_id: FreshIdFactory,
+) -> None:
+    if not isinstance(  # pyright: ignore[reportUnnecessaryIsInstance]
+        observers,
+        Mapping,
+    ) or any(
+        type(key) is not str
+        or not isinstance(  # pyright: ignore[reportUnnecessaryIsInstance]
+            value,
+            Observer,
+        )
+        for key, value in observers.items()
+    ):
+        raise TypeError("observers must map names to Observer implementations")
+    if type(owner_epoch) is not int or owner_epoch < 0:
+        raise ValueError("owner_epoch must be a nonnegative integer")
+    if (
+        not isinstance(  # pyright: ignore[reportUnnecessaryIsInstance]
+            invocation_timeouts_ns,
+            Mapping,
+        )
+        or set(invocation_timeouts_ns) != set(observers)
+        or any(type(value) is not int or value <= 0 for value in invocation_timeouts_ns.values())
+    ):
+        raise ValueError("invocation_timeouts_ns must provide one positive bound per observer")
+    if not callable(fresh_id):
+        raise TypeError("fresh_id must be callable")
+
+
+def _runner_observation_id(
+    context: AssertionRuntimeContext,
+    *,
+    observer_id: str,
+    event_id: str,
+) -> str:
+    validate_planned_id(event_id, expected_kind=PlannedIdKind.EVENT)
+    components = (
+        "runner-observation-v1",
+        context.scenario_id,
+        context.assertion_id,
+        event_id,
+        observer_id,
+    )
+    digest = hashlib.sha256("\x00".join(components).encode()).digest()
+    return f"observation_{encode_crockford_ulid(digest[:16])}"
+
+
+def _safe_executable_alias(value: object) -> bool:
+    return (
+        type(value) is str
+        and 1 <= len(value) <= _MAX_EXECUTABLE_ALIAS_LENGTH
+        and Path(value).name == value
+        and not any(character in "\r\n\x00" for character in value)
+    )
+
+
+def _apply_current_interpreter_alias(
+    config: CommandObserverConfig,
+    policy: CommandLaunchPolicy,
+) -> CommandObserverConfig:
+    alias = config.argv[0]
+    if alias not in policy.current_interpreter_aliases:
+        return config
+    try:
+        interpreter = Path(sys.executable).resolve(strict=True)
+    except (OSError, RuntimeError) as error:
+        raise ValueError("the current Python interpreter cannot be resolved") from error
+    if not interpreter.is_absolute() or not interpreter.is_file():
+        raise ValueError("the current Python interpreter path must be absolute")
+    wire = config.to_wire()
+    wire["argv"] = [str(interpreter), *config.argv[1:]]
+    return CommandObserverConfig.model_validate(wire)
+
+
 def _derive_http_policies(
     project: ProjectConfig,
     observer: HttpObserverConfig,
@@ -948,6 +1315,8 @@ __all__ = [
     "CommittedObserverAssertion",
     "ObserverAdapterBuilder",
     "ProjectObserverAdapterBuilder",
+    "ProjectObserverAssertionExecutorFactory",
+    "RunnerObserverAssertionExecutor",
     "ScenarioObserverAssertion",
     "ScenarioObserverAssertionResult",
     "ScenarioObserverAssertionRuntime",
