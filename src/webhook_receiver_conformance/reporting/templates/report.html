@@ -1,0 +1,257 @@
+<html lang="en" xmlns:t="urn:webhook-receiver-conformance:template:v1">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="${csp}" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${title}</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+        background: #f4f4f0;
+        color: #20211f;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; line-height: 1.5; }
+      header, main, footer { width: min(1120px, calc(100% - 32px)); margin: 0 auto; }
+      header { padding: 36px 0 20px; }
+      h1, h2, h3, h4 { line-height: 1.2; }
+      h1 { margin: 0 0 8px; font-size: clamp(1.55rem, 4vw, 2.5rem); }
+      h2 { margin-top: 0; font-size: 1.2rem; }
+      h3 { margin: 0; font-size: 1rem; }
+      h4 { margin: 20px 0 8px; font-size: .92rem; }
+      p { max-width: 82ch; }
+      section, .card {
+        border: 1px solid #d7d8d2;
+        border-radius: 8px;
+        background: #fff;
+        padding: 18px;
+        margin: 0 0 16px;
+        overflow-wrap: anywhere;
+      }
+      .summary-grid, .legend, .metadata {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+        gap: 10px;
+      }
+      .summary-grid div, .legend article, .metadata div {
+        border: 1px solid #e5e6e0;
+        border-radius: 6px;
+        padding: 10px;
+      }
+      .label {
+        display: inline-block;
+        border: 1px solid currentColor;
+        border-radius: 999px;
+        font-weight: 700;
+        padding: 2px 9px;
+      }
+      .result-pass { color: #166534; }
+      .result-receiver { color: #9f1239; }
+      .result-input { color: #92400e; }
+      .result-environment { color: #1d4ed8; }
+      .result-ambiguous { color: #6d28d9; }
+      .result-harness { color: #991b1b; }
+      .result-unsupported { color: #475569; }
+      .result-cancelled { color: #525252; }
+      .scenario { border-left: 6px solid currentColor; }
+      .muted { color: #62645e; }
+      .warning { background: #faf5ff; border-color: #c4b5fd; }
+      .redaction { background: #fffbeb; border-color: #fcd34d; }
+      table { width: 100%; border-collapse: collapse; font-size: .86rem; }
+      th, td { border: 1px solid #dedfd9; padding: 7px; text-align: left; vertical-align: top; }
+      th { background: #f7f7f4; }
+      code { white-space: pre-wrap; overflow-wrap: anywhere; }
+      dl { margin: 0; }
+      dt { color: #62645e; font-size: .78rem; text-transform: uppercase; }
+      dd { margin: 0 0 8px; }
+      ul { padding-left: 22px; }
+      footer { padding: 8px 0 36px; color: #62645e; font-size: .82rem; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>${title}</h1>
+      <p class="muted">Static, privacy-safe evidence report. No network or script execution is required.</p>
+      <p>
+        <span class="label ${summary_presentation.css_class}" data-classification="${summary_presentation.category}">${summary_presentation.label}</span>
+      </p>
+      <p>${summary_presentation.action}</p>
+      <div class="summary-grid">
+        <div><dt>Run ID</dt><dd><code>${summary.run_id}</code></dd></div>
+        <div><dt>Manifest ID</dt><dd><code>${summary.manifest_id}</code></dd></div>
+        <div><dt>Generated</dt><dd>${summary.generated_at}</dd></div>
+        <div><dt>Exit code</dt><dd>${summary.exit_code}</dd></div>
+        <div><dt>Scenarios</dt><dd>${summary.counts.scenarios}</dd></div>
+        <div><dt>Attempts</dt><dd>${summary.counts.attempts}</dd></div>
+        <div><dt>Observations</dt><dd>${summary.counts.observations}</dd></div>
+        <div><dt>Assertions</dt><dd>${summary.counts.assertions}</dd></div>
+      </div>
+    </header>
+    <main>
+      <section data-section="classification-guide">
+        <h2>Classification guide</h2>
+        <div class="legend">
+          <t:for each="classification_legend" as="entry">
+            <article class="${entry.css_class}" data-classification="${entry.category}">
+              <h3>${entry.label}</h3>
+              <p>${entry.action}</p>
+            </article>
+          </t:for>
+        </div>
+      </section>
+      <section class="redaction" data-section="redaction-policy">
+        <h2>Privacy boundary</h2>
+        <p>Headers and declared sensitive evidence use the marker <code>${redaction_marker}</code>. Request and response bodies are not embedded. Body evidence is limited to digests and sizes.</p>
+      </section>
+      <t:if test="has_ambiguity">
+        <section class="warning result-ambiguous" data-section="ambiguity">
+          <h2>Unknown outcome ambiguity</h2>
+          <p>An interrupted send is not classified as receiver success or transport failure. Preserve these attempt identifiers and choose an explicit observe, redeliver, or operator policy.</p>
+          <table>
+            <thead>
+              <tr><th>Attempt</th><th>Delivery</th><th>State</th><th>Classification</th><th>Request digest</th><th>Bytes</th></tr>
+            </thead>
+            <tbody>
+              <t:for each="ambiguity_attempts" as="attempt">
+                <tr>
+                  <td><code>${attempt.attempt_id}</code></td>
+                  <td><code>${attempt.delivery_id}</code></td>
+                  <td>${attempt.state}</td>
+                  <td>${attempt.classification}</td>
+                  <td><code>${attempt.request_digest}</code></td>
+                  <td>${attempt.request_bytes}</td>
+                </tr>
+              </t:for>
+            </tbody>
+          </table>
+        </section>
+      </t:if>
+      <t:for each="scenarios" as="scenario">
+        <section class="scenario ${scenario.presentation.css_class}" data-classification="${scenario.presentation.category}" data-scenario-id="${scenario.scenario_id}">
+          <h2>${scenario.name}</h2>
+          <div class="metadata">
+            <div><dt>Scenario ID</dt><dd><code>${scenario.scenario_id}</code></dd></div>
+            <div><dt>Ordinal</dt><dd>${scenario.ordinal}</dd></div>
+            <div><dt>Classification</dt><dd>${scenario.presentation.label}</dd></div>
+          </div>
+          <p>${scenario.presentation.action}</p>
+          <h3>Delivery attempts</h3>
+          <t:for each="scenario.attempts" as="attempt">
+            <div class="card" data-attempt-id="${attempt.attempt_id}">
+              <dl>
+                <dt>Attempt / delivery / event</dt>
+                <dd><code>${attempt.attempt_id} / ${attempt.delivery_id} / ${attempt.event_id}</code></dd>
+                <dt>State and classification</dt>
+                <dd>${attempt.state} / ${attempt.classification}</dd>
+                <dt>Timing</dt>
+                <dd>recorded=${attempt.recorded_at}; logical_ns=${attempt.logical_time_ns}; elapsed_ns=${attempt.monotonic_elapsed_ns}</dd>
+                <dt>Request metadata</dt>
+                <dd>url=<code>${attempt.request_url}</code>; digest=<code>${attempt.request_digest}</code>; bytes=${attempt.request_bytes}</dd>
+                <dt>Response metadata</dt>
+                <dd>status=${attempt.response_status}; digest=<code>${attempt.response_digest}</code>; captured_bytes=${attempt.response_bytes}; truncated=${attempt.response_truncated}</dd>
+                <dt>Transport diagnostic</dt>
+                <dd>category=${attempt.error_category}; phase=${attempt.error_phase}; message=${attempt.error_message}</dd>
+              </dl>
+              <h4>Header names</h4>
+              <ul>
+                <t:for each="attempt.headers" as="header">
+                  <li><code>${header.name}: ${header.value}</code></li>
+                </t:for>
+              </ul>
+            </div>
+          </t:for>
+          <h3>Receiver-state observations</h3>
+          <t:for each="scenario.observations" as="observation">
+            <div class="card" data-observation-id="${observation.observation_id}">
+              <dl>
+                <dt>Observation / sample / observer</dt>
+                <dd><code>${observation.observation_id} / ${observation.sample_id} / ${observation.observer_id}</code></dd>
+                <dt>Status and snapshot</dt>
+                <dd>${observation.status} / <code>${observation.snapshot_id}</code></dd>
+                <dt>Recorded</dt>
+                <dd>${observation.recorded_at}</dd>
+                <dt>Observer diagnostic</dt>
+                <dd>${observation.error_category}: ${observation.error_message}</dd>
+              </dl>
+              <table>
+                <thead><tr><th>Key</th><th>Type</th><th>Value</th><th>Sensitive</th></tr></thead>
+                <tbody>
+                  <t:for each="observation.evidence" as="evidence">
+                    <tr>
+                      <td><code>${evidence.key}</code></td>
+                      <td>${evidence.value_type}</td>
+                      <td><code>${evidence.value}</code></td>
+                      <td>${evidence.sensitive}</td>
+                    </tr>
+                  </t:for>
+                </tbody>
+              </table>
+            </div>
+          </t:for>
+          <h3>Assertions</h3>
+          <t:for each="scenario.assertions" as="assertion">
+            <div class="card" data-assertion-id="${assertion.assertion_id}">
+              <dl>
+                <dt>Assertion / record</dt>
+                <dd><code>${assertion.assertion_id} / ${assertion.record_id}</code></dd>
+                <dt>Type and result</dt>
+                <dd>${assertion.type} / ${assertion.result}</dd>
+                <dt>Comparison</dt>
+                <dd>${assertion.comparison}</dd>
+                <dt>Expected</dt>
+                <dd><code>${assertion.expected}</code></dd>
+                <dt>Actual</dt>
+                <dd><code>${assertion.actual}</code></dd>
+                <dt>Message</dt>
+                <dd>${assertion.message}</dd>
+              </dl>
+              <h4>Immediate evidence references</h4>
+              <ul>
+                <t:for each="assertion.evidence_refs" as="reference">
+                  <li><code>${reference}</code></li>
+                </t:for>
+              </ul>
+            </div>
+          </t:for>
+        </section>
+      </t:for>
+      <section data-section="causal-traces">
+        <h2>Failure causal traces</h2>
+        <t:for each="causal_traces" as="trace">
+          <article class="card" data-assertion-record-id="${trace.assertion_record_id}">
+            <h3>${trace.classification}</h3>
+            <dl>
+              <dt>Assertion</dt><dd><code>${trace.assertion_id} / ${trace.assertion_record_id}</code></dd>
+              <dt>Scenario / event / delivery</dt><dd><code>${trace.scenario_id} / ${trace.event_id} / ${trace.delivery_id}</code></dd>
+              <dt>Attempt record</dt><dd><code>${trace.attempt_id} / ${trace.attempt_record_id}</code></dd>
+              <dt>Observation record</dt><dd><code>${trace.observation_id} / ${trace.observation_record_id}</code></dd>
+            </dl>
+            <h4>Immediate evidence</h4>
+            <ul>
+              <t:for each="trace.immediate_evidence_refs" as="reference">
+                <li><code>${reference}</code></li>
+              </t:for>
+            </ul>
+            <h4>Mutations</h4>
+            <ul>
+              <t:for each="trace.mutation_refs" as="reference">
+                <li><code>${reference}</code></li>
+              </t:for>
+            </ul>
+          </article>
+        </t:for>
+      </section>
+      <section data-section="artifacts">
+        <h2>Artifact paths</h2>
+        <p>Paths are rendered as text and are never activated as hyperlinks.</p>
+        <ul>
+          <t:for each="artifact_paths" as="artifact">
+            <li>${artifact.name}: <code>${artifact.path}</code></li>
+          </t:for>
+        </ul>
+      </section>
+    </main>
+    <footer>Webhook receiver conformance harness — static evidence report.</footer>
+  </body>
+</html>
