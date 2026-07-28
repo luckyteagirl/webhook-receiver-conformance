@@ -56,8 +56,16 @@ from webhook_receiver_conformance.manifest.compiler import (
     compile_run_bundle,
 )
 from webhook_receiver_conformance.manifest.loader import load_replay_bundle
-from webhook_receiver_conformance.network.dialer import PinnedDestinationDialer
+from webhook_receiver_conformance.network.dialer import (
+    DialTimeouts,
+    PinnedDestinationDialer,
+)
 from webhook_receiver_conformance.network.policy import parse_destination_policy
+from webhook_receiver_conformance.network.preflight import (
+    PreflightPhase,
+    PublicTargetPreflightError,
+    preflight_public_target,
+)
 from webhook_receiver_conformance.network.transport import AnyIOConnector, AnyIOResolver
 from webhook_receiver_conformance.runtime.attempts import prepare_realized_attempt
 from webhook_receiver_conformance.secrets import SecretHandle, SecretResolver
@@ -422,6 +430,14 @@ def run_command(
         )
     loaded = _require_loaded(_load_config(config, output=output))
     _require_public_consent(loaded.config, authorize_public_target)
+    if loaded.config.receiver.target_profile is TargetProfile.PUBLIC_AUTHORIZED:
+        if not _presentation(context).json_output:
+            typer.echo(
+                "Authorized destination before contact: "
+                f"{_safe_text(loaded.config.receiver.url)}",
+                err=True,
+            )
+        _perform_public_preflight(loaded.config, authorize_public_target)
     project_root = loaded.project_root
     artifact_root = _artifact_root(loaded.config, project_root, output)
     run_id = str(uuid.uuid4())
@@ -1023,6 +1039,56 @@ def _require_public_consent(config: ProjectConfig, supplied: str | None) -> None
             "CLI_PUBLIC_AUTHORIZATION_REQUIRED",
             "Public target execution requires exact config and CLI consent.",
         )
+
+
+def _perform_public_preflight(
+    config: ProjectConfig,
+    runtime_public_authorization: str | None,
+) -> None:
+    try:
+        anyio.run(
+            _preflight_public_target,
+            config,
+            runtime_public_authorization,
+        )
+    except PublicTargetPreflightError as error:
+        if error.phase is PreflightPhase.POLICY:
+            category = ResultCategory.INVALID_INPUT
+        elif error.phase in {
+            PreflightPhase.RESOLUTION,
+            PreflightPhase.CONNECTION,
+            PreflightPhase.WRITE,
+            PreflightPhase.READ,
+        }:
+            category = ResultCategory.ENVIRONMENT_ERROR
+        else:
+            category = ResultCategory.RECEIVER_FAILURE
+        code = error.code.value.upper().replace("-", "_")
+        _fail(
+            category,
+            f"CLI_PUBLIC_PREFLIGHT_{code}",
+            str(error),
+        )
+
+
+async def _preflight_public_target(
+    config: ProjectConfig,
+    runtime_public_authorization: str | None,
+) -> None:
+    timeouts = config.receiver.timeouts
+    await preflight_public_target(
+        config.receiver,
+        runtime_public_authorization=runtime_public_authorization,
+        dialer=PinnedDestinationDialer(
+            resolver=AnyIOResolver(),
+            connector=AnyIOConnector(),
+        ),
+        dial_timeouts=DialTimeouts(
+            resolve_nanoseconds=timeouts.connect.nanoseconds,
+            connect_nanoseconds=timeouts.connect.nanoseconds,
+            close_nanoseconds=timeouts.pool.nanoseconds,
+        ),
+    )
 
 
 def _safe_init_write(root: Path, target: Path, content: bytes) -> None:
