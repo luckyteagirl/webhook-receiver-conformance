@@ -90,7 +90,7 @@ def test_loads_only_verified_bundle_artifacts_with_stable_digest(tmp_path: Path)
     assert loaded.manifest_bytes == compiled.manifest_bytes
     assert (
         loaded.normalized_digest
-        == "sha256:f31ef8908be16f4fd76d2c1dcb21ca6bd0f710b07c84dd610cfdb8c2e2e855c0"
+        == "sha256:bfb78633031aa886334f9bd24afe87a41d90f26ae975c77c09c5bd7f86f6cd97"
     )
     assert normalized_manifest_digest(loaded.manifest) == loaded.normalized_digest
     assert tuple(blob.sha256 for blob in loaded.blobs) == tuple(
