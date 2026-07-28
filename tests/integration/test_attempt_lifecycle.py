@@ -450,13 +450,21 @@ async def test_response_lifecycle_is_fully_journaled(
         )
         assert b"secret-canary-body" not in run.database_path.read_bytes()
     async with JournalService.open(run.database_path) as reopened:
+        reopened_repository = TransitionRepository(reopened)
         assert (
-            await TransitionRepository(reopened).attempt_record_id(
+            await reopened_repository.attempt_record_id(
                 RUN_ID,
                 attempt_id,
             )
             == record_id
         )
+        persisted = await reopened_repository.attempt_evidence(RUN_ID, attempt_id)
+        assert persisted is not None
+        assert (
+            persisted.response_headers_elapsed_ns
+            == result.transport.timings.response_headers_elapsed_ns
+        )
+        assert persisted.response_headers_elapsed_ns is not None
         assert await _rows(
             reopened,
             "SELECT state, response_status, error_category FROM attempt_records",

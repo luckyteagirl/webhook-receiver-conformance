@@ -11,6 +11,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Protocol, cast
 
 from webhook_receiver_conformance.domain.enums import (
+    AssertionResult,
     AssertionState,
     AttemptClassification,
     AttemptEvidenceState,
@@ -28,7 +29,13 @@ from webhook_receiver_conformance.domain.identifiers import (
     validate_planned_id,
     validate_run_id,
 )
-from webhook_receiver_conformance.domain.models import AttemptEvidence
+from webhook_receiver_conformance.domain.models import (
+    AssertionEvaluation,
+    AttemptEvidence,
+    RequestMetadata,
+    ResponseMetadata,
+    TransportError,
+)
 from webhook_receiver_conformance.observers.protocol import (
     ObservationRecord,
     ObservationRecordError,
@@ -84,9 +91,10 @@ _ENTITY_PROJECTION_COLUMN_COUNT = 10
 _ASSERTION_GUARD_COLUMN_COUNT = 3
 _TRANSITION_COLUMN_COUNT = 15
 _PROJECTION_COLUMN_COUNT = 2
-_ATTEMPT_RECORD_COLUMN_COUNT = 25
+_ATTEMPT_RECORD_COLUMN_COUNT = 26
 _OBSERVATION_SERIES_COLUMN_COUNT = 6
 _OBSERVATION_SAMPLE_COLUMN_COUNT = 13
+_ASSERTION_EVALUATION_COLUMN_COUNT = 12
 
 TRIGGER_ATTEMPT_OUTCOME = "attempt_outcome"
 TRIGGER_ASSERTION_POLICY = "assertion_policy"
@@ -211,6 +219,17 @@ class ObservationMutationPhase(StrEnum):
     AFTER_SAMPLE_INSERT = "after_sample_insert"
 
 
+class AssertionEvidenceKind(StrEnum):
+    """Typed evidence-link categories supported by the journal schema."""
+
+    ATTEMPT = "attempt"
+    OBSERVATION = "observation"
+    RECORD = "record"
+    ARTIFACT = "artifact"
+    TRANSITION = "transition"
+    RECOVERY_DECISION = "recovery_decision"
+
+
 class TransitionCrashHook(Protocol):
     """Synchronous failpoint callback executed inside the writer transaction."""
 
@@ -331,7 +350,11 @@ class _ApplyTransitionOperation:
                 evidence=self.transport_evidence,
                 sequence=evidence_sequence,
             )
-            _insert_attempt_record(transaction, attempt_record)
+            _insert_attempt_record(
+                transaction,
+                attempt_record,
+                response_headers_elapsed_ns=(self.transport_evidence.response_headers_elapsed_ns),
+            )
             _call_crash_hook(
                 self.crash_hook,
                 AttemptMutationPhase.AFTER_ATTEMPT_RECORD,
@@ -469,6 +492,52 @@ class _AttemptRecordIdOperation:
         record_id = _text(result.rows[0][0], name="attempt record_id")
         validate_fresh_id(record_id, expected_kind=FreshIdKind.RECORD)
         return record_id
+
+
+@dataclass(frozen=True, slots=True)
+class PersistedAttemptEvidence:
+    """One public attempt record plus internal authoritative header latency."""
+
+    attempt: AttemptEvidence
+    response_headers_elapsed_ns: int | None
+
+    def __post_init__(self) -> None:
+        if type(self.attempt) is not AttemptEvidence:
+            raise TypeError("attempt must be an AttemptEvidence")
+        if self.response_headers_elapsed_ns is not None and (
+            type(self.response_headers_elapsed_ns) is not int
+            or not 0 <= self.response_headers_elapsed_ns <= MAX_SAFE_INTEGER
+        ):
+            raise ValueError(
+                "response_headers_elapsed_ns must be a nonnegative I-JSON integer or None"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class _AttemptEvidenceOperation:
+    run_id: str
+    attempt_id: str
+
+    def execute(
+        self,
+        transaction: JournalTransaction,
+    ) -> PersistedAttemptEvidence | None:
+        _require_run_exists(transaction, self.run_id)
+        result = transaction.execute(
+            JournalStatement(
+                f"""
+                SELECT {_ATTEMPT_RECORD_COLUMNS}
+                FROM attempt_records
+                WHERE run_id = ? AND attempt_id = ?
+                """,
+                (self.run_id, self.attempt_id),
+            )
+        )
+        if len(result.rows) > 1:
+            raise ProjectionIntegrityError("attempt evidence identity is duplicated")
+        if not result.rows:
+            return None
+        return _persisted_attempt_evidence_from_row(result.rows[0])
 
 
 class TransitionRepository:
@@ -612,6 +681,21 @@ class TransitionRepository:
             )
         )
 
+    async def attempt_evidence(
+        self,
+        run_id: str,
+        attempt_id: str,
+    ) -> PersistedAttemptEvidence | None:
+        """Load one sanitized terminal attempt and its authoritative header latency."""
+        validate_run_id(run_id)
+        validate_fresh_id(attempt_id, expected_kind=FreshIdKind.ATTEMPT)
+        return await self._service.execute(
+            _AttemptEvidenceOperation(
+                run_id=run_id,
+                attempt_id=attempt_id,
+            )
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class ObservationSeriesCommand:
@@ -708,7 +792,7 @@ class ObservationSampleCommand:
             or transition.attempt_outcome is not None
         ):
             raise ValueError("terminal observation transition differs from its sample")
-        allowed_states = {
+        allowed_states: Mapping[ObservationStatus, frozenset[ObservationState]] = {
             ObservationStatus.OK: frozenset({ObservationState.OK}),
             ObservationStatus.PENDING: frozenset({ObservationState.PENDING}),
             ObservationStatus.UNSUPPORTED: frozenset({ObservationState.UNSUPPORTED}),
@@ -731,6 +815,88 @@ class CommittedObservationSample:
     record: ObservationRecord
     idempotent_replay: bool
     transition: CommittedTransition | None
+
+
+@dataclass(frozen=True, slots=True)
+class AssertionEvidenceReference:
+    """One typed immutable evidence identifier linked to an evaluation."""
+
+    kind: AssertionEvidenceKind
+    evidence_id: str
+
+    def __post_init__(self) -> None:
+        if type(self.kind) is not AssertionEvidenceKind:
+            raise TypeError("kind must be an AssertionEvidenceKind")
+        _bounded_evidence_identifier(self.evidence_id)
+
+
+@dataclass(frozen=True, slots=True)
+class AssertionEvaluationCommand:
+    """Append one evaluation and its terminal assertion edge atomically."""
+
+    evaluation_id: str
+    evaluation: AssertionEvaluation
+    evidence: tuple[AssertionEvidenceReference, ...]
+    terminal_transition: TransitionCommand[AssertionState]
+
+    def __post_init__(self) -> None:
+        validate_fresh_id(
+            self.evaluation_id,
+            expected_kind=FreshIdKind.EVALUATION,
+        )
+        if type(self.evaluation) is not AssertionEvaluation:
+            raise TypeError("evaluation must be an AssertionEvaluation")
+        if (
+            type(self.evidence) is not tuple
+            or not self.evidence
+            or any(type(item) is not AssertionEvidenceReference for item in self.evidence)
+        ):
+            raise TypeError("evidence must be a nonempty tuple of AssertionEvidenceReference")
+        if len({(item.kind, item.evidence_id) for item in self.evidence}) != len(self.evidence):
+            raise ValueError("assertion evidence references must be unique")
+        if self.evaluation.evidence_refs != tuple(item.evidence_id for item in self.evidence):
+            raise ValueError("evaluation evidence_refs differ from typed evidence links")
+        transition = self.terminal_transition
+        if type(transition) is not TransitionCommand:
+            raise TypeError("terminal_transition must be a TransitionCommand")
+        evaluation = self.evaluation
+        if (
+            transition.run_id != evaluation.run_id
+            or transition.entity_type is not EntityType.ASSERTION
+            or transition.entity_id != evaluation.assertion_id
+            or transition.expected_state is not AssertionState.RUNNING
+            or transition.trigger_category != "assertion_evaluation"
+            or transition.causal_reference
+            != CausalReference(evaluation.run_id, evaluation.record_id)
+            or transition.attempt_outcome is not None
+            or transition.timestamp.wall_time != evaluation.recorded_at
+        ):
+            raise ValueError("terminal assertion transition differs from its evaluation")
+        allowed_states: Mapping[AssertionResult, frozenset[AssertionState]] = {
+            AssertionResult.PASS: frozenset({AssertionState.PASSED}),
+            AssertionResult.FAIL: frozenset({AssertionState.FAILED}),
+            AssertionResult.ERROR: frozenset(
+                {
+                    AssertionState.ERROR,
+                    AssertionState.UNSUPPORTED,
+                }
+            ),
+            AssertionResult.SKIPPED: frozenset({AssertionState.UNSUPPORTED}),
+            AssertionResult.PENDING: frozenset[AssertionState](),
+        }
+        if transition.new_state not in allowed_states[evaluation.result]:
+            raise ValueError("evaluation result and terminal assertion state disagree")
+
+
+@dataclass(frozen=True, slots=True)
+class CommittedAssertionEvaluation:
+    """One durable evaluation append and its terminal lifecycle edge."""
+
+    evaluation_id: str
+    evaluation: AssertionEvaluation
+    evidence: tuple[AssertionEvidenceReference, ...]
+    idempotent_replay: bool
+    transition: CommittedTransition
 
 
 @dataclass(frozen=True, slots=True)
@@ -923,6 +1089,144 @@ class _ObservationSamplesOperation:
         return tuple(_observation_record_from_row(row) for row in result.rows)
 
 
+@dataclass(frozen=True, slots=True)
+class _AppendAssertionEvaluationOperation:
+    command: AssertionEvaluationCommand
+    crash_hook: TransitionCrashHook | None
+
+    def execute(self, transaction: JournalTransaction) -> CommittedAssertionEvaluation:
+        command = self.command
+        transition = cast(
+            "TransitionCommand[LifecycleState]",
+            command.terminal_transition,
+        )
+        _require_current_owner(transaction, transition)
+        existing = _load_assertion_evaluation_identity(
+            transaction,
+            evaluation_id=command.evaluation_id,
+            record_id=command.evaluation.record_id,
+        )
+        if existing is not None:
+            _verify_assertion_evaluation_row(transaction, command, existing)
+            committed = _ApplyTransitionOperation(
+                transition,
+                self.crash_hook,
+            ).execute(transaction)
+            return CommittedAssertionEvaluation(
+                evaluation_id=command.evaluation_id,
+                evaluation=command.evaluation,
+                evidence=command.evidence,
+                idempotent_replay=True,
+                transition=committed,
+            )
+
+        _validate_assertion_evaluation_identity(transaction, command)
+        _require_next_assertion_evaluation_sequence(transaction, command)
+        for reference in command.evidence:
+            _require_assertion_evidence_reference(
+                transaction,
+                run_id=command.evaluation.run_id,
+                reference=reference,
+            )
+        result = transaction.execute(
+            JournalStatement(
+                """
+                INSERT INTO assertion_evaluations (
+                    evaluation_id, record_id, run_id, scenario_id, assertion_id,
+                    evaluation_sequence, result, recorded_at,
+                    expected_json, actual_json, comparison, message
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                _assertion_evaluation_row_values(command),
+            )
+        )
+        if result.rowcount != 1:
+            raise ProjectionIntegrityError(
+                "assertion evaluation append did not insert exactly one record"
+            )
+        for ordinal, reference in enumerate(command.evidence):
+            result = transaction.execute(
+                JournalStatement(
+                    """
+                    INSERT INTO evidence_links (
+                        evaluation_id, run_id, ordinal, evidence_kind, evidence_id
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        command.evaluation_id,
+                        command.evaluation.run_id,
+                        ordinal,
+                        reference.kind.value,
+                        reference.evidence_id,
+                    ),
+                )
+            )
+            if result.rowcount != 1:
+                raise ProjectionIntegrityError(
+                    "assertion evidence link append did not insert exactly one record"
+                )
+        committed = _ApplyTransitionOperation(
+            transition,
+            self.crash_hook,
+        ).execute(transaction)
+        return CommittedAssertionEvaluation(
+            evaluation_id=command.evaluation_id,
+            evaluation=command.evaluation,
+            evidence=command.evidence,
+            idempotent_replay=False,
+            transition=committed,
+        )
+
+
+class AssertionRepository:
+    """Atomic single-writer persistence for assertion lifecycle and evidence."""
+
+    __slots__ = ("_crash_hook", "_service")
+
+    def __init__(
+        self,
+        service: JournalService,
+        *,
+        crash_hook: TransitionCrashHook | None = None,
+    ) -> None:
+        if not isinstance(  # pyright: ignore[reportUnnecessaryIsInstance]
+            service,
+            JournalService,
+        ):
+            raise TypeError("service must be a JournalService")
+        if crash_hook is not None and not callable(crash_hook):
+            raise TypeError("crash_hook must be callable")
+        self._service = service
+        self._crash_hook = crash_hook
+
+    async def transition(
+        self,
+        command: TransitionCommand[AssertionState],
+    ) -> CommittedTransition:
+        """Commit one assertion-only lifecycle edge."""
+        if type(command) is not TransitionCommand:
+            raise TypeError("command must be a TransitionCommand")
+        if command.entity_type is not EntityType.ASSERTION:
+            raise TypeError("command must be an assertion TransitionCommand")
+        return await self._service.execute(
+            _ApplyTransitionOperation(
+                command=cast("TransitionCommand[LifecycleState]", command),
+                crash_hook=self._crash_hook,
+            )
+        )
+
+    async def append_evaluation(
+        self,
+        command: AssertionEvaluationCommand,
+    ) -> CommittedAssertionEvaluation:
+        """Append evaluation, typed evidence links, and terminal edge atomically."""
+        if type(command) is not AssertionEvaluationCommand:
+            raise TypeError("command must be an AssertionEvaluationCommand")
+        return await self._service.execute(
+            _AppendAssertionEvaluationOperation(command, self._crash_hook)
+        )
+
+
 class ObservationRepository:
     """Atomic single-writer persistence for observation series and samples."""
 
@@ -978,6 +1282,242 @@ class ObservationRepository:
             expected_kind=PlannedIdKind.OBSERVATION,
         )
         return await self._service.execute(_ObservationSamplesOperation(run_id, observation_id))
+
+
+def _bounded_evidence_identifier(value: object) -> str:
+    if (
+        type(value) is not str
+        or not 1 <= len(value) <= 96
+        or any(
+            not (character.isascii() and (character.isalnum() or character in {"_", ".", ":", "-"}))
+            for character in value
+        )
+    ):
+        raise ValueError("evidence_id must be a bounded portable identifier")
+    return value
+
+
+def _load_assertion_evaluation_identity(
+    transaction: JournalTransaction,
+    *,
+    evaluation_id: str,
+    record_id: str,
+) -> tuple[object, ...] | None:
+    result = transaction.execute(
+        JournalStatement(
+            """
+            SELECT
+                evaluation_id, record_id, run_id, scenario_id, assertion_id,
+                evaluation_sequence, result, recorded_at,
+                expected_json, actual_json, comparison, message
+            FROM assertion_evaluations
+            WHERE evaluation_id = ? OR record_id = ?
+            ORDER BY evaluation_id
+            """,
+            (evaluation_id, record_id),
+        )
+    )
+    if len(result.rows) > 1:
+        raise IdempotencyConflictError(
+            "evaluation_id and record_id name different assertion evaluations"
+        )
+    if not result.rows:
+        return None
+    row = cast("tuple[object, ...]", result.rows[0])
+    if len(row) != _ASSERTION_EVALUATION_COLUMN_COUNT:
+        raise ProjectionIntegrityError("assertion evaluation row has an invalid shape")
+    return row
+
+
+def _validate_assertion_evaluation_identity(
+    transaction: JournalTransaction,
+    command: AssertionEvaluationCommand,
+) -> None:
+    evaluation = command.evaluation
+    result = transaction.execute(
+        JournalStatement(
+            """
+            SELECT run_id, scenario_id, type, state
+            FROM assertions
+            WHERE assertion_id = ?
+            """,
+            (evaluation.assertion_id,),
+        )
+    )
+    if not result.rows:
+        raise IllegalTransitionError("assertion evaluation target does not exist")
+    row = result.rows[0]
+    if (
+        _text(row[0], name="assertion run_id") != evaluation.run_id
+        or _text(row[1], name="assertion scenario_id") != evaluation.scenario_id
+    ):
+        raise CrossRunReferenceError("assertion evaluation target has a different scope")
+    if _text(row[2], name="assertion type") != evaluation.type:
+        raise IdempotencyConflictError("assertion evaluation type differs from its projection")
+    if parse_state(EntityType.ASSERTION, row[3]) is not AssertionState.RUNNING:
+        raise IllegalTransitionError("new assertion evaluations require a running assertion")
+
+
+def _require_next_assertion_evaluation_sequence(
+    transaction: JournalTransaction,
+    command: AssertionEvaluationCommand,
+) -> None:
+    result = transaction.execute(
+        JournalStatement(
+            """
+            SELECT COALESCE(MAX(evaluation_sequence), 0) + 1
+            FROM assertion_evaluations
+            WHERE run_id = ? AND assertion_id = ?
+            """,
+            (
+                command.evaluation.run_id,
+                command.evaluation.assertion_id,
+            ),
+        )
+    )
+    if len(result.rows) != 1 or len(result.rows[0]) != 1:
+        raise ProjectionIntegrityError(
+            "assertion evaluation sequence query returned an invalid shape"
+        )
+    expected = _integer(result.rows[0][0], name="assertion evaluation sequence")
+    if command.evaluation.evaluation_sequence != expected:
+        raise IdempotencyConflictError("assertion evaluation sequence is not the next value")
+
+
+def _require_assertion_evidence_reference(
+    transaction: JournalTransaction,
+    *,
+    run_id: str,
+    reference: AssertionEvidenceReference,
+) -> None:
+    statements: Mapping[AssertionEvidenceKind, JournalStatement] = {
+        AssertionEvidenceKind.ATTEMPT: JournalStatement(
+            """
+            SELECT 1 FROM attempts
+            WHERE run_id = ? AND attempt_id = ?
+            LIMIT 1
+            """,
+            (run_id, reference.evidence_id),
+        ),
+        AssertionEvidenceKind.OBSERVATION: JournalStatement(
+            """
+            SELECT 1 FROM observer_series
+            WHERE run_id = ? AND observation_id = ?
+            UNION ALL
+            SELECT 1 FROM observation_samples
+            WHERE run_id = ? AND sample_id = ?
+            LIMIT 1
+            """,
+            (
+                run_id,
+                reference.evidence_id,
+                run_id,
+                reference.evidence_id,
+            ),
+        ),
+        AssertionEvidenceKind.RECORD: JournalStatement(
+            """
+            SELECT 1 FROM attempt_records
+            WHERE run_id = ? AND record_id = ?
+            UNION ALL
+            SELECT 1 FROM observation_samples
+            WHERE run_id = ? AND record_id = ?
+            UNION ALL
+            SELECT 1 FROM assertion_evaluations
+            WHERE run_id = ? AND record_id = ?
+            LIMIT 1
+            """,
+            (
+                run_id,
+                reference.evidence_id,
+                run_id,
+                reference.evidence_id,
+                run_id,
+                reference.evidence_id,
+            ),
+        ),
+        AssertionEvidenceKind.ARTIFACT: JournalStatement(
+            """
+            SELECT 1 FROM artifacts
+            WHERE run_id = ? AND artifact_id = ?
+            LIMIT 1
+            """,
+            (run_id, reference.evidence_id),
+        ),
+        AssertionEvidenceKind.TRANSITION: JournalStatement(
+            """
+            SELECT 1 FROM transitions
+            WHERE run_id = ? AND transition_id = ?
+            LIMIT 1
+            """,
+            (run_id, reference.evidence_id),
+        ),
+        AssertionEvidenceKind.RECOVERY_DECISION: JournalStatement(
+            """
+            SELECT 1 FROM recovery_decisions
+            WHERE run_id = ? AND decision_id = ?
+            LIMIT 1
+            """,
+            (run_id, reference.evidence_id),
+        ),
+    }
+    result = transaction.execute(statements[reference.kind])
+    if not result.rows:
+        raise CrossRunReferenceError(
+            "assertion evaluation references missing or cross-run evidence"
+        )
+
+
+def _assertion_evaluation_row_values(
+    command: AssertionEvaluationCommand,
+) -> tuple[SqlValue, ...]:
+    evaluation = command.evaluation
+    return (
+        command.evaluation_id,
+        evaluation.record_id,
+        evaluation.run_id,
+        evaluation.scenario_id,
+        evaluation.assertion_id,
+        evaluation.evaluation_sequence,
+        evaluation.result.value,
+        _format_utc_datetime(evaluation.recorded_at),
+        _optional_canonical_json_bytes(evaluation.expected),
+        _optional_canonical_json_bytes(evaluation.actual),
+        evaluation.comparison,
+        evaluation.message,
+    )
+
+
+def _optional_canonical_json_bytes(value: object) -> bytes | None:
+    return None if value is None else _canonical_json_bytes(value)
+
+
+def _verify_assertion_evaluation_row(
+    transaction: JournalTransaction,
+    command: AssertionEvaluationCommand,
+    row: tuple[object, ...],
+) -> None:
+    if tuple(row) != _assertion_evaluation_row_values(command):
+        raise IdempotencyConflictError("assertion evaluation replay differs")
+    result = transaction.execute(
+        JournalStatement(
+            """
+            SELECT evidence_kind, evidence_id
+            FROM evidence_links
+            WHERE run_id = ? AND evaluation_id = ?
+            ORDER BY ordinal
+            """,
+            (
+                command.evaluation.run_id,
+                command.evaluation_id,
+            ),
+        )
+    )
+    expected = tuple(
+        (reference.kind.value, reference.evidence_id) for reference in command.evidence
+    )
+    if tuple(result.rows) != expected:
+        raise IdempotencyConflictError("assertion evidence-link replay differs")
 
 
 def _load_observation_series(
@@ -2385,6 +2925,8 @@ def _attempt_record_from_command(
 def _insert_attempt_record(
     transaction: JournalTransaction,
     record: AttemptEvidence,
+    *,
+    response_headers_elapsed_ns: int | None,
 ) -> None:
     result = transaction.execute(
         JournalStatement(
@@ -2414,20 +2956,28 @@ def _insert_attempt_record(
                 response_truncated,
                 error_category,
                 error_message_redacted,
-                error_phase
+                error_phase,
+                response_headers_elapsed_ns
             ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?
             )
             """,
-            _attempt_record_values(record),
+            _attempt_record_values(
+                record,
+                response_headers_elapsed_ns=response_headers_elapsed_ns,
+            ),
         )
     )
     if result.rowcount != 1:
         raise ProjectionIntegrityError("attempt evidence append did not insert exactly one record")
 
 
-def _attempt_record_values(record: AttemptEvidence) -> tuple[SqlValue, ...]:
+def _attempt_record_values(
+    record: AttemptEvidence,
+    *,
+    response_headers_elapsed_ns: int | None,
+) -> tuple[SqlValue, ...]:
     request = record.request
     response = record.response
     error = record.error
@@ -2457,6 +3007,7 @@ def _attempt_record_values(record: AttemptEvidence) -> tuple[SqlValue, ...]:
         error.category if error is not None else None,
         error.message_redacted if error is not None else None,
         error.phase if error is not None else None,
+        response_headers_elapsed_ns,
     )
 
 
@@ -2651,7 +3202,10 @@ def _verify_existing_attempt_record(
         response=evidence.response,
         error=evidence.error,
     )
-    if tuple(row) != _attempt_record_values(expected):
+    if tuple(row) != _attempt_record_values(
+        expected,
+        response_headers_elapsed_ns=evidence.response_headers_elapsed_ns,
+    ):
         raise IdempotencyConflictError("idempotent terminal transition transport evidence differs")
 
 
@@ -2767,8 +3321,104 @@ _ATTEMPT_RECORD_COLUMNS = """
     response_truncated,
     error_category,
     error_message_redacted,
-    error_phase
+    error_phase,
+    response_headers_elapsed_ns
 """
+
+
+def _persisted_attempt_evidence_from_row(
+    row: Sequence[object],
+) -> PersistedAttemptEvidence:
+    if len(row) != _ATTEMPT_RECORD_COLUMN_COUNT:
+        raise ProjectionIntegrityError("attempt evidence row has an invalid shape")
+    request: RequestMetadata | None = None
+    if row[13] is not None:
+        header_values = _json_blob(
+            row[17],
+            name="attempt request header names",
+            allow_null=False,
+        )
+        if not isinstance(header_values, list):
+            raise ProjectionIntegrityError("attempt request header names are invalid")
+        header_items = cast("list[object]", header_values)
+        if any(type(item) is not str for item in header_items):
+            raise ProjectionIntegrityError("attempt request header names are invalid")
+        method = _text(row[13], name="attempt request method")
+        if method != "POST":
+            raise ProjectionIntegrityError("attempt request method is invalid")
+        request = RequestMetadata(
+            method="POST",
+            url_redacted=_text(row[14], name="attempt request URL"),
+            body_sha256=_text(row[15], name="attempt request body digest"),
+            byte_length=_integer(row[16], name="attempt request byte length"),
+            header_names=tuple(cast("list[str]", header_items)),
+        )
+    response: ResponseMetadata | None = None
+    if row[18] is not None:
+        truncated = _integer(row[21], name="attempt response truncated")
+        if truncated not in {0, 1}:
+            raise ProjectionIntegrityError("attempt response truncated flag is invalid")
+        response = ResponseMetadata(
+            status=_integer(row[18], name="attempt response status"),
+            body_sha256=_optional_text(
+                row[19],
+                name="attempt response body digest",
+            ),
+            captured_bytes=_integer(
+                row[20],
+                name="attempt response captured bytes",
+            ),
+            truncated=bool(truncated),
+        )
+    error: TransportError | None = None
+    if row[22] is not None:
+        error = TransportError(
+            category=_text(row[22], name="attempt error category"),
+            message_redacted=_text(
+                row[23],
+                name="attempt redacted error message",
+            ),
+            phase=_optional_text(row[24], name="attempt error phase"),
+        )
+    schema_version = _text(row[1], name="attempt schema version")
+    if schema_version != "1.0":
+        raise ProjectionIntegrityError("attempt schema version is unsupported")
+    try:
+        attempt = AttemptEvidence(
+            schema_version="1.0",
+            record_id=_text(row[0], name="attempt record_id"),
+            run_id=_text(row[2], name="attempt run_id"),
+            scenario_id=_text(row[3], name="attempt scenario_id"),
+            event_id=_text(row[4], name="attempt event_id"),
+            delivery_id=_text(row[5], name="attempt delivery_id"),
+            attempt_id=_text(row[6], name="attempt_id"),
+            sequence=_integer(row[7], name="attempt sequence"),
+            recorded_at=_parse_wall_time(_text(row[8], name="attempt recorded_at")),
+            logical_time_ns=_optional_integer(
+                row[9],
+                name="attempt logical_time_ns",
+            ),
+            monotonic_elapsed_ns=_optional_integer(
+                row[10],
+                name="attempt monotonic_elapsed_ns",
+            ),
+            state=AttemptEvidenceState(_text(row[11], name="attempt evidence state")),
+            classification=AttemptClassification(_text(row[12], name="attempt classification")),
+            request=request,
+            response=response,
+            error=error,
+        )
+        return PersistedAttemptEvidence(
+            attempt=attempt,
+            response_headers_elapsed_ns=_optional_integer(
+                row[25],
+                name="response_headers_elapsed_ns",
+            ),
+        )
+    except (TypeError, ValueError) as caught:
+        raise ProjectionIntegrityError(
+            "attempt record contains invalid persisted evidence"
+        ) from caught
 
 
 _TRANSITION_COLUMNS = """

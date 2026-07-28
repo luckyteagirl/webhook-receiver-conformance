@@ -448,6 +448,7 @@ class AttemptTransportEvidenceCommand:
     request: RequestMetadata | None = None
     response: ResponseMetadata | None = None
     error: TransportError | None = None
+    response_headers_elapsed_ns: int | None = None
 
     def __post_init__(self) -> None:
         validate_fresh_id(self.record_id, expected_kind=FreshIdKind.RECORD)
@@ -470,6 +471,14 @@ class AttemptTransportEvidenceCommand:
             if type(self.error) is not TransportError:
                 raise TypeError("transport error evidence must be TransportError or None")
             _validate_transport_error(self.error)
+        if self.response_headers_elapsed_ns is not None:
+            _safe_integer(
+                self.response_headers_elapsed_ns,
+                name="response headers elapsed",
+                signed=False,
+            )
+            if self.response is None:
+                raise ValueError("response headers elapsed time requires response evidence")
         _validate_transport_evidence_shape(self)
 
     @property

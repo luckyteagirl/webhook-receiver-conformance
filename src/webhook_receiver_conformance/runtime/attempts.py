@@ -418,8 +418,7 @@ def prepare_realized_attempt(
         raise ValueError("base attempt command cannot contain precomputed signer headers")
 
     input_headers = tuple(
-        SignatureHeader(name=header.name, value=header.value)
-        for header in command.headers
+        SignatureHeader(name=header.name, value=header.value) for header in command.headers
     )
     pipeline = MutationPipeline(_RUNTIME_MUTATION_REGISTRY).execute(
         body=command.body,
@@ -440,11 +439,7 @@ def prepare_realized_attempt(
             HttpHeader(
                 name=header.name,
                 value=header.value,
-                owner=(
-                    HeaderOwner.SIGNER
-                    if header.name in signer_headers
-                    else HeaderOwner.USER
-                ),
+                owner=(HeaderOwner.SIGNER if header.name in signer_headers else HeaderOwner.USER),
             )
             for header in pipeline.headers
         ),
@@ -645,6 +640,7 @@ def _transport_evidence(
         ),
         response=response,
         error=error,
+        response_headers_elapsed_ns=result.timings.response_headers_elapsed_ns,
     )
 
 

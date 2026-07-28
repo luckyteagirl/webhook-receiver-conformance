@@ -41,6 +41,15 @@ from .migrations.v0002_attempt_records import (
 from .migrations.v0002_attempt_records import (
     STATEMENTS as ATTEMPT_RECORDS_MIGRATION_STATEMENTS,
 )
+from .migrations.v0003_attempt_response_timing import (
+    MIGRATION_ID as ATTEMPT_RESPONSE_TIMING_MIGRATION_ID,
+)
+from .migrations.v0003_attempt_response_timing import (
+    MIGRATION_NAME as ATTEMPT_RESPONSE_TIMING_MIGRATION_NAME,
+)
+from .migrations.v0003_attempt_response_timing import (
+    STATEMENTS as ATTEMPT_RESPONSE_TIMING_MIGRATION_STATEMENTS,
+)
 
 JOURNAL_FILENAME: Final = "journal.sqlite3"
 DEFAULT_BUSY_TIMEOUT_MS: Final = 5_000
@@ -441,6 +450,11 @@ MIGRATIONS: Final = (
         migration_id=ATTEMPT_RECORDS_MIGRATION_ID,
         name=ATTEMPT_RECORDS_MIGRATION_NAME,
         statements=ATTEMPT_RECORDS_MIGRATION_STATEMENTS,
+    ),
+    Migration(
+        migration_id=ATTEMPT_RESPONSE_TIMING_MIGRATION_ID,
+        name=ATTEMPT_RESPONSE_TIMING_MIGRATION_NAME,
+        statements=ATTEMPT_RESPONSE_TIMING_MIGRATION_STATEMENTS,
     ),
 )
 

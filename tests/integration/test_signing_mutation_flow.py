@@ -145,9 +145,7 @@ def test_execution_signs_planned_blob_then_applies_post_sign_bytes(
 
     config, _project_root = _mutated_config()
     signer_config = config.signers["test_hmac"]
-    handle = SecretResolver(environ={"WEBHOOK_TEST_SECRET": _SECRET}).resolve(
-        signer_config.secret
-    )
+    handle = SecretResolver(environ={"WEBHOOK_TEST_SECRET": _SECRET}).resolve(signer_config.secret)
     try:
         signer = GenericHmacSha256Signer(
             handle,

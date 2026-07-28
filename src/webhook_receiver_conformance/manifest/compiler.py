@@ -70,8 +70,7 @@ _ALL_MUTATION_REGISTRATIONS: Final = (
 )
 _ALL_MUTATION_REGISTRY: Final = StaticMutationRegistry(_ALL_MUTATION_REGISTRATIONS)
 _MUTATION_STAGE_BY_ID: Final = {
-    registration.operator_id: registration.stage
-    for registration in _ALL_MUTATION_REGISTRATIONS
+    registration.operator_id: registration.stage for registration in _ALL_MUTATION_REGISTRATIONS
 }
 
 
@@ -121,20 +120,17 @@ class RealizedDeliveryExecution:
             type(item) is not RealizedMutation for item in self.mutations
         ):
             raise TypeError("realized execution mutations must be a tuple")
-        if (
-            type(self.runtime_mutation_offset) is not int
-            or not 0 <= self.runtime_mutation_offset <= len(self.mutations)
-        ):
+        if type(
+            self.runtime_mutation_offset
+        ) is not int or not 0 <= self.runtime_mutation_offset <= len(self.mutations):
             raise ValueError("runtime mutation offset is outside the realized sequence")
         ranks = tuple(PIPELINE_STAGE_RANK[item.stage] for item in self.mutations)
         if ranks != tuple(sorted(ranks)):
             raise ValueError("realized mutations are not in fixed pipeline stage order")
         if any(
-            rank > _PLANNING_STAGE_MAX_RANK
-            for rank in ranks[: self.runtime_mutation_offset]
+            rank > _PLANNING_STAGE_MAX_RANK for rank in ranks[: self.runtime_mutation_offset]
         ) or any(
-            rank <= _PLANNING_STAGE_MAX_RANK
-            for rank in ranks[self.runtime_mutation_offset :]
+            rank <= _PLANNING_STAGE_MAX_RANK for rank in ranks[self.runtime_mutation_offset :]
         ):
             raise ValueError("runtime mutation offset does not split planning stages")
 
@@ -189,8 +185,7 @@ class RealizedDeliveryExecution:
         if type(mutation_values) is not list:
             raise ValueError("realized execution mutations must be an array")
         mutations = tuple(
-            _realized_mutation_from_wire(item)
-            for item in cast("list[object]", mutation_values)
+            _realized_mutation_from_wire(item) for item in cast("list[object]", mutation_values)
         )
         signer_name = wire["signer_name"]
         if signer_name is not None and type(signer_name) is not str:
@@ -376,17 +371,14 @@ def load_realized_execution(
     if type(raw_entries) is not list:
         raise ValueError("effective configuration lacks realized execution recipes")
     recipes = tuple(
-        RealizedDeliveryExecution.from_wire(item)
-        for item in cast("list[object]", raw_entries)
+        RealizedDeliveryExecution.from_wire(item) for item in cast("list[object]", raw_entries)
     )
     planned = {
         delivery.delivery_id: (scenario.scenario_id, delivery)
         for scenario in manifest.scenarios
         for delivery in scenario.deliveries
     }
-    if len(recipes) != len(planned) or len({item.delivery_id for item in recipes}) != len(
-        recipes
-    ):
+    if len(recipes) != len(planned) or len({item.delivery_id for item in recipes}) != len(recipes):
         raise ValueError("realized execution recipes do not match manifest deliveries")
     for recipe in recipes:
         expected = planned.get(recipe.delivery_id)
@@ -397,10 +389,7 @@ def load_realized_execution(
             recipe.scenario_id != scenario_id
             or recipe.event_id != delivery.event_id
             or recipe.logical_time_ns != delivery.logical_time_ns
-            or any(
-                attempt.request_blob != recipe.request_blob
-                for attempt in delivery.attempt_plan
-            )
+            or any(attempt.request_blob != recipe.request_blob for attempt in delivery.attempt_plan)
         ):
             raise ValueError("realized execution conflicts with its manifest delivery")
     return recipes
@@ -591,9 +580,7 @@ def _realize_mutations(
     mutations: tuple[config_models.MutationConfig, ...] | None,
     fixture: config_models.FixtureConfig,
 ) -> tuple[RealizedMutation, ...]:
-    realized = tuple(
-        _lower_mutation(mutation, fixture) for mutation in (mutations or ())
-    )
+    realized = tuple(_lower_mutation(mutation, fixture) for mutation in (mutations or ()))
     ranks = tuple(PIPELINE_STAGE_RANK[item.stage] for item in realized)
     if ranks != tuple(sorted(ranks)):
         raise ValueError("configured mutations are not in fixed pipeline stage order")

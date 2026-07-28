@@ -70,8 +70,7 @@ class StateAssertionFact:
 
     def __repr__(self) -> str:
         return (
-            f"{type(self).__name__}(value_type={self.value_type!r}, "
-            f"sensitive={self.sensitive!r})"
+            f"{type(self).__name__}(value_type={self.value_type!r}, sensitive={self.sensitive!r})"
         )
 
 
@@ -346,10 +345,7 @@ def _actual_fact(
             return _validated_fact(expected_type, value, sensitive=sensitive)
         except (TypeError, ValueError):
             inferred = EvidenceValueType.STRING
-    elif (
-        inferred is EvidenceValueType.OBJECT
-        and expected_type is EvidenceValueType.BYTES_DIGEST
-    ):
+    elif inferred is EvidenceValueType.OBJECT and expected_type is EvidenceValueType.BYTES_DIGEST:
         try:
             mapping = cast("Mapping[str, object]", value)
             return _validated_fact(
@@ -448,10 +444,7 @@ def _deep_exact_equal(left: object, right: object) -> bool:
         right_mapping = cast("Mapping[object, object]", right)
         if set(left_mapping) != set(right_mapping):
             return False
-        return all(
-            _deep_exact_equal(left_mapping[key], right_mapping[key])
-            for key in left_mapping
-        )
+        return all(_deep_exact_equal(left_mapping[key], right_mapping[key]) for key in left_mapping)
     if isinstance(left, Sequence) and not isinstance(left, (str, bytes)):
         if not isinstance(right, Sequence) or isinstance(right, (str, bytes)):
             return False
@@ -500,11 +493,15 @@ def _require_fact_shape(value_type: EvidenceValueType, value: object) -> None:
         return
     if value_type is EvidenceValueType.INTEGER and type(value) is int:
         return
-    if value_type in {
-        EvidenceValueType.DECIMAL_STRING,
-        EvidenceValueType.STRING,
-        EvidenceValueType.TIMESTAMP,
-    } and type(value) is str:
+    if (
+        value_type
+        in {
+            EvidenceValueType.DECIMAL_STRING,
+            EvidenceValueType.STRING,
+            EvidenceValueType.TIMESTAMP,
+        }
+        and type(value) is str
+    ):
         return
     if value_type is EvidenceValueType.BYTES_DIGEST and type(value) is BytesDigestMetadata:
         return
