@@ -1,14 +1,15 @@
 schema_version: 1
 project:
-  name: minimal-local-receiver-test
+  name: complete-local-receiver-test
   artifact_directory: .webhook-conformance
-  seed: env:WEBHOOK_CONFORMANCE_SEED
+  seed: local-complete-example
   secret_roots:
   - .secrets
 receiver:
-  url: http://127.0.0.1:8000/webhooks
+  url: http://127.0.0.1:8000/webhooks/generic-hmac-sha256/local-account
   target_profile: loopback
-  allowed_hosts: []
+  allowed_hosts:
+  - 127.0.0.1
   allowed_ports:
   - 8000
   public_challenge_path: /.well-known/webhook-conformance-challenge
@@ -22,32 +23,34 @@ fixtures:
 - id: payment_succeeded
   path: fixtures/payment_succeeded.json
   media_type: application/json
+  event_id_pointer: /id
+  event_type_pointer: /type
 signers:
   test_hmac:
     profile: generic-hmac-sha256
     secret:
       env: WEBHOOK_TEST_SECRET
     header_name: X-Test-Signature
-  stripe:
-    profile: stripe-v1
-    secret:
-      env: STRIPE_WEBHOOK_TEST_SECRET
-    replay_window: 5m
-  standard:
-    profile: standard-webhooks-hmac
-    secret:
-      file: .secrets/standard-webhooks.key
-    replay_window: 5m
-    key_id: test-key-2026-01
 observers:
-  receiver_state:
+  receiver_state_command:
     type: command
     argv:
     - python
-    - tests/observer.py
+    - observers/command_observer.py
     timeout: 2s
+    working_directory: .
     environment_allowlist:
-    - TEST_DATABASE_URL
+    - WEBHOOK_OBSERVER_TOKEN
+    - WEBHOOK_RECEIVER_DB
+  receiver_state_http:
+    type: http
+    base_url: http://127.0.0.1:8001
+    token:
+      env: WEBHOOK_OBSERVER_TOKEN
+    timeouts:
+      connect: 2s
+      read: 2s
+      total: 5s
 lifecycles: {}
 clock:
   mode: scaled
@@ -61,6 +64,7 @@ limits:
   max_response_capture_bytes: 65536
 scenarios:
 - id: sequential_duplicate
+  description: Duplicate delivery should not duplicate the durable business effect.
   events:
   - id: payment
     fixture: payment_succeeded
@@ -74,8 +78,11 @@ scenarios:
         backoff: []
         retry_on: []
   - observe:
-      observer: receiver_state
-      checkpoint: after_duplicate
+      observer: receiver_state_command
+      checkpoint: after_duplicate_command
+  - observe:
+      observer: receiver_state_http
+      checkpoint: after_duplicate_http
   assertions:
   - id: accepted
     type: http-status
@@ -86,17 +93,27 @@ scenarios:
       codes:
       - 200
       - 204
-  - id: processed_once
+  - id: processed_once_command
     type: processing-count
     query:
-      observer: receiver_state
+      observer: receiver_state_command
       key: processing_count
-      parameters:
-        event: payment
+      parameters: {}
     comparator: eq
     expected: 1
     within: 2s
     poll_interval: 50ms
+  - id: processed_once_http
+    type: processing-count
+    query:
+      observer: receiver_state_http
+      key: processing_count
+      parameters: {}
+    comparator: eq
+    expected: 1
+    within: 2s
+    poll_interval: 50ms
+  failure_policy: continue-scenario
 - id: timeout_then_retry
   description: A timeout does not justify assuming that the first business effect failed.
   events:
@@ -105,7 +122,7 @@ scenarios:
   steps:
   - deliver:
       event: payment_retry
-      signer: stripe
+      signer: test_hmac
       timeout: 250ms
       retry:
         max_attempts: 2
@@ -114,45 +131,16 @@ scenarios:
         retry_on:
         - timed_out
         jitter: 100ms
-  - observe:
-      observer: receiver_state
-      checkpoint: after_retry
   assertions:
-  - id: processed_once_after_retry
-    type: processing-count
-    query:
-      observer: receiver_state
-      key: processing_count
-      parameters:
-        event: payment_retry
-    comparator: eq
-    expected: 1
-    within: 5s
-    poll_interval: 50ms
-  - id: no_partial
-    type: no-partial-side-effect
-    predicates:
-    - name: processing_record
-      query:
-        observer: receiver_state
-        key: processing_count
-        parameters:
-          event: payment_retry
-      comparator: eq
-      expected:
-        value_type: integer
-        value: 1
-    - name: journal_record
-      query:
-        observer: receiver_state
-        key: journal_count
-        parameters:
-          event: payment_retry
-      comparator: eq
-      expected:
-        value_type: integer
-        value: 1
-  failure_policy: continue-scenario
+  - id: accepted_after_retry
+    type: http-status
+    attempt:
+      event: payment_retry
+      mode: all-terminal
+    expected:
+      codes:
+      - 200
+      - 204
 reports:
   formats:
   - json

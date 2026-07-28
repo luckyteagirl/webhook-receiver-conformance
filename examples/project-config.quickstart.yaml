@@ -1,7 +1,8 @@
 schema_version: 1
 project:
-  name: minimal-local-receiver-test
+  name: quickstart-local-receiver-test
   artifact_directory: .webhook-conformance
+  seed: local-five-minute-example
 receiver:
   url: http://127.0.0.1:8000/webhooks/generic-hmac-sha256/local-account
   target_profile: loopback
@@ -25,15 +26,7 @@ signers:
     secret:
       env: WEBHOOK_TEST_SECRET
     header_name: X-Test-Signature
-observers:
-  receiver_state:
-    type: command
-    argv:
-    - python
-    - tests/observer.py
-    timeout: 2s
-    environment_allowlist:
-    - TEST_DATABASE_URL
+observers: {}
 lifecycles: {}
 clock:
   mode: scaled
