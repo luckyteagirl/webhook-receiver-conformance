@@ -107,6 +107,8 @@ project:
 receiver:
   url: http://127.0.0.1:8000/webhooks
   target_profile: loopback
+  allowed_hosts: [127.0.0.1]
+  allowed_ports: [8000]
   timeouts:
     connect: 5s
     write: 5s
@@ -698,11 +700,11 @@ async def _execute_bundle(
             connector=AnyIOConnector(),
         ),
         timeouts=HttpTimeouts(
-            connect_ns=int(config.receiver.timeouts.connect),
-            write_ns=int(config.receiver.timeouts.write),
-            read_ns=int(config.receiver.timeouts.read),
-            pool_ns=int(config.receiver.timeouts.pool),
-            total_ns=int(config.receiver.timeouts.total),
+            connect_ns=config.receiver.timeouts.connect.nanoseconds,
+            write_ns=config.receiver.timeouts.write.nanoseconds,
+            read_ns=config.receiver.timeouts.read.nanoseconds,
+            pool_ns=config.receiver.timeouts.pool.nanoseconds,
+            total_ns=config.receiver.timeouts.total.nanoseconds,
         ),
         limits=HttpLimits(
             max_request_bytes=config.limits.max_request_bytes,
@@ -749,7 +751,7 @@ def _build_signers(
             result[name] = GenericHmacSha256Signer(
                 handle,
                 GenericHmacSha256Settings(
-                    header_name=signer_config.header_name or "x-webhook-signature",
+                    header_name=(signer_config.header_name or "x-webhook-signature").casefold(),
                     key_id=signer_config.key_id,
                 ),
             )
@@ -757,7 +759,7 @@ def _build_signers(
             result[name] = StripeV1Signer(
                 handle,
                 StripeV1Settings(
-                    header_name=signer_config.header_name or "stripe-signature",
+                    header_name=(signer_config.header_name or "stripe-signature").casefold(),
                     key_id=signer_config.key_id,
                 ),
             )
@@ -765,7 +767,7 @@ def _build_signers(
             result[name] = StandardWebhooksHmacSigner(
                 handle,
                 StandardWebhooksSettings(
-                    header_name=signer_config.header_name or "webhook-signature",
+                    header_name=(signer_config.header_name or "webhook-signature").casefold(),
                     key_id=signer_config.key_id,
                 ),
             )
