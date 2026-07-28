@@ -112,10 +112,10 @@ validated by `scripts/validate_artifacts.py`.
 ## Extension boundary
 
 There is no public dynamic plugin loader in v0.1. Do not load arbitrary signer, mutation,
-assertion, reporter, lifecycle, or transport code from configuration. The existing
+observer, assertion, reporter, lifecycle, or transport code from configuration. The existing
 [`plugin-metadata.example.json`](../examples/plugin-metadata.example.json) is explicitly
-experimental, built-in-only metadata with `public_compatibility_promise: false`; it does
-not make internal adapters public plugins.
+marked with `stability: experimental`, is built-in-only metadata, and has
+`public_compatibility_promise: false`; it does not make internal adapters public plugins.
 
 Use the versioned observer protocol for receiver-specific state integration. A new
 built-in adapter requires source changes, a closed registration, schemas where

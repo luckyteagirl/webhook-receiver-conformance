@@ -1,5 +1,6 @@
 {
   "schema_version": "0.1-experimental",
+  "stability": "experimental",
   "adapter_id": "builtin.stripe-v1",
   "category": "signer",
   "api_version": "0.1-internal",

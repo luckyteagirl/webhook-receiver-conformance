@@ -329,6 +329,17 @@ def test_custom_and_unknown_assertion_types_are_rejected() -> None:
     _assert_invalid_assertion(unknown)
 
 
+@pytest.mark.parametrize("field", ["eval", "code", "expression"])
+@pytest.mark.parametrize("assertion_type", ["processing-count", "no-partial-side-effect"])
+def test_hostile_executable_assertion_fields_are_rejected(
+    assertion_type: str,
+    field: str,
+) -> None:
+    assertion = _case(assertion_type)
+    assertion[field] = "__import__('os').system('must-not-run')"
+    _assert_invalid_assertion(assertion)
+
+
 @pytest.mark.parametrize(
     "typed_value", TYPED_VALUES, ids=[item["value_type"] for item in TYPED_VALUES]
 )

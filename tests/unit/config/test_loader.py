@@ -294,6 +294,37 @@ def test_fixture_path_security_matrix(
     assert diagnostic.safe_details == {"path_kind": "fixture", "rule": "SEC-016"}
 
 
+def test_replay_only_mode_allows_a_missing_fixture_but_not_an_unsafe_path(
+    tmp_path: Path,
+) -> None:
+    missing = _minimal_with(
+        tmp_path,
+        "path: fixtures/payment_succeeded.json",
+        "path: fixtures/replay-source-removed.json",
+    )
+
+    strict = load_project_config(missing)
+    replay = load_project_config(
+        missing,
+        allow_missing_fixture_sources=True,
+    )
+    unsafe = _minimal_with(
+        tmp_path,
+        "path: fixtures/payment_succeeded.json",
+        "path: ../outside.json",
+    )
+    unsafe_replay = load_project_config(
+        unsafe,
+        allow_missing_fixture_sources=True,
+    )
+
+    assert _only_diagnostic(strict).code == DiagnosticCode("CFG_PATH_MISSING")
+    assert replay.ok
+    assert replay.config is not None
+    assert replay.config.fixtures[0].path == "fixtures/replay-source-removed.json"
+    assert _only_diagnostic(unsafe_replay).code == DiagnosticCode("CFG_PATH_TRAVERSAL")
+
+
 def test_fixture_must_be_regular_and_normalizes_project_relative_text(
     tmp_path: Path,
 ) -> None:
@@ -1082,6 +1113,47 @@ def test_unsupported_schema_is_classified_before_model_validation(tmp_path: Path
         diagnostic.location.line,
         diagnostic.location.column,
     ) == SCHEMA_VERSION_LOCATION
+
+
+@pytest.mark.parametrize("mutation_type", ["duplicate-json-key-v1", "invalid-utf8-v1"])
+def test_deferred_mutation_selectors_are_classified_as_unsupported(
+    tmp_path: Path,
+    mutation_type: str,
+) -> None:
+    path = _minimal_with(
+        tmp_path,
+        "      signer: test_hmac",
+        (f"      signer: test_hmac\n      mutations:\n      - type: {mutation_type}"),
+    )
+
+    diagnostic = _only_diagnostic(load_project_config(path))
+
+    assert diagnostic.code == DiagnosticCode("CFG_MUTATION_UNSUPPORTED")
+    assert diagnostic.category is ErrorCategory.UNSUPPORTED_CAPABILITY
+    assert diagnostic.result_category is ResultCategory.UNSUPPORTED
+    assert diagnostic.field_path == "$.scenarios[0].steps[0].deliver.mutations[0].type"
+    assert diagnostic.safe_details == {"mutation_type": mutation_type}
+    assert diagnostic.location is not None
+    assert diagnostic.location.path == str(path.resolve())
+
+
+def test_unknown_mutation_selector_remains_invalid_input(tmp_path: Path) -> None:
+    path = _minimal_with(
+        tmp_path,
+        "      signer: test_hmac",
+        ("      signer: test_hmac\n      mutations:\n      - type: vendor-future-v1"),
+    )
+
+    result = load_project_config(path)
+
+    assert result.diagnostics
+    assert result.diagnostics[0].code == DiagnosticCode("CFG_MODEL_INVALID")
+    assert {diagnostic.category for diagnostic in result.diagnostics} == {
+        ErrorCategory.CONFIGURATION_ERROR
+    }
+    assert {diagnostic.result_category for diagnostic in result.diagnostics} == {
+        ResultCategory.INVALID_INPUT
+    }
 
 
 def test_byte_limit_is_enforced_before_decoding_or_yaml_parsing(tmp_path: Path) -> None:

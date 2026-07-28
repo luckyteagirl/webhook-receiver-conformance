@@ -49,6 +49,7 @@ from webhook_receiver_conformance.errors import (
     Diagnostic,
     DiagnosticLocation,
     ErrorCategory,
+    ResultCategory,
 )
 
 type StrPath = str | os.PathLike[str]
@@ -574,6 +575,7 @@ def load_project_config(
     path: StrPath,
     *,
     overrides: CliOverrides | Mapping[str, object] | None = None,
+    allow_missing_fixture_sources: bool = False,
 ) -> ConfigLoadResult:
     """Load one project configuration without network or process side effects."""
     requested_path = Path(path)
@@ -616,19 +618,13 @@ def load_project_config(
         message = "a successful parse must return a document"
         raise AssertionError(message)
 
-    preflight_error = preflight_config(
-        parsed.document,
+    preflight_failure = _configuration_preflight_failure(
+        parsed,
         encoded_byte_length=len(encoded),
+        source_path=source_path,
     )
-    if preflight_error is not None:
-        location = parsed.source_locations.get(
-            ("schema_version",),
-            parsed.source_locations.get((), (1, 1)),
-        )
-        return _failure(
-            source_path,
-            _with_source(preflight_error, source_path, location=location),
-        )
+    if preflight_failure is not None:
+        return preflight_failure
 
     cli_overrides, override_diagnostics = _coerce_overrides(overrides)
     if override_diagnostics:
@@ -676,6 +672,7 @@ def load_project_config(
             source_path=source_path,
             source_locations=parsed.source_locations,
             output_is_cli=normalized_output is not None,
+            allow_missing_fixture_sources=allow_missing_fixture_sources,
             windows_session=root_selection.windows_session,
         )
         if path_diagnostics:
@@ -1467,6 +1464,7 @@ def _normalize_config_paths(
     source_path: Path,
     source_locations: Mapping[ConfigFieldPath, tuple[int, int]],
     output_is_cli: bool,
+    allow_missing_fixture_sources: bool,
     windows_session: _WindowsMetadataSession | None,
 ) -> tuple[Diagnostic, ...]:
     diagnostics: list[Diagnostic] = []
@@ -1560,6 +1558,7 @@ def _normalize_config_paths(
             field_path=("fixtures", index, "path"),
             expected_kind="file",
             path_kind="fixture",
+            allow_missing_final=allow_missing_fixture_sources,
         )
         if "schema_path" in fixture:
             normalize(
@@ -1568,6 +1567,7 @@ def _normalize_config_paths(
                 field_path=("fixtures", index, "schema_path"),
                 expected_kind="file",
                 path_kind="fixture_schema",
+                allow_missing_final=allow_missing_fixture_sources,
             )
 
     signers = cast("dict[str, dict[str, object]]", wire["signers"])
@@ -2465,6 +2465,105 @@ def _failure(source_path: Path, *diagnostics: Diagnostic) -> ConfigLoadResult:
         project_root=None,
         source_path=source_path,
     )
+
+
+def _deferred_mutation_diagnostic(
+    document: JsonDocument,
+) -> tuple[Diagnostic, ConfigFieldPath] | None:
+    if not isinstance(document, dict):
+        return None
+    scenarios = document.get("scenarios")
+    if not isinstance(scenarios, list):
+        return None
+    deferred_types = frozenset({"duplicate-json-key-v1", "invalid-utf8-v1"})
+    for scenario_index, scenario in enumerate(scenarios):
+        if not isinstance(scenario, dict):
+            continue
+        steps = scenario.get("steps")
+        if not isinstance(steps, list):
+            continue
+        for step_index, step in enumerate(steps):
+            if not isinstance(step, dict):
+                continue
+            deliver = step.get("deliver")
+            if not isinstance(deliver, dict):
+                continue
+            mutations = deliver.get("mutations")
+            if not isinstance(mutations, list):
+                continue
+            for mutation_index, mutation in enumerate(mutations):
+                if not isinstance(mutation, dict):
+                    continue
+                mutation_type = mutation.get("type")
+                if mutation_type not in deferred_types:
+                    continue
+                path: ConfigFieldPath = (
+                    "scenarios",
+                    scenario_index,
+                    "steps",
+                    step_index,
+                    "deliver",
+                    "mutations",
+                    mutation_index,
+                    "type",
+                )
+                return (
+                    configuration_diagnostic(
+                        code="CFG_MUTATION_UNSUPPORTED",
+                        message="Configuration selects a mutation deferred beyond v0.1.",
+                        field_path=format_field_path(path),
+                        corrective_action=(
+                            "Remove the deferred mutation or use a mutation supported by "
+                            "schema version 1."
+                        ),
+                        safe_details={"mutation_type": mutation_type},
+                        category=ErrorCategory.UNSUPPORTED_CAPABILITY,
+                        result_category=ResultCategory.UNSUPPORTED,
+                    ),
+                    path,
+                )
+    return None
+
+
+def _deferred_mutation_failure(
+    parsed: _ParsedDocument,
+    *,
+    source_path: Path,
+) -> ConfigLoadResult | None:
+    deferred_mutation = _deferred_mutation_diagnostic(parsed.document)
+    if deferred_mutation is None:
+        return None
+    diagnostic, field_path = deferred_mutation
+    location = parsed.source_locations.get(
+        field_path,
+        parsed.source_locations.get((), (1, 1)),
+    )
+    return _failure(
+        source_path,
+        _with_source(diagnostic, source_path, location=location),
+    )
+
+
+def _configuration_preflight_failure(
+    parsed: _ParsedDocument,
+    *,
+    encoded_byte_length: int,
+    source_path: Path,
+) -> ConfigLoadResult | None:
+    preflight_error = preflight_config(
+        parsed.document,
+        encoded_byte_length=encoded_byte_length,
+    )
+    if preflight_error is not None:
+        location = parsed.source_locations.get(
+            ("schema_version",),
+            parsed.source_locations.get((), (1, 1)),
+        )
+        return _failure(
+            source_path,
+            _with_source(preflight_error, source_path, location=location),
+        )
+    return _deferred_mutation_failure(parsed, source_path=source_path)
 
 
 def _yaml_error_mark(error: yaml.YAMLError) -> Mark | None:

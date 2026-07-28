@@ -30,6 +30,30 @@ The first slices prove the highest-risk boundaries before implementing broad sce
 - **v0.3 candidate:** schema import only if OpenAPI/AsyncAPI/CloudEvents examples reduce setup materially.
 - **1.0 candidate:** stable public surfaces, mutation-test gate, upgrade guarantees, at least three external CI adopters, no unresolved high security/recovery findings.
 
+## Deferred capability prerequisites
+
+- **Ed25519 signing:** a superseding ADR to ADR-024 is the enabling ADR. It must define
+  key encodings, secret handling, exact signed bytes, dependency and compatibility scope,
+  and provider-specific semantics. Required future tests include official and golden
+  vectors, malformed and wrong-key cases, altered-body rejection, key-encoding boundaries,
+  secret-canary regressions, and schema/CLI compatibility tests that replace the v0.1
+  rejection contract.
+- **Direct SQL observer:** a superseding ADR to ADR-010 must identify a concrete receiver
+  need, a read-only least-privilege authentication model, versioned query and normalization
+  semantics, bounded timeouts and cancellation, and an optional driver boundary isolated
+  from core dependencies. Required future tests include adapter contracts, malformed data,
+  timeout and cancellation, credential redaction, driver-absence, and supported-database
+  compatibility cases.
+- **OpenTelemetry and queue-inspection observers:** a superseding ADR to ADR-010 must
+  identify a concrete receiver need, read-only APIs, schema-versioned evidence
+  normalization, bounded polling and output, an optional client-library boundary isolated
+  from core dependencies, and a threat-model review. Required future tests include adapter
+  contracts, malformed protocol data, timeout and cancellation, authentication redaction,
+  client-library absence, and compatibility cases for each accepted backend.
+
+These prerequisites do not authorize placeholder adapters, external driver dependencies,
+entry-point discovery, or other runtime discovery in v0.1.
+
 ## Explicitly noncommitted future ideas
 
 Hosted reports, team collaboration, enterprise policy packs, direct database observers, OpenTelemetry, Kubernetes, and additional CI wrappers remain product hypotheses. They do not influence v0.1 component boundaries beyond stable artifact files and process exit behavior.

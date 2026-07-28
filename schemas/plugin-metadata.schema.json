@@ -8,6 +8,7 @@
   "type": "object",
   "required": [
     "schema_version",
+    "stability",
     "adapter_id",
     "category",
     "api_version",
@@ -18,6 +19,11 @@
   "properties": {
     "schema_version": {
       "const": "0.1-experimental"
+    },
+    "stability": {
+      "enum": [
+        "experimental"
+      ]
     },
     "adapter_id": {
       "type": "string",
