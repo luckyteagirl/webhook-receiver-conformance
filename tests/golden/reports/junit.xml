@@ -1,0 +1,82 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites name="webhook-receiver-conformance:00000000-0000-4000-8000-000000000603" tests="5" failures="1" errors="2" skipped="1" time="3.692567891">
+  <properties>
+    <property name="run_id" value="00000000-0000-4000-8000-000000000603" />
+    <property name="manifest_id" value="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" />
+    <property name="assertion_testcases" value="3" />
+    <property name="infrastructure_testcases" value="2" />
+    <property name="artifact.0" value="deliveries.jsonl" />
+    <property name="artifact.1" value="observations.jsonl" />
+    <property name="artifact.2" value="assertions.jsonl" />
+  </properties>
+  <testsuite id="scenario_00000000000000000000000001" name="0000:scenario_00000000000000000000000001:signature rejection" tests="3" failures="1" errors="0" skipped="1" time="1.359567890">
+    <properties>
+      <property name="run_id" value="00000000-0000-4000-8000-000000000603" />
+      <property name="manifest_id" value="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" />
+      <property name="scenario_id" value="scenario_00000000000000000000000001" />
+      <property name="scenario_ordinal" value="0" />
+    </properties>
+    <testcase id="assertion-case-0" name="assertion 0" classname="scenario.scenario_00000000000000000000000001" time="0.100000000">
+      <properties>
+        <property name="classification" value="pass" />
+        <property name="case_kind" value="assertion" />
+        <property name="assertion_id" value="assertion_00000000000000000000000001" />
+        <property name="evidence_ref" value="attempt_00000000000000000000000001" />
+        <property name="evidence_ref" value="sample_00000000000000000000000001" />
+      </properties>
+    </testcase>
+    <testcase id="assertion-case-1" name="assertion 1" classname="scenario.scenario_00000000000000000000000001" time="1.234567890">
+      <properties>
+        <property name="classification" value="receiver_failure" />
+        <property name="case_kind" value="assertion" />
+        <property name="assertion_id" value="assertion_00000000000000000000000002" />
+        <property name="evidence_ref" value="attempt_00000000000000000000000001" />
+        <property name="evidence_ref" value="sample_00000000000000000000000001" />
+      </properties>
+      <failure type="receiver_failure" message="processing_count expected 1 but observed 0">processing_count expected 1 but observed 0</failure>
+      <system-out>[artifact] evidence/assertion-record.json</system-out>
+    </testcase>
+    <testcase id="assertion-case-2" name="assertion 2" classname="scenario.scenario_00000000000000000000000001" time="0.025000000">
+      <properties>
+        <property name="classification" value="unsupported" />
+        <property name="case_kind" value="assertion" />
+        <property name="assertion_id" value="assertion_00000000000000000000000003" />
+        <property name="evidence_ref" value="attempt_00000000000000000000000001" />
+        <property name="evidence_ref" value="sample_00000000000000000000000001" />
+      </properties>
+      <skipped type="UNSUPPORTED_CAPABILITY" message="Optional callback journal is unavailable." />
+    </testcase>
+  </testsuite>
+  <testsuite id="scenario_00000000000000000000000002" name="0001:scenario_00000000000000000000000002:observer timeout" tests="1" failures="0" errors="1" skipped="0" time="2.000000001">
+    <properties>
+      <property name="run_id" value="00000000-0000-4000-8000-000000000603" />
+      <property name="manifest_id" value="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" />
+      <property name="scenario_id" value="scenario_00000000000000000000000002" />
+      <property name="scenario_ordinal" value="1" />
+    </properties>
+    <testcase id="observer-timeout" name="__infrastructure__:observer-timeout" classname="scenario.scenario_00000000000000000000000002" time="2.000000001">
+      <properties>
+        <property name="classification" value="environment_error" />
+        <property name="case_kind" value="infrastructure" />
+        <property name="evidence_ref" value="attempt_00000000000000000000000001" />
+      </properties>
+      <error type="observer_timeout" message="Observer deadline elapsed.">Observer deadline elapsed.</error>
+    </testcase>
+  </testsuite>
+  <testsuite id="scenario_00000000000000000000000003" name="0002:scenario_00000000000000000000000003:crash after send" tests="1" failures="0" errors="1" skipped="0" time="0.333000000">
+    <properties>
+      <property name="run_id" value="00000000-0000-4000-8000-000000000603" />
+      <property name="manifest_id" value="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" />
+      <property name="scenario_id" value="scenario_00000000000000000000000003" />
+      <property name="scenario_ordinal" value="2" />
+    </properties>
+    <testcase id="unknown-outcome" name="__infrastructure__:unknown-outcome" classname="scenario.scenario_00000000000000000000000003" time="0.333000000">
+      <properties>
+        <property name="classification" value="ambiguous" />
+        <property name="case_kind" value="infrastructure" />
+        <property name="evidence_ref" value="attempt_00000000000000000000000001" />
+      </properties>
+      <error type="ambiguous_outcome" message="Request bytes may have reached the receiver.">Request bytes may have reached the receiver.</error>
+    </testcase>
+  </testsuite>
+</testsuites>
