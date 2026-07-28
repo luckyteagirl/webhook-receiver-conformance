@@ -467,6 +467,7 @@ def _compile_scenario(
     deliveries: list[DeliveryPlan] = []
     logical_time_ns = 0
     ordinal = 0
+    events_by_name = {event.id: event for event in scenario.events}
     for step_index, step in enumerate(scenario.steps):
         if isinstance(step, config_models.WaitStep):
             logical_time_ns += step.wait.nanoseconds
@@ -474,20 +475,25 @@ def _compile_scenario(
         if not isinstance(step, config_models.DeliverStep):
             continue
         action = step.deliver
+        source_event = events_by_name[action.event]
+        fixture = fixture_by_id[source_event.fixture]
+        source = loaded[source_event.fixture]
+        mutations = _realize_mutations(action.mutations, fixture)
+        body, runtime_mutation_offset = _realize_planning_mutations(
+            source.body,
+            mutations,
+            fixture,
+        )
+        request_digest = sha256_digest(body)
+        request = snapshots.get(request_digest)
+        if request is None:
+            request = store.snapshot(body, media_type=source.media_type)
+            snapshots[request.sha256] = request
+        elif request.media_type != source.media_type:
+            raise ValueError("identical fixture bytes cannot declare conflicting media types")
         for count_index in range(action.count):
             natural_key = (*scenario_key, str(step_index), str(count_index), action.event)
             delivery_id = planned_id(generator, PlannedIdKind.DELIVERY, natural_key)
-            source_event = next(item for item in scenario.events if item.id == action.event)
-            fixture = fixture_by_id[source_event.fixture]
-            source = loaded[source_event.fixture]
-            mutations = _realize_mutations(action.mutations, fixture)
-            body, runtime_mutation_offset = _realize_planning_mutations(
-                source.body,
-                mutations,
-                fixture,
-            )
-            request = store.snapshot(body, media_type=source.media_type)
-            snapshots[request.sha256] = request
             attempts = _attempt_templates(
                 action,
                 generator=generator,
