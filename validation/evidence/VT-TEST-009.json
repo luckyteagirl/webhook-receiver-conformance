@@ -1,0 +1,24 @@
+{
+  "artifact_sha256s": {
+    "checklists/release-readiness.md": "sha256:4fe18269792efde0e4646a9f3f37194976c6486877cf5a4a39a87e0bde98096f",
+    "machine/requirements.yaml": "sha256:964db18f78ef966ef4cdfedd372010b038c79f7c3e8dada5281ed41df93e6663",
+    "machine/traceability.json": "sha256:4e0af8d5fb8793b9674dbc2e860809425b9009bdf9f27e1b180ab2d58e053a2a",
+    "tests/packaging/test_deferred_release_contracts.py": "sha256:1f13d6e40bfb38bbe583c2914bcb1b7e9417e2fb2076f65aae780a5362b783c3"
+  },
+  "command": "uv run pytest -q tests/packaging/test_deferred_release_contracts.py::test_stable_release_mutation_gate_is_explicit_and_v0_1_is_deferred",
+  "environment": {
+    "platform": "win32",
+    "python_implementation": "CPython",
+    "python_version": "3.12.13",
+    "uv_lock_sha256": "sha256:7c3e6a3961d546f992ef1df332ef023a75166bf444a4efef3b4a5bb11184d27e"
+  },
+  "exit_code": 0,
+  "implementation_commit": "58fc1342ded1e2a568d96aca756333f14f2a87f3",
+  "requirement_id": "TEST-009",
+  "schema_version": 1,
+  "status": "passed",
+  "test_id": "VT-TEST-009",
+  "test_nodes": [
+    "tests/packaging/test_deferred_release_contracts.py::test_stable_release_mutation_gate_is_explicit_and_v0_1_is_deferred"
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "as_of": "2026-07-27",
+  "implementation_commit": "58fc1342ded1e2a568d96aca756333f14f2a87f3",
+  "license_policy": {
+    "allowed_locked_packages": 38,
+    "lockfile_sha256": "sha256:7c3e6a3961d546f992ef1df332ef023a75166bf444a4efef3b4a5bb11184d27e",
+    "status": "pass",
+    "unknown_license_action": "deny"
+  },
+  "release_policy": {
+    "approved_exception_count": 0,
+    "changelog_fields": [
+      "compatibility",
+      "migration",
+      "security",
+      "schema"
+    ],
+    "status": "pass",
+    "version": "0.1.0"
+  },
+  "schema_version": "1.0",
+  "status": "pass",
+  "vulnerability_policy": {
+    "approved_findings": [],
+    "high_severity_finding_count": 0,
+    "pip_audit_report": "validation/evidence/pip-audit.json",
+    "status": "pass",
+    "trivy_available": false
+  }
+}

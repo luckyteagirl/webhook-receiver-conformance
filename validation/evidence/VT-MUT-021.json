@@ -1,0 +1,24 @@
+{
+  "artifact_sha256s": {
+    "machine/requirements.yaml": "sha256:964db18f78ef966ef4cdfedd372010b038c79f7c3e8dada5281ed41df93e6663",
+    "machine/traceability.json": "sha256:4e0af8d5fb8793b9674dbc2e860809425b9009bdf9f27e1b180ab2d58e053a2a",
+    "schemas/project-config.schema.json": "sha256:c2e869b4e8fd618cff64719db1c706cafda4638238cd00b71a25807d55ecfc4c",
+    "tests/schema/test_project_config_mutation_contract.py": "sha256:b9c627f62a73ceb3a110ae0a5e36b7a61684020d606171b64c152df6b258879d"
+  },
+  "command": "uv run pytest -q tests/schema/test_project_config_mutation_contract.py::test_deferred_mutations_are_rejected[invalid-utf8-v1]",
+  "environment": {
+    "platform": "win32",
+    "python_implementation": "CPython",
+    "python_version": "3.12.13",
+    "uv_lock_sha256": "sha256:7c3e6a3961d546f992ef1df332ef023a75166bf444a4efef3b4a5bb11184d27e"
+  },
+  "exit_code": 0,
+  "implementation_commit": "58fc1342ded1e2a568d96aca756333f14f2a87f3",
+  "requirement_id": "MUT-021",
+  "schema_version": 1,
+  "status": "passed",
+  "test_id": "VT-MUT-021",
+  "test_nodes": [
+    "tests/schema/test_project_config_mutation_contract.py::test_deferred_mutations_are_rejected[invalid-utf8-v1]"
+  ]
+}

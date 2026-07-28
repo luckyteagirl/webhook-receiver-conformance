@@ -1,0 +1,438 @@
+{
+  "allowed_license_expressions": [
+    "Apache-2.0",
+    "Apache-2.0 OR BSD-2-Clause",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "PSF-2.0"
+  ],
+  "build_requirements": [
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "MIT",
+      "lock_status": "absent-from-lock",
+      "name": "hatchling",
+      "requirement": "hatchling>=1.27",
+      "status": "allowed"
+    }
+  ],
+  "denied_license_expressions": [
+    "AGPL-1.0-only",
+    "AGPL-1.0-or-later",
+    "AGPL-3.0-only",
+    "AGPL-3.0-or-later",
+    "BUSL-1.1",
+    "GPL-2.0-only",
+    "GPL-2.0-or-later",
+    "GPL-3.0-only",
+    "GPL-3.0-or-later",
+    "SSPL-1.0"
+  ],
+  "lockfile_sha256": "7c3e6a3961d546f992ef1df332ef023a75166bf444a4efef3b4a5bb11184d27e",
+  "package_count": 38,
+  "packages": [
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "MIT",
+      "name": "annotated-doc",
+      "scopes": [
+        "reference",
+        "runtime"
+      ],
+      "status": "allowed",
+      "version": "0.0.4"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "MIT",
+      "name": "annotated-types",
+      "scopes": [
+        "reference",
+        "runtime"
+      ],
+      "status": "allowed",
+      "version": "0.8.0"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "MIT",
+      "name": "anyio",
+      "scopes": [
+        "reference",
+        "runtime"
+      ],
+      "status": "allowed",
+      "version": "4.14.2"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "MIT",
+      "name": "attrs",
+      "scopes": [
+        "runtime"
+      ],
+      "status": "allowed",
+      "version": "26.1.0"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "MPL-2.0",
+      "name": "certifi",
+      "scopes": [
+        "runtime"
+      ],
+      "status": "allowed",
+      "version": "2026.7.22"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "BSD-3-Clause",
+      "name": "colorama",
+      "scopes": [
+        "dev",
+        "runtime"
+      ],
+      "status": "allowed",
+      "version": "0.4.6"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "MIT",
+      "name": "fastapi",
+      "scopes": [
+        "reference"
+      ],
+      "status": "allowed",
+      "version": "0.140.0"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "MIT",
+      "name": "h11",
+      "scopes": [
+        "runtime"
+      ],
+      "status": "allowed",
+      "version": "0.16.0"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "BSD-3-Clause",
+      "name": "httpcore",
+      "scopes": [
+        "runtime"
+      ],
+      "status": "allowed",
+      "version": "1.0.9"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "BSD-3-Clause",
+      "name": "httpx",
+      "scopes": [
+        "runtime"
+      ],
+      "status": "allowed",
+      "version": "0.28.1"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "MPL-2.0",
+      "name": "hypothesis",
+      "scopes": [
+        "dev"
+      ],
+      "status": "allowed",
+      "version": "6.161.6"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "BSD-3-Clause",
+      "name": "idna",
+      "scopes": [
+        "reference",
+        "runtime"
+      ],
+      "status": "allowed",
+      "version": "3.18"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "MIT",
+      "name": "iniconfig",
+      "scopes": [
+        "dev"
+      ],
+      "status": "allowed",
+      "version": "2.3.0"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "MIT",
+      "name": "jsonschema",
+      "scopes": [
+        "runtime"
+      ],
+      "status": "allowed",
+      "version": "4.26.0"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "MIT",
+      "name": "jsonschema-specifications",
+      "scopes": [
+        "runtime"
+      ],
+      "status": "allowed",
+      "version": "2025.9.1"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "MIT",
+      "name": "markdown-it-py",
+      "scopes": [
+        "runtime"
+      ],
+      "status": "allowed",
+      "version": "4.2.0"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "MIT",
+      "name": "mdurl",
+      "scopes": [
+        "runtime"
+      ],
+      "status": "allowed",
+      "version": "0.1.2"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "BSD-3-Clause",
+      "name": "nodeenv",
+      "scopes": [
+        "dev"
+      ],
+      "status": "allowed",
+      "version": "1.10.0"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "Apache-2.0 OR BSD-2-Clause",
+      "name": "packaging",
+      "scopes": [
+        "dev"
+      ],
+      "status": "allowed",
+      "version": "26.2"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "MIT",
+      "name": "pluggy",
+      "scopes": [
+        "dev"
+      ],
+      "status": "allowed",
+      "version": "1.6.0"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "BSD-3-Clause",
+      "name": "psutil",
+      "scopes": [
+        "dev"
+      ],
+      "status": "allowed",
+      "version": "7.2.2"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "MIT",
+      "name": "pydantic",
+      "scopes": [
+        "reference",
+        "runtime"
+      ],
+      "status": "allowed",
+      "version": "2.13.4"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "MIT",
+      "name": "pydantic-core",
+      "scopes": [
+        "reference",
+        "runtime"
+      ],
+      "status": "allowed",
+      "version": "2.46.4"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "BSD-2-Clause",
+      "name": "pygments",
+      "scopes": [
+        "dev",
+        "runtime"
+      ],
+      "status": "allowed",
+      "version": "2.20.0"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "MIT",
+      "name": "pyright",
+      "scopes": [
+        "dev"
+      ],
+      "status": "allowed",
+      "version": "1.1.411"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "MIT",
+      "name": "pytest",
+      "scopes": [
+        "dev"
+      ],
+      "status": "allowed",
+      "version": "9.1.1"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "MIT",
+      "name": "pyyaml",
+      "scopes": [
+        "runtime"
+      ],
+      "status": "allowed",
+      "version": "6.0.3"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "MIT",
+      "name": "referencing",
+      "scopes": [
+        "runtime"
+      ],
+      "status": "allowed",
+      "version": "0.37.0"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "MIT",
+      "name": "rich",
+      "scopes": [
+        "runtime"
+      ],
+      "status": "allowed",
+      "version": "15.0.0"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "MIT",
+      "name": "rpds-py",
+      "scopes": [
+        "runtime"
+      ],
+      "status": "allowed",
+      "version": "2026.6.3"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "MIT",
+      "name": "ruff",
+      "scopes": [
+        "dev"
+      ],
+      "status": "allowed",
+      "version": "0.16.0"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "ISC",
+      "name": "shellingham",
+      "scopes": [
+        "runtime"
+      ],
+      "status": "allowed",
+      "version": "1.5.4"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "Apache-2.0",
+      "name": "sortedcontainers",
+      "scopes": [
+        "dev"
+      ],
+      "status": "allowed",
+      "version": "2.4.0"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "BSD-3-Clause",
+      "name": "starlette",
+      "scopes": [
+        "reference"
+      ],
+      "status": "allowed",
+      "version": "1.3.1"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "MIT",
+      "name": "typer",
+      "scopes": [
+        "runtime"
+      ],
+      "status": "allowed",
+      "version": "0.27.0"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "Apache-2.0",
+      "name": "types-psutil",
+      "scopes": [
+        "dev"
+      ],
+      "status": "allowed",
+      "version": "7.2.2.20260518"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "PSF-2.0",
+      "name": "typing-extensions",
+      "scopes": [
+        "dev",
+        "reference",
+        "runtime"
+      ],
+      "status": "allowed",
+      "version": "4.16.0"
+    },
+    {
+      "evidence": "curated-upstream-license-metadata",
+      "license_expression": "MIT",
+      "name": "typing-inspection",
+      "scopes": [
+        "reference",
+        "runtime"
+      ],
+      "status": "allowed",
+      "version": "0.4.2"
+    }
+  ],
+  "scope_counts": {
+    "build": 0,
+    "dev": 14,
+    "reference": 10,
+    "runtime": 25
+  },
+  "status": "pass",
+  "unknown_license_action": "deny",
+  "unlocked_build_requirement_count": 1
+}

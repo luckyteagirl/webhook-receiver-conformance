@@ -1,0 +1,28 @@
+{
+  "_type": "https://in-toto.io/Statement/v1",
+  "predicate": {
+    "buildDefinition": {
+      "buildType": "https://github.com/webhook-receiver-conformance/release-check@v1",
+      "externalParameters": {},
+      "internalParameters": {},
+      "resolvedDependencies": []
+    },
+    "runDetails": {
+      "builder": {
+        "id": "scripts/release_check.py"
+      },
+      "metadata": {
+        "invocationId": "64fd9a5c3851ae1e4a01f15977afd387536aadbc498d4dde93ea62597f65deff"
+      }
+    }
+  },
+  "predicateType": "https://slsa.dev/provenance/v1",
+  "subject": [
+    {
+      "digest": {
+        "sha256": "64fd9a5c3851ae1e4a01f15977afd387536aadbc498d4dde93ea62597f65deff"
+      },
+      "name": "webhook_receiver_conformance-0.1.0.tar.gz"
+    }
+  ]
+}

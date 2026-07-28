@@ -1,0 +1,220 @@
+{
+  "coverage": {
+    "p0_covered": 16,
+    "p0_percent": 100,
+    "p0_total": 16,
+    "uncovered": []
+  },
+  "execution": {
+    "command": "uv run pytest -q <crash-evidence-nodes>",
+    "exit_code": 0,
+    "node_count": 20,
+    "stderr_bytes": 0,
+    "stderr_sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stdout_bytes": 112,
+    "stdout_sha256": "sha256:f626794d57584bb8b8760dfa9c84ce8e63b9eb05a68081480e6219a21605e4ec"
+  },
+  "matrix": [
+    {
+      "ambiguity": "none",
+      "boundary_id": "CRASH-P0-001",
+      "crash_point": "before owner or claim acquisition",
+      "evidence": [
+        "tests/unit/journal/test_transitions.py::test_crash_at_each_atomic_boundary_rolls_back_every_write"
+      ],
+      "persisted_state": "scheduled",
+      "priority": "P0",
+      "resume_behavior": "claim normally"
+    },
+    {
+      "ambiguity": "none",
+      "boundary_id": "CRASH-P0-002",
+      "crash_point": "after claim before pre-send commit",
+      "evidence": [
+        "tests/unit/journal/test_transitions.py::test_claim_attempt_schedule_crash_rolls_back_every_mutation"
+      ],
+      "persisted_state": "claimed",
+      "priority": "P0",
+      "resume_behavior": "expire or reclaim claim"
+    },
+    {
+      "ambiguity": "controlled point proves not_sent",
+      "boundary_id": "CRASH-P0-003",
+      "crash_point": "after pre-send commit before transport",
+      "evidence": [
+        "tests/integration/test_attempt_lifecycle.py::test_preconnection_failure_is_not_sent_and_retry_is_atomic"
+      ],
+      "persisted_state": "pre_send_committed",
+      "priority": "P0",
+      "resume_behavior": "recover conservatively from durable phase evidence"
+    },
+    {
+      "ambiguity": "phase-dependent",
+      "boundary_id": "CRASH-P0-004",
+      "crash_point": "during DNS connect or TLS before application bytes",
+      "evidence": [
+        "tests/unit/recovery/test_scanner.py::test_decisive_no_connection_proof_is_the_only_connecting_exception"
+      ],
+      "persisted_state": "connecting",
+      "priority": "P0",
+      "resume_behavior": "not_sent only with decisive proof otherwise unknown_outcome"
+    },
+    {
+      "ambiguity": "unknown_outcome",
+      "boundary_id": "CRASH-P0-005",
+      "crash_point": "after application bytes before response",
+      "evidence": [
+        "tests/integration/test_attempt_lifecycle.py::test_post_connection_timeout_is_unknown"
+      ],
+      "persisted_state": "sending or awaiting_response",
+      "priority": "P0",
+      "resume_behavior": "stop or explicitly reconcile"
+    },
+    {
+      "ambiguity": "none",
+      "boundary_id": "CRASH-P0-006",
+      "crash_point": "after durable response before classification",
+      "evidence": [
+        "tests/integration/test_attempt_lifecycle.py::test_crash_after_durable_response_recovers_exact_result_without_resend",
+        "tests/unit/recovery/test_scanner.py::test_durable_response_recovery_derives_exact_terminal_result",
+        "tests/unit/recovery/test_scanner.py::test_legacy_response_observed_migrates_to_v4_then_fails_closed",
+        "tests/integration/test_full_run_runner.py::test_resume_reduces_v4_staged_response_and_delivery_before_resend"
+      ],
+      "persisted_state": "response_observed",
+      "priority": "P0",
+      "resume_behavior": "derive terminal classification from durable response"
+    },
+    {
+      "ambiguity": "none",
+      "boundary_id": "CRASH-P0-007",
+      "crash_point": "after terminal attempt before retry schedule",
+      "evidence": [
+        "tests/unit/journal/test_transitions.py::test_terminal_attempt_and_derived_retry_schedule_are_one_operation"
+      ],
+      "persisted_state": "terminal attempt and retry schedule in one transaction",
+      "priority": "P0",
+      "resume_behavior": "audit atomic derived schedule"
+    },
+    {
+      "ambiguity": "none",
+      "boundary_id": "CRASH-P0-008",
+      "crash_point": "after retry schedule commit",
+      "evidence": [
+        "tests/unit/recovery/test_scanner.py::test_interrupted_send_recovery_is_atomic_at_every_mutation_phase"
+      ],
+      "persisted_state": "terminal attempt plus schedule entry",
+      "priority": "P0",
+      "resume_behavior": "claim schedule exactly once"
+    },
+    {
+      "ambiguity": "observer evidence only",
+      "boundary_id": "CRASH-P0-009",
+      "crash_point": "during observer invocation",
+      "evidence": [
+        "tests/integration/test_observation_lifecycle.py::test_hanging_observer_is_terminated_and_persisted_as_timeout"
+      ],
+      "persisted_state": "observation scheduled or running",
+      "priority": "P0",
+      "resume_behavior": "terminate child and append classified terminal sample"
+    },
+    {
+      "ambiguity": "not a delivery ambiguity",
+      "boundary_id": "CRASH-P0-010",
+      "crash_point": "after observer response before sample commit",
+      "evidence": [
+        "tests/integration/test_observation_lifecycle.py::test_terminal_sample_and_state_roll_back_at_every_atomic_boundary"
+      ],
+      "persisted_state": "no terminal sample",
+      "priority": "P0",
+      "resume_behavior": "re-query same logical request with fresh sample ID"
+    },
+    {
+      "ambiguity": "none",
+      "boundary_id": "CRASH-P0-011",
+      "crash_point": "after sample commit before assertion commit",
+      "evidence": [
+        "tests/integration/test_assertion_lifecycle.py::test_terminal_evaluation_and_links_roll_back_together_on_crash"
+      ],
+      "persisted_state": "sample durable assertion pending",
+      "priority": "P0",
+      "resume_behavior": "reevaluate idempotently"
+    },
+    {
+      "ambiguity": "none",
+      "boundary_id": "CRASH-P0-012",
+      "crash_point": "during report generation",
+      "evidence": [
+        "tests/integration/test_report_regeneration.py::test_termination_preserves_old_or_complete_new_target"
+      ],
+      "persisted_state": "journal truth plus old target or complete new target",
+      "priority": "P0",
+      "resume_behavior": "regenerate offline"
+    },
+    {
+      "ambiguity": "none",
+      "boundary_id": "CRASH-P0-013",
+      "crash_point": "around every migration statement and ledger boundary",
+      "evidence": [
+        "tests/unit/journal/test_migrations.py::test_every_v1_statement_crash_boundary_preserves_v0_or_committed_v1",
+        "tests/unit/journal/test_migrations.py::test_later_migration_crash_preserves_complete_prior_version"
+      ],
+      "persisted_state": "complete prior or complete next schema version",
+      "priority": "P0",
+      "resume_behavior": "reopen and validate migration ledger"
+    },
+    {
+      "ambiguity": "none",
+      "boundary_id": "CRASH-P0-014",
+      "crash_point": "cancellation after known transition",
+      "evidence": [
+        "tests/integration/test_cancellation.py::test_known_transition_survives_cancellation_without_receiver_result"
+      ],
+      "persisted_state": "durable known transition without fabricated receiver result",
+      "priority": "P0",
+      "resume_behavior": "resume from durable state"
+    },
+    {
+      "ambiguity": "none",
+      "boundary_id": "CRASH-P0-015",
+      "crash_point": "projection loss after committed transitions",
+      "evidence": [
+        "tests/unit/journal/test_transitions.py::test_ordered_history_rebuilds_identical_lifecycle_projections"
+      ],
+      "persisted_state": "append-only transition history",
+      "priority": "P0",
+      "resume_behavior": "rebuild identical projection rows"
+    },
+    {
+      "ambiguity": "none",
+      "boundary_id": "CRASH-P0-016",
+      "crash_point": "after terminal attempt and retry decision before delivery reduction",
+      "evidence": [
+        "tests/integration/test_attempt_lifecycle.py::test_crash_after_durable_response_recovers_exact_result_without_resend",
+        "tests/integration/test_full_run_runner.py::test_resume_reconciles_terminal_attempt_before_continuation_without_resend",
+        "tests/integration/test_full_run_runner.py::test_resume_reduces_v4_staged_response_and_delivery_before_resend"
+      ],
+      "persisted_state": "terminal attempt with active delivery",
+      "priority": "P0",
+      "resume_behavior": "reduce without a successor otherwise preserve active and claim once"
+    }
+  ],
+  "migration_failpoints": [
+    {
+      "migration_id": 1,
+      "points": 88
+    },
+    {
+      "migration_id": 2,
+      "points": 14
+    },
+    {
+      "migration_id": 3,
+      "points": 8
+    },
+    {
+      "migration_id": 4,
+      "points": 12
+    }
+  ],
+  "schema_version": "1.0"
+}

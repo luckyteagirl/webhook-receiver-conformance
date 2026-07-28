@@ -1,0 +1,38 @@
+{
+  "generated_at": "2026-07-28T09:53:50.8387712Z",
+  "implementation_commit": "58fc1342ded1e2a568d96aca756333f14f2a87f3",
+  "schema_version": "1.0",
+  "status": "pass",
+  "suites": [
+    {
+      "command": "uv run --locked --offline pytest -q tests --junitxml=validation/evidence/windows-cpython-3.12.junit.xml",
+      "duration_seconds": 536.96,
+      "environment": {
+        "implementation": "CPython",
+        "machine": "AMD64",
+        "operating_system": "Windows 11 10.0.26200",
+        "python": "3.12.13"
+      },
+      "failed": 0,
+      "junit": "validation/evidence/windows-cpython-3.12.junit.xml",
+      "passed": 3226,
+      "skipped": 21
+    },
+    {
+      "command": "uv run --locked --offline pytest -q tests",
+      "duration_seconds": 333.49,
+      "environment": {
+        "implementation": "CPython",
+        "kernel": "WSL2 6.18.33.2",
+        "libc": "glibc 2.43",
+        "machine": "x86_64",
+        "operating_system": "Ubuntu 26.04 LTS",
+        "python": "3.12.13"
+      },
+      "failed": 0,
+      "passed": 3212,
+      "skipped": 35,
+      "wall_seconds": 335.59
+    }
+  ]
+}

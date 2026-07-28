@@ -1,0 +1,23 @@
+{
+  "command": "docker run --rm --read-only --network none --tmpfs /tmp:rw,noexec,nosuid,size=16m webhook-receiver-conformance:0.1.0 --json version",
+  "config_digest": "sha256:ee3d18cabdf291f386061fe36532ec52ffb5247ac7a2df57c7ee6197ab3f2fdc",
+  "generated_at": "2026-07-28T09:53:50.8387712Z",
+  "image": "webhook-receiver-conformance:0.1.0",
+  "implementation_commit": "58fc1342ded1e2a568d96aca756333f14f2a87f3",
+  "manifest_digest": "sha256:e74e6b9a466c293222deae4214e9ca04a35b010fc7b55f4d8d9ef1e2001bcbc5",
+  "network": "none",
+  "read_only_root": true,
+  "reported_version": {
+    "configuration_schema": "1.0",
+    "generator_algorithm": "hmac-sha256-context-v1",
+    "manifest_schema": "1.0",
+    "observer_protocol": "1.0",
+    "package": "0.1.0",
+    "report_schema": "1.0",
+    "sqlite_user_version": 4,
+    "task_index_schema": "1.0"
+  },
+  "schema_version": "1.0",
+  "status": "pass",
+  "user": "65532:65532"
+}

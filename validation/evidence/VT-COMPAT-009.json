@@ -1,0 +1,26 @@
+{
+  "artifact_sha256s": {
+    "machine/requirements.yaml": "sha256:964db18f78ef966ef4cdfedd372010b038c79f7c3e8dada5281ed41df93e6663",
+    "machine/traceability.json": "sha256:4e0af8d5fb8793b9674dbc2e860809425b9009bdf9f27e1b180ab2d58e053a2a",
+    "pyproject.toml": "sha256:3b3bac82972c8eed048177f3c15ee291b930b4dda0718fa75e6ea7d056428c04",
+    "tests/e2e/test_vertical_slice.py": "sha256:91c2d237cda968137f550e165f4f2a22fda13c8b8dec744293dd156e8385eae4",
+    "tests/packaging/test_deferred_release_contracts.py": "sha256:1f13d6e40bfb38bbe583c2914bcb1b7e9417e2fb2076f65aae780a5362b783c3",
+    "uv.lock": "sha256:7c3e6a3961d546f992ef1df332ef023a75166bf444a4efef3b4a5bb11184d27e"
+  },
+  "command": "uv run pytest -q tests/packaging/test_deferred_release_contracts.py::test_default_dependency_and_lock_graph_exclude_http2",
+  "environment": {
+    "platform": "win32",
+    "python_implementation": "CPython",
+    "python_version": "3.12.13",
+    "uv_lock_sha256": "sha256:7c3e6a3961d546f992ef1df332ef023a75166bf444a4efef3b4a5bb11184d27e"
+  },
+  "exit_code": 0,
+  "implementation_commit": "58fc1342ded1e2a568d96aca756333f14f2a87f3",
+  "requirement_id": "COMPAT-009",
+  "schema_version": 1,
+  "status": "passed",
+  "test_id": "VT-COMPAT-009",
+  "test_nodes": [
+    "tests/packaging/test_deferred_release_contracts.py::test_default_dependency_and_lock_graph_exclude_http2"
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "artifact_sha256s": {
+    "machine/requirements.yaml": "sha256:964db18f78ef966ef4cdfedd372010b038c79f7c3e8dada5281ed41df93e6663",
+    "machine/traceability.json": "sha256:4e0af8d5fb8793b9674dbc2e860809425b9009bdf9f27e1b180ab2d58e053a2a",
+    "tests/conftest.py": "sha256:da9a7d2ad79ed6ccf4876f53b2b05ce9a55f7a97bd0ee53e08d93f9b896895ac",
+    "tests/helpers/leak_guard.py": "sha256:93c1d85a3832eed6929226c454709db97a4fc1e719db764887afe4362a916018",
+    "tests/unit/test_leak_guard.py": "sha256:34ea0e5ce52fc824b08769d4b7c702d8d1ee2c52825a1c076808276284039e1b"
+  },
+  "command": "uv run pytest -q tests/unit/test_leak_guard.py::test_real_inspector_detects_and_releases_current_process_listener tests/unit/test_leak_guard.py::test_real_inspector_detects_and_releases_child_process tests/unit/test_leak_guard.py::test_pytest_session_fails_for_leaked_listener tests/unit/test_leak_guard.py::test_pytest_session_fails_and_cleans_up_leaked_child",
+  "environment": {
+    "platform": "win32",
+    "python_implementation": "CPython",
+    "python_version": "3.12.13",
+    "uv_lock_sha256": "sha256:7c3e6a3961d546f992ef1df332ef023a75166bf444a4efef3b4a5bb11184d27e"
+  },
+  "exit_code": 0,
+  "implementation_commit": "58fc1342ded1e2a568d96aca756333f14f2a87f3",
+  "requirement_id": "TEST-019",
+  "schema_version": 1,
+  "status": "passed",
+  "test_id": "VT-TEST-019",
+  "test_nodes": [
+    "tests/unit/test_leak_guard.py::test_real_inspector_detects_and_releases_current_process_listener",
+    "tests/unit/test_leak_guard.py::test_real_inspector_detects_and_releases_child_process",
+    "tests/unit/test_leak_guard.py::test_pytest_session_fails_for_leaked_listener",
+    "tests/unit/test_leak_guard.py::test_pytest_session_fails_and_cleans_up_leaked_child"
+  ]
+}

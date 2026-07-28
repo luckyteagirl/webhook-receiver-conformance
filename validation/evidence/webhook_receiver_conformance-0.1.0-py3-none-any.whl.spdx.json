@@ -1,0 +1,500 @@
+{
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "creationInfo": {
+    "created": "1970-01-01T00:00:00Z",
+    "creators": [
+      "Tool: scripts/release_check.py"
+    ]
+  },
+  "dataLicense": "CC0-1.0",
+  "documentDescribes": [
+    "SPDXRef-ReleaseSubject"
+  ],
+  "documentNamespace": "urn:uuid:ec70d181-29d3-5653-a421-109fb13fe85f",
+  "files": [
+    {
+      "SPDXID": "SPDXRef-ReleaseSubject",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "384d9bd9816f6a03b7115a7eb45a366da03cd61486d39aab75d4657a1f4f89dd"
+        }
+      ],
+      "fileName": "webhook_receiver_conformance-0.1.0-py3-none-any.whl"
+    }
+  ],
+  "name": "webhook_receiver_conformance-0.1.0-py3-none-any.whl-sbom",
+  "packages": [
+    {
+      "SPDXID": "SPDXRef-Package-annotated-doc-ecfc122c6886",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "annotated-doc",
+      "versionInfo": "0.0.4"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-annotated-types-a396661d6dd3",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "annotated-types",
+      "versionInfo": "0.8.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-anyio-da641881644a",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "anyio",
+      "versionInfo": "4.14.2"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-attrs-1b06624a2ce8",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "attrs",
+      "versionInfo": "26.1.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-certifi-ed8f6e7b46ff",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "certifi",
+      "versionInfo": "2026.7.22"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-colorama-77986e20017c",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "colorama",
+      "versionInfo": "0.4.6"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-fastapi-55a5317c65b4",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "fastapi",
+      "versionInfo": "0.140.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-h11-93668a3a038d",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "h11",
+      "versionInfo": "0.16.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-httpcore-519f8d564ca0",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "httpcore",
+      "versionInfo": "1.0.9"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-httpx-8a488f76e03f",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "httpx",
+      "versionInfo": "0.28.1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-hypothesis-8dfd7ba209d1",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "hypothesis",
+      "versionInfo": "6.161.6"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-idna-3fb94f81d78f",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "idna",
+      "versionInfo": "3.18"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-iniconfig-4e14227695d1",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "iniconfig",
+      "versionInfo": "2.3.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-jsonschema-596bfd7ab67d",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "jsonschema",
+      "versionInfo": "4.26.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-jsonschema-specifications-0b67b476fed2",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "jsonschema-specifications",
+      "versionInfo": "2025.9.1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-markdown-it-py-90e4f07e5b72",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "markdown-it-py",
+      "versionInfo": "4.2.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-mdurl-bb9ce0614ef6",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "mdurl",
+      "versionInfo": "0.1.2"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-nodeenv-b44f9b2125ed",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "nodeenv",
+      "versionInfo": "1.10.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-packaging-0645e2058e18",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "packaging",
+      "versionInfo": "26.2"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-pluggy-6128a57fbb9f",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "pluggy",
+      "versionInfo": "1.6.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-psutil-db14d637c71b",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "psutil",
+      "versionInfo": "7.2.2"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-pydantic-0f3069f0e78f",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "pydantic",
+      "versionInfo": "2.13.4"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-pydantic-core-34382f7657b3",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "pydantic-core",
+      "versionInfo": "2.46.4"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-pygments-72ce83deeb65",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "pygments",
+      "versionInfo": "2.20.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-pyright-8da9acffe2ee",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "pyright",
+      "versionInfo": "1.1.411"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-pytest-547bbd1b36b5",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "pytest",
+      "versionInfo": "9.1.1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-pyyaml-4660be5df6eb",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "pyyaml",
+      "versionInfo": "6.0.3"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-referencing-5749e6112764",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "referencing",
+      "versionInfo": "0.37.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-rich-0c9051556c19",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "rich",
+      "versionInfo": "15.0.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-rpds-py-46980e12e27e",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "rpds-py",
+      "versionInfo": "2026.6.3"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-ruff-6afb9795f958",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "ruff",
+      "versionInfo": "0.16.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-shellingham-e7f6fb3c3c81",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "shellingham",
+      "versionInfo": "1.5.4"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-sortedcontainers-1f5e8863aeaa",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "sortedcontainers",
+      "versionInfo": "2.4.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-starlette-0c53bbac99ce",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "starlette",
+      "versionInfo": "1.3.1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-typer-bedeb96d9eed",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "typer",
+      "versionInfo": "0.27.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-types-psutil-62833399f807",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "types-psutil",
+      "versionInfo": "7.2.2.20260518"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-typing-extensions-cd8446bbb8f5",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "typing-extensions",
+      "versionInfo": "4.16.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-typing-inspection-9394d256fc4c",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "typing-inspection",
+      "versionInfo": "0.4.2"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-webhook-receiver-conformance-daa2221d5bbe",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "webhook-receiver-conformance",
+      "versionInfo": "0.1.0"
+    }
+  ],
+  "relationships": [
+    {
+      "relatedSpdxElement": "SPDXRef-Package-annotated-doc-ecfc122c6886",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-annotated-types-a396661d6dd3",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-anyio-da641881644a",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-attrs-1b06624a2ce8",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-certifi-ed8f6e7b46ff",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-colorama-77986e20017c",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-fastapi-55a5317c65b4",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-h11-93668a3a038d",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-httpcore-519f8d564ca0",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-httpx-8a488f76e03f",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-hypothesis-8dfd7ba209d1",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-idna-3fb94f81d78f",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-iniconfig-4e14227695d1",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-jsonschema-596bfd7ab67d",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-jsonschema-specifications-0b67b476fed2",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-markdown-it-py-90e4f07e5b72",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-mdurl-bb9ce0614ef6",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-nodeenv-b44f9b2125ed",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-packaging-0645e2058e18",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-pluggy-6128a57fbb9f",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-psutil-db14d637c71b",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-pydantic-0f3069f0e78f",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-pydantic-core-34382f7657b3",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-pygments-72ce83deeb65",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-pyright-8da9acffe2ee",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-pytest-547bbd1b36b5",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-pyyaml-4660be5df6eb",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-referencing-5749e6112764",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-rich-0c9051556c19",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-rpds-py-46980e12e27e",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-ruff-6afb9795f958",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-shellingham-e7f6fb3c3c81",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-sortedcontainers-1f5e8863aeaa",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-starlette-0c53bbac99ce",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-typer-bedeb96d9eed",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-types-psutil-62833399f807",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-typing-extensions-cd8446bbb8f5",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-typing-inspection-9394d256fc4c",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-webhook-receiver-conformance-daa2221d5bbe",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-ReleaseSubject"
+    }
+  ],
+  "spdxVersion": "SPDX-2.3"
+}

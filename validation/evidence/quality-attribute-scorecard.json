@@ -1,0 +1,165 @@
+{
+  "authority_note": "P0 gates use specification/05-product-requirements.md and machine/requirements.yaml; the stricter, conflicting specification/24 table is retained as secondary evidence.",
+  "benchmark": "webhook-receiver-conformance-quality-attributes",
+  "environment": {
+    "executable": "webhook-conformance.exe",
+    "platform": "win32",
+    "python": "3.12.13"
+  },
+  "evidence": [
+    {
+      "budget": 1000.0,
+      "corpus": "webhook-conformance version; warm cache",
+      "details": {
+        "maximum_ms": 255.0652,
+        "minimum_ms": 192.6571
+      },
+      "metric": "warm_startup_p95",
+      "observed": 247.3161,
+      "passed": true,
+      "requirement_id": "PERF-001",
+      "samples": 30,
+      "test_id": "VT-PERF-001",
+      "unit": "ms"
+    },
+    {
+      "budget": 2000.0,
+      "corpus": "100 events; 1,000 attempt templates; one local 1 KiB fixture",
+      "details": {
+        "network_access": false
+      },
+      "metric": "plan_100_events_1000_attempts_p95",
+      "observed": 811.5099,
+      "passed": true,
+      "requirement_id": "PERF-002",
+      "samples": 10,
+      "test_id": "VT-PERF-002",
+      "unit": "ms"
+    },
+    {
+      "budget": 256.0,
+      "corpus": "maximum 1,000-event/5,000-attempt planning corpus",
+      "details": {
+        "measurement": "process peak RSS after corpus compilation"
+      },
+      "metric": "peak_resident_memory",
+      "observed": 98.503906,
+      "passed": true,
+      "requirement_id": "PERF-003",
+      "samples": 1,
+      "test_id": "VT-PERF-003",
+      "unit": "MiB"
+    },
+    {
+      "budget": 32768.0,
+      "corpus": "SQLite terminal attempt metadata; raw bodies excluded",
+      "details": {},
+      "metric": "journal_growth_per_terminal_attempt",
+      "observed": 784.0,
+      "passed": true,
+      "requirement_id": "PERF-006",
+      "samples": 256,
+      "test_id": "VT-PERF-006",
+      "unit": "bytes/attempt"
+    },
+    {
+      "budget": 5000.0,
+      "corpus": "1,000 attempts; seven static report artifacts; no raw bodies",
+      "details": {
+        "network_access": false
+      },
+      "metric": "all_format_report_regeneration_p95",
+      "observed": 111.4152,
+      "passed": true,
+      "requirement_id": "PERF-007",
+      "samples": 5,
+      "test_id": "VT-PERF-007",
+      "unit": "ms"
+    },
+    {
+      "budget": 5000.0,
+      "corpus": "in-flight structured task with tracked response resource",
+      "details": {
+        "response_streams_closed": true
+      },
+      "metric": "cancellation_cleanup",
+      "observed": 0.5576,
+      "passed": true,
+      "requirement_id": "PERF-008",
+      "samples": 1,
+      "test_id": "VT-PERF-008",
+      "unit": "ms"
+    }
+  ],
+  "load_test_claim": false,
+  "network_access": false,
+  "schema_version": "1.0",
+  "secondary_quality_attribute_diagnostics": {
+    "authority": "specification/24-quality-attributes-and-budgets.md",
+    "gating": false,
+    "measurements": [
+      {
+        "budget": 750.0,
+        "metric": "warm_startup_p95",
+        "observed": 247.3161,
+        "passed": true,
+        "unit": "ms"
+      },
+      {
+        "budget": 1500.0,
+        "metric": "minimal_validation_p95",
+        "observed": 1986.636,
+        "passed": false,
+        "samples": 10,
+        "unit": "ms"
+      },
+      {
+        "budget": 10000.0,
+        "metric": "plan_1000_events_5000_attempts",
+        "observed": 3979.2321,
+        "passed": true,
+        "unit": "ms"
+      },
+      {
+        "budget": 4096.0,
+        "metric": "journal_growth_per_terminal_attempt",
+        "observed": 784.0,
+        "passed": true,
+        "unit": "bytes/attempt"
+      },
+      {
+        "budget": 5000.0,
+        "metric": "report_5000_attempts",
+        "observed": 139.3339,
+        "passed": true,
+        "unit": "ms"
+      },
+      {
+        "budget": 128.0,
+        "metric": "report_incremental_peak_rss",
+        "observed": 0.0,
+        "passed": true,
+        "unit": "MiB"
+      },
+      {
+        "metric": "request_and_response_caps",
+        "observed": {
+          "default_request_bytes": 1048576,
+          "default_response_capture_bytes": 65536,
+          "hard_request_bytes": 16777216,
+          "hard_response_capture_bytes": 1048576,
+          "response_drain_bytes": 1048576
+        },
+        "passed": true
+      }
+    ],
+    "reason": "P0 gates use specification/05-product-requirements.md and machine/requirements.yaml; the stricter, conflicting specification/24 table is retained as secondary evidence."
+  },
+  "status": "pass",
+  "test_017": {
+    "all_have_reproducible_evidence": true,
+    "p0_budget_count": 6,
+    "requirement_id": "TEST-017",
+    "test_id": "VT-TEST-017"
+  }
+}

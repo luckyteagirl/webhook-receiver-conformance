@@ -1,0 +1,24 @@
+{
+  "artifact_sha256s": {
+    "machine/requirements.yaml": "sha256:964db18f78ef966ef4cdfedd372010b038c79f7c3e8dada5281ed41df93e6663",
+    "machine/traceability.json": "sha256:4e0af8d5fb8793b9674dbc2e860809425b9009bdf9f27e1b180ab2d58e053a2a",
+    "src/webhook_receiver_conformance/manifest/reduction.py": "sha256:ee3bf0539d92e5238359ea3ab70046b341fe7bc4f93f9c73aabd5639c2a46749",
+    "tests/integration/test_reduced_bundle_replay.py": "sha256:08619139d0128b108f50b5244bd9375814a41b9af21ed83efdc691dc8449cba0"
+  },
+  "command": "uv run pytest -q tests/integration/test_reduced_bundle_replay.py::test_vt_mut_022_replays_after_hypothesis_database_and_sources_are_deleted",
+  "environment": {
+    "platform": "win32",
+    "python_implementation": "CPython",
+    "python_version": "3.12.13",
+    "uv_lock_sha256": "sha256:7c3e6a3961d546f992ef1df332ef023a75166bf444a4efef3b4a5bb11184d27e"
+  },
+  "exit_code": 0,
+  "implementation_commit": "58fc1342ded1e2a568d96aca756333f14f2a87f3",
+  "requirement_id": "MUT-022",
+  "schema_version": 1,
+  "status": "passed",
+  "test_id": "VT-MUT-022",
+  "test_nodes": [
+    "tests/integration/test_reduced_bundle_replay.py::test_vt_mut_022_replays_after_hypothesis_database_and_sources_are_deleted"
+  ]
+}
