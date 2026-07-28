@@ -7,6 +7,7 @@ import json
 import re
 import socket
 import subprocess
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -17,6 +18,7 @@ from webhook_receiver_conformance.cli.exit_codes import (
     CommandSurface,
     process_exit_code,
 )
+from webhook_receiver_conformance.cli.inspect import InspectionIndex
 from webhook_receiver_conformance.cli.main import app
 from webhook_receiver_conformance.errors import ExitCode, ResultCategory
 
@@ -216,19 +218,39 @@ def test_resume_ambiguity_without_policy_is_offline_exit_four(
 ) -> None:
     run = tmp_path / "run"
     run.mkdir()
-    run.joinpath("run-state.json").write_text(
-        json.dumps(
-            {
-                "run_id": "00000000-0000-4000-8000-000000000001",
-                "verdict": "ambiguous",
-                "destination": "http://127.0.0.1:8000/webhooks",
-            }
+
+    bundle = SimpleNamespace(
+        manifest=SimpleNamespace(
+            target_policy=SimpleNamespace(
+                authorized_host="127.0.0.1",
+                authorized_port=8000,
+            )
         )
+    )
+    resume_result = SimpleNamespace(
+        status=SimpleNamespace(value="ambiguous_read_only"),
+        run_id="00000000-0000-4000-8000-000000000001",
+        owner_epoch=0,
+        result_category=ResultCategory.AMBIGUOUS,
+        exit_code=ExitCode.AMBIGUOUS,
+        read_only=True,
+        ambiguous_attempt_ids=("attempt_00000000000000000000000001",),
+        redeliveries_invoked=0,
+        observations_invoked=0,
     )
 
     def forbidden(*_args: object, **_kwargs: object) -> object:
         raise AssertionError("resume contacted receiver without ambiguity policy")
 
+    def fake_resume(request: object) -> object:
+        assert request.invocation.on_ambiguous is None  # type: ignore[attr-defined]
+        return resume_result
+
+    def fake_bundle(_path: Path) -> object:
+        return bundle
+
+    monkeypatch.setattr(cli_main, "load_replay_bundle", fake_bundle)
+    monkeypatch.setattr(cli_main, "resume_run_sync", fake_resume)
     monkeypatch.setattr(socket, "create_connection", forbidden)
     result = runner.invoke(app, ["resume", str(run)])
     assert result.exit_code == ExitCode.AMBIGUOUS
@@ -238,23 +260,23 @@ def test_resume_ambiguity_without_policy_is_offline_exit_four(
 def test_inspect_raw_artifacts_requires_explicit_flag_and_warns(
     runner: CliRunner,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     run = tmp_path / "run"
     run.joinpath("blobs", "sha256").mkdir(parents=True)
     run.joinpath("blobs", "sha256", "payload").write_bytes(b"sensitive")
-    run.joinpath("run-state.json").write_text(json.dumps({"run_id": "run", "verdict": "pass"}))
-    run.joinpath("deliveries.jsonl").write_text(
-        json.dumps(
-            {
-                "scenario_id": "scenario_1",
-                "event_id": "event_1",
-                "delivery_id": "delivery_1",
-            }
+
+    async def load_index(_run_directory: Path) -> InspectionIndex:
+        return InspectionIndex(
+            chains=(),
+            raw_artifact_paths=("blobs/sha256/payload",),
         )
-        + "\n"
-    )
+
+    monkeypatch.setattr(cli_main, "load_inspection_index", load_index)
     normal = runner.invoke(app, ["--json", "inspect", str(run)])
     raw = runner.invoke(app, ["--json", "inspect", str(run), "--raw-artifacts"])
+    assert normal.exit_code == 0
+    assert raw.exit_code == 0
     assert "raw_artifacts" not in json.loads(normal.stdout)
     assert json.loads(raw.stdout)["raw_artifacts"]["potentially_sensitive"] is True
     assert "WARNING" in raw.stderr

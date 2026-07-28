@@ -1,24 +1,29 @@
 """Complete local-first command tree for webhook receiver conformance."""
-# ruff: noqa: B008, BLE001, EM101, FBT001, FBT003, PLR0913, PLR2004, TRY003
+# ruff: noqa: B008, BLE001, EM101, FBT001, FBT003, PLR0913, PLR0917, TRY003
 
 from __future__ import annotations
 
-import html
 import json
 import os
 import re
-import shutil
 import sys
 import traceback
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Final, NoReturn, cast
+from typing import TYPE_CHECKING, NoReturn, cast
 from urllib.parse import urlsplit
 
 import anyio
 import typer
 
+from webhook_receiver_conformance.cli.inspect import (
+    RAW_ARTIFACT_WARNING,
+    InspectionIdentifierKind,
+    InspectionQuery,
+    render_inspection_human,
+    render_inspection_json,
+)
 from webhook_receiver_conformance.config.loader import (
     CliOverrides,
     ConfigLoadResult,
@@ -31,7 +36,6 @@ from webhook_receiver_conformance.config.models import (
     StripeV1SignerConfig,
     TargetProfile,
 )
-from webhook_receiver_conformance.domain.hashing import sha256_digest
 from webhook_receiver_conformance.errors import (
     DEBUG_ENVIRONMENT_VARIABLE,
     Diagnostic,
@@ -40,19 +44,8 @@ from webhook_receiver_conformance.errors import (
     exit_for_result,
     new_incident_id,
 )
-from webhook_receiver_conformance.http.evidence import (
-    AttemptOutcome,
-    HeaderOwner,
-)
-from webhook_receiver_conformance.http.executor import (
-    HttpAttemptCommand,
-    HttpAttemptExecutor,
-    HttpHeader,
-    HttpLimits,
-    HttpTimeouts,
-)
+from webhook_receiver_conformance.journal.bootstrap import JournalLifecycleRepository
 from webhook_receiver_conformance.manifest.compiler import (
-    CompiledRunBundle,
     compile_run_bundle,
 )
 from webhook_receiver_conformance.manifest.loader import load_replay_bundle
@@ -60,14 +53,34 @@ from webhook_receiver_conformance.network.dialer import (
     DialTimeouts,
     PinnedDestinationDialer,
 )
-from webhook_receiver_conformance.network.policy import parse_destination_policy
 from webhook_receiver_conformance.network.preflight import (
     PreflightPhase,
     PublicTargetPreflightError,
     preflight_public_target,
 )
 from webhook_receiver_conformance.network.transport import AnyIOConnector, AnyIOResolver
-from webhook_receiver_conformance.runtime.attempts import prepare_realized_attempt
+from webhook_receiver_conformance.recovery.policy import (
+    AmbiguityPolicy,
+    BundleRecoveryPolicy,
+    ResumeInvocationPolicy,
+)
+from webhook_receiver_conformance.runtime.inspection import load_inspection_index
+from webhook_receiver_conformance.runtime.observer_assertions import (
+    ProjectObserverAssertionExecutorFactory,
+)
+from webhook_receiver_conformance.runtime.reporting import (
+    ReportFormat,
+    ReportRegenerationResult,
+    regenerate_run_reports,
+)
+from webhook_receiver_conformance.runtime.resume import (
+    ResumeRequest,
+    resume_run_sync,
+)
+from webhook_receiver_conformance.runtime.runner import (
+    FullRunRequest,
+    FullRunRunner,
+)
 from webhook_receiver_conformance.secrets import SecretHandle, SecretResolver
 from webhook_receiver_conformance.signatures.hmac_generic import (
     GenericHmacSha256Settings,
@@ -92,21 +105,6 @@ if TYPE_CHECKING:
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 _SHA256 = re.compile(r"sha256:[0-9a-f]{64}")
 _RUN_STATE = "run-state.json"
-_DELIVERIES = "deliveries.jsonl"
-_SUMMARY = "result-summary.json"
-_HTML = "results.html"
-_JUNIT = "junit.xml"
-_ASSERTIONS = "assertions.jsonl"
-_OBSERVATIONS = "observations.jsonl"
-_REPORT_PATHS: Final = (
-    "assertions.jsonl",
-    "deliveries.jsonl",
-    "junit.xml",
-    "observations.jsonl",
-    "result-summary.json",
-    "results.html",
-    "run-manifest.json",
-)
 _INIT_CONFIG = """schema_version: 1
 project:
   name: local-webhook-receiver
@@ -202,32 +200,6 @@ class _LoadedProject:
     config: ProjectConfig
     project_root: Path
     result: ConfigLoadResult
-
-
-@dataclass(frozen=True, slots=True)
-class _AttemptProjection:
-    sequence: int
-    scenario_id: str
-    delivery_id: str
-    event_id: str
-    outcome: str
-    status: int | None
-    request_sha256: str
-    response_sha256: str | None
-    error_code: str | None
-
-    def to_wire(self) -> dict[str, object]:
-        return {
-            "sequence": self.sequence,
-            "scenario_id": self.scenario_id,
-            "delivery_id": self.delivery_id,
-            "event_id": self.event_id,
-            "outcome": self.outcome,
-            "status": self.status,
-            "request_sha256": self.request_sha256,
-            "response_sha256": self.response_sha256,
-            "error_code": self.error_code,
-        }
 
 
 app = typer.Typer(
@@ -415,6 +387,7 @@ def run_command(
         "-c",
     ),
     manifest: Path | None = typer.Option(None, "--manifest"),
+    project_root: Path | None = typer.Option(None, "--project-root"),
     output: Path | None = typer.Option(None, "--output"),
     authorize_public_target: str | None = typer.Option(
         None,
@@ -428,47 +401,59 @@ def run_command(
             "CLI_RUN_MANIFEST_SECRET_CONTEXT_REQUIRED",
             "Use replay for an existing immutable bundle.",
         )
-    loaded = _require_loaded(_load_config(config, output=output))
+    loaded = _require_loaded(
+        _load_config(
+            config,
+            project_root=project_root,
+            output=output,
+        )
+    )
     _require_public_consent(loaded.config, authorize_public_target)
     if loaded.config.receiver.target_profile is TargetProfile.PUBLIC_AUTHORIZED:
         if not _presentation(context).json_output:
             typer.echo(
-                "Authorized destination before contact: "
-                f"{_safe_text(loaded.config.receiver.url)}",
+                f"Authorized destination before contact: {_safe_text(loaded.config.receiver.url)}",
                 err=True,
             )
         _perform_public_preflight(loaded.config, authorize_public_target)
     project_root = loaded.project_root
     artifact_root = _artifact_root(loaded.config, project_root, output)
-    run_id = str(uuid.uuid4())
-    run_directory = artifact_root / f"run-{run_id}"
     secrets: _ResolvedSecrets | None = None
     try:
         secrets = _resolve_secrets(loaded.config, project_root)
-        bundle = compile_run_bundle(
-            loaded.config,
-            project_root=project_root,
-            bundle_directory=run_directory,
-            secret_fingerprints=secrets.fingerprints,
+        result = anyio.run(
+            _full_run_runner(
+                loaded,
+                secrets,
+                runtime_public_authorization=authorize_public_target,
+            ).run,
+            FullRunRequest(
+                config=loaded.config,
+                project_root=project_root,
+                artifact_directory=artifact_root,
+                secret_fingerprints=secrets.fingerprints,
+                signers=_build_signers(loaded.config, secrets.handles),
+                runtime_public_authorization=authorize_public_target,
+            ),
         )
-        projections = anyio.run(
-            _execute_bundle,
-            loaded.config,
-            bundle,
-            run_directory,
-            secrets.handles,
+        report_result = anyio.run(
+            _regenerate_run_reports,
+            result.run_directory,
         )
-        verdict = _verdict(projections)
-        _write_run_artifacts(
-            run_directory,
-            run_id=run_id,
-            bundle=bundle,
-            projections=projections,
-            verdict=verdict,
-            destination=loaded.config.receiver.url,
+        _atomic_json(
+            result.run_directory / _RUN_STATE,
+            {
+                "run_id": result.run_id,
+                "manifest_id": result.manifest_id,
+                "verdict": result.result_category.value,
+                "destination": loaded.config.receiver.url,
+                "resumable": result.result_category
+                in {ResultCategory.AMBIGUOUS, ResultCategory.CANCELLED},
+                "journal": "journal.sqlite3",
+                "normalized_report_digest": report_result.normalized_digest,
+            },
         )
     except KeyboardInterrupt:
-        _write_cancelled_state(run_directory, run_id)
         raise typer.Exit(int(ExitCode.CANCELLED)) from None
     except Exception as error:
         _internal_or_input_failure(context, error, "CLI_RUN_FAILED")
@@ -479,113 +464,191 @@ def run_command(
         context,
         {
             "command": "run",
-            "run_id": run_id,
-            "manifest_id": bundle.manifest.manifest_id,
+            "run_id": result.run_id,
+            "manifest_id": result.manifest_id,
             "destination": loaded.config.receiver.url,
-            "run_directory": str(run_directory),
-            "verdict": verdict.value,
-            "exit_code": int(exit_for_result(verdict)[1]),
+            "run_directory": str(result.run_directory),
+            "verdict": result.result_category.value,
+            "exit_code": int(result.exit_code),
+            "normalized_report_digest": report_result.normalized_digest,
         },
         (
-            f"Run {run_id}: {verdict.value}\n"
+            f"Run {result.run_id}: {result.result_category.value}\n"
             f"Destination: {_safe_text(loaded.config.receiver.url)}\n"
-            f"Run directory: {_safe_text(str(run_directory))}"
+            f"Run directory: {_safe_text(str(result.run_directory))}"
         ),
     )
-    if verdict is not ResultCategory.PASS:
-        raise typer.Exit(int(exit_for_result(verdict)[1]))
+    if result.result_category is not ResultCategory.PASS:
+        raise typer.Exit(int(result.exit_code))
 
 
 @app.command("resume", help="Inspect a local run and require an explicit ambiguity policy.")
 def resume_command(
     context: typer.Context,
     run_directory: Path = typer.Argument(..., exists=True, file_okay=False),
-    on_ambiguous: str | None = typer.Option(
+    on_ambiguous: AmbiguityPolicy | None = typer.Option(
         None,
         "--on-ambiguous",
-        help=(
-            "Explicit policy: stop, observe, redeliver, assume-processed, or assume-not-processed."
-        ),
+        case_sensitive=False,
+        help="Explicit policy: stop, observe, or redeliver.",
     ),
 ) -> None:
-    state = _read_run_state(run_directory)
-    if state.get("verdict") == ResultCategory.AMBIGUOUS.value and on_ambiguous is None:
-        _fail(
-            ResultCategory.AMBIGUOUS,
-            "CLI_RESUME_AMBIGUITY_POLICY_REQUIRED",
-            "The run contains an ambiguous send outcome; no receiver contact was attempted.",
+    resolved_directory = run_directory.resolve()
+    try:
+        bundle = load_replay_bundle(resolved_directory)
+        target = bundle.manifest.target_policy
+        destination = f"{target.authorized_host}:{target.authorized_port}"
+        if not _presentation(context).json_output:
+            typer.echo(
+                f"Resume destination before any possible contact: {_safe_text(destination)}",
+                err=True,
+            )
+        result = resume_run_sync(
+            ResumeRequest(
+                run_directory=resolved_directory,
+                invocation=ResumeInvocationPolicy(on_ambiguous=on_ambiguous),
+                bundle_policy=BundleRecoveryPolicy(),
+            )
         )
-    if on_ambiguous not in {
-        None,
-        "stop",
-        "observe",
-        "redeliver",
-        "assume-processed",
-        "assume-not-processed",
-    }:
-        _fail(
-            ResultCategory.INVALID_INPUT,
-            "CLI_RESUME_POLICY_INVALID",
-            "The ambiguity policy is not supported.",
+    except KeyboardInterrupt:
+        raise typer.Exit(int(ExitCode.CANCELLED)) from None
+    except Exception as error:
+        _internal_or_input_failure(context, error, "CLI_RESUME_FAILED")
+    if result.read_only and result.result_category is ResultCategory.AMBIGUOUS:
+        typer.echo(
+            "Ambiguity remains unresolved; no receiver contact was attempted.",
+            err=True,
         )
-    verdict = ResultCategory(cast("str", state.get("verdict", "harness_error")))
+    verdict = result.result_category
     _emit_result(
         context,
         {
             "command": "resume",
-            "run_id": state.get("run_id"),
-            "destination": state.get("destination"),
-            "run_directory": str(run_directory.resolve()),
-            "verdict": verdict.value,
+            "run_id": result.run_id,
+            "destination": destination,
+            "run_directory": str(resolved_directory),
+            "status": result.status.value,
+            "verdict": None if verdict is None else verdict.value,
+            "read_only": result.read_only,
+            "owner_epoch": result.owner_epoch,
+            "ambiguous_attempt_ids": list(result.ambiguous_attempt_ids),
+            "redeliveries_invoked": result.redeliveries_invoked,
+            "observations_invoked": result.observations_invoked,
         },
         (
-            f"Run {state.get('run_id')}: {verdict.value}\n"
-            f"Destination: {_safe_text(str(state.get('destination', 'unknown')))}\n"
-            f"Run directory: {_safe_text(str(run_directory.resolve()))}"
+            f"Run {result.run_id}: {result.status.value}\n"
+            f"Destination: {_safe_text(destination)}\n"
+            f"Run directory: {_safe_text(str(resolved_directory))}"
         ),
     )
-    if verdict is not ResultCategory.PASS:
-        raise typer.Exit(int(exit_for_result(verdict)[1]))
+    if result.exit_code is not None and result.exit_code is not ExitCode.PASS:
+        raise typer.Exit(int(result.exit_code))
 
 
 @app.command("replay", help="Verify an immutable bundle before creating a new execution.")
 def replay_command(
     context: typer.Context,
     manifest: Path = typer.Argument(..., exists=True),
+    config: Path = typer.Option(
+        Path("webhook-conformance.yaml"),
+        "--config",
+        "-c",
+        help="Fresh project configuration supplying destination and secret references.",
+    ),
+    project_root: Path | None = typer.Option(None, "--project-root"),
     output: Path | None = typer.Option(None, "--output"),
+    authorize_public_target: str | None = typer.Option(
+        None,
+        "--authorize-public-target",
+        help="Exact HOST:PORT consent for a configured public target.",
+    ),
 ) -> None:
     bundle_directory = manifest if manifest.is_dir() else manifest.parent
     try:
-        loaded = load_replay_bundle(bundle_directory.resolve())
+        bundle = load_replay_bundle(bundle_directory.resolve())
     except Exception as error:
         _internal_or_input_failure(context, error, "CLI_REPLAY_BUNDLE_INVALID")
-    destination = (
-        output.resolve(strict=False)
-        if output is not None
-        else (bundle_directory.parent / f"replay-{uuid.uuid4()}").resolve(strict=False)
+    loaded = _require_loaded(
+        _load_config(
+            config,
+            project_root=project_root,
+            output=output,
+            allow_missing_fixture_sources=True,
+        )
     )
-    destination.mkdir(mode=0o700, parents=True, exist_ok=False)
-    for name in ("run-manifest.json", "effective-configuration.json", "plan-preview.json"):
-        shutil.copyfile(bundle_directory / name, destination / name)
-    source_blobs = bundle_directory / "blobs"
-    if source_blobs.is_dir():
-        shutil.copytree(source_blobs, destination / "blobs")
+    _require_public_consent(loaded.config, authorize_public_target)
+    if loaded.config.receiver.target_profile is TargetProfile.PUBLIC_AUTHORIZED:
+        if not _presentation(context).json_output:
+            typer.echo(
+                f"Authorized destination before contact: {_safe_text(loaded.config.receiver.url)}",
+                err=True,
+            )
+        _perform_public_preflight(loaded.config, authorize_public_target)
+    artifact_root = _artifact_root(loaded.config, loaded.project_root, output)
+    secrets: _ResolvedSecrets | None = None
+    try:
+        secrets = _resolve_secrets(loaded.config, loaded.project_root)
+        result = anyio.run(
+            _full_run_runner(
+                loaded,
+                secrets,
+                runtime_public_authorization=authorize_public_target,
+            ).run_loaded,
+            FullRunRequest(
+                config=loaded.config,
+                project_root=loaded.project_root,
+                artifact_directory=artifact_root,
+                secret_fingerprints=secrets.fingerprints,
+                signers=_build_signers(loaded.config, secrets.handles),
+                runtime_public_authorization=authorize_public_target,
+            ),
+            bundle,
+        )
+        report_result = anyio.run(
+            _regenerate_run_reports,
+            result.run_directory,
+        )
+        _atomic_json(
+            result.run_directory / _RUN_STATE,
+            {
+                "run_id": result.run_id,
+                "manifest_id": result.manifest_id,
+                "verdict": result.result_category.value,
+                "destination": loaded.config.receiver.url,
+                "resumable": result.result_category
+                in {ResultCategory.AMBIGUOUS, ResultCategory.CANCELLED},
+                "journal": "journal.sqlite3",
+                "normalized_report_digest": report_result.normalized_digest,
+                "replayed_from": str(bundle.directory),
+            },
+        )
+    except KeyboardInterrupt:
+        raise typer.Exit(int(ExitCode.CANCELLED)) from None
+    except Exception as error:
+        _internal_or_input_failure(context, error, "CLI_REPLAY_FAILED")
+    finally:
+        if secrets is not None:
+            secrets.close()
     _emit_result(
         context,
         {
             "command": "replay",
-            "manifest_id": loaded.manifest.manifest_id,
-            "destination": str(destination),
-            "verdict": ResultCategory.UNSUPPORTED.value,
-            "reason": "secret sources are intentionally absent from immutable bundles",
+            "run_id": result.run_id,
+            "manifest_id": result.manifest_id,
+            "destination": loaded.config.receiver.url,
+            "run_directory": str(result.run_directory),
+            "verdict": result.result_category.value,
+            "exit_code": int(result.exit_code),
+            "normalized_report_digest": report_result.normalized_digest,
         },
         (
-            f"Verified replay bundle {loaded.manifest.manifest_id}\n"
-            f"Destination: {_safe_text(str(destination))}\n"
-            "Execution requires a fresh authorized secret context."
+            f"Replay {result.run_id}: {result.result_category.value}\n"
+            f"Destination: {_safe_text(loaded.config.receiver.url)}\n"
+            f"Run directory: {_safe_text(str(result.run_directory))}"
         ),
     )
-    raise typer.Exit(int(ExitCode.UNSUPPORTED))
+    if result.result_category is not ResultCategory.PASS:
+        raise typer.Exit(int(result.exit_code))
 
 
 @app.command("inspect", help="Inspect sanitized local run evidence without network access.")
@@ -593,167 +656,134 @@ def inspect_command(
     context: typer.Context,
     run_directory: Path = typer.Argument(..., exists=True, file_okay=False),
     identifier: str | None = typer.Option(None, "--identifier", "--id"),
+    kind: InspectionIdentifierKind | None = typer.Option(
+        None,
+        "--kind",
+        case_sensitive=False,
+        help=(
+            "Identifier kind: scenario, event, delivery, attempt, "
+            "observation, assertion, or diagnostic."
+        ),
+    ),
     raw_artifacts: bool = typer.Option(False, "--raw-artifacts"),
 ) -> None:
-    state = _read_run_state(run_directory)
-    records = _read_json_lines(run_directory / _DELIVERIES)
-    if identifier is not None:
-        records = tuple(
-            record
-            for record in records
-            if identifier
-            in {
-                record.get("scenario_id"),
-                record.get("event_id"),
-                record.get("delivery_id"),
-            }
+    if (identifier is None) is not (kind is None):
+        _fail(
+            ResultCategory.INVALID_INPUT,
+            "CLI_INSPECTION_QUERY_INCOMPLETE",
+            "--identifier and --kind must be supplied together.",
         )
-        if not records:
-            _fail(
-                ResultCategory.INVALID_INPUT,
-                "INSPECTION_IDENTIFIER_NOT_FOUND",
-                "No exact sanitized record contains the requested identifier.",
+    try:
+        index = anyio.run(load_inspection_index, run_directory.resolve())
+    except Exception as error:
+        _internal_or_input_failure(context, error, "CLI_INSPECTION_FAILED")
+    if raw_artifacts:
+        typer.echo(RAW_ARTIFACT_WARNING, err=True)
+    if identifier is not None and kind is not None:
+        try:
+            result = index.query(
+                InspectionQuery(kind=kind, identifier=identifier),
+                include_raw_artifacts=raw_artifacts,
             )
+        except Exception as error:
+            _internal_or_input_failure(context, error, "CLI_INSPECTION_QUERY_FAILED")
+        if _presentation(context).json_output:
+            typer.echo(
+                render_inspection_json(
+                    result,
+                    include_raw_artifacts=raw_artifacts,
+                ).decode(),
+                nl=False,
+            )
+            return
+        typer.echo(
+            render_inspection_human(
+                result,
+                include_raw_artifacts=raw_artifacts,
+                stdout_is_tty=bool(typer.get_text_stream("stdout").isatty()),
+            ),
+            nl=False,
+        )
+        return
     document: dict[str, object] = {
         "command": "inspect",
-        "run": state,
-        "deliveries": list(records),
+        "run_directory": str(run_directory.resolve()),
+        "verified": True,
+        "failed_assertion_chains": len(index.chains),
     }
     if raw_artifacts:
         document["raw_artifacts"] = {
             "potentially_sensitive": True,
-            "paths": sorted(
-                path.relative_to(run_directory).as_posix()
-                for path in (run_directory / "blobs").glob("**/*")
-                if path.is_file()
-            ),
+            "paths": list(index.raw_artifact_paths),
         }
-        typer.echo(
-            "WARNING: raw artifact paths may contain sensitive webhook payloads.",
-            err=True,
-        )
     if _presentation(context).json_output:
         _stdout_json(document)
         return
     lines = [
-        f"Run: {_safe_text(str(state.get('run_id', 'unknown')))}",
-        f"Verdict: {_safe_text(str(state.get('verdict', 'unknown')))}",
-        f"Sanitized delivery records: {len(records)}",
+        f"Verified run directory: {_safe_text(str(run_directory.resolve()))}",
+        f"Failed assertion chains: {len(index.chains)}",
     ]
     if raw_artifacts:
         lines.append("Raw artifact paths were explicitly requested.")
     typer.echo("\n".join(lines))
 
 
-@app.command("report", help="Verify and summarize existing local report artifacts offline.")
+@app.command("report", help="Regenerate selected reports from the local journal offline.")
 def report_command(
     context: typer.Context,
     run_directory: Path = typer.Argument(..., exists=True, file_okay=False),
     formats: list[str] = typer.Option(None, "--format"),
 ) -> None:
-    selected_formats = tuple(dict.fromkeys(formats or ["json", "junit", "html"]))
-    if any(value not in {"json", "junit", "html"} for value in selected_formats):
+    selected_names = tuple(dict.fromkeys(formats or ["json", "junit", "html"]))
+    if any(value not in {"json", "junit", "html"} for value in selected_names):
         _fail(
             ResultCategory.INVALID_INPUT,
             "CLI_REPORT_FORMAT_INVALID",
             "Report format must be json, junit, or html.",
         )
-    selected_paths: set[str] = set()
-    if "json" in selected_formats:
-        selected_paths.update(
-            {
-                "run-manifest.json",
-                _DELIVERIES,
-                _OBSERVATIONS,
-                _ASSERTIONS,
-                _SUMMARY,
-            }
+    selected_formats = tuple(ReportFormat(value) for value in selected_names)
+    try:
+        result = anyio.run(
+            _regenerate_run_reports,
+            run_directory.resolve(),
+            selected_formats,
         )
-    if "junit" in selected_formats:
-        selected_paths.add(_JUNIT)
-    if "html" in selected_formats:
-        selected_paths.add(_HTML)
-    artifacts: list[dict[str, object]] = []
-    for relative in sorted(selected_paths):
-        path = run_directory / relative
-        if not path.is_file():
-            _fail(
-                ResultCategory.HARNESS_ERROR,
-                "CLI_REPORT_ARTIFACT_MISSING",
-                "A registered report artifact is missing.",
-            )
-        content = path.read_bytes()
-        artifacts.append(
-            {
-                "relative_path": relative,
-                "byte_length": len(content),
-                "sha256": sha256_digest(content),
-            }
-        )
-    digest = sha256_digest(json.dumps(artifacts, sort_keys=True, separators=(",", ":")).encode())
+    except Exception as error:
+        _internal_or_input_failure(context, error, "CLI_REPORT_REGENERATION_FAILED")
+    artifacts = [
+        {
+            "relative_path": record.relative_path,
+            "media_type": record.media_type,
+            "byte_length": record.byte_length,
+            "sha256": record.sha256,
+        }
+        for record in result.records
+    ]
     _emit_result(
         context,
         {
             "command": "report",
-            "formats": list(selected_formats),
-            "normalized_digest": digest,
+            "run_id": result.run_id,
+            "formats": [value.value for value in result.formats],
+            "normalized_digest": result.normalized_digest,
             "artifacts": artifacts,
         },
-        (f"Verified {len(artifacts)} local report artifact(s)\nNormalized digest: {digest}"),
+        (
+            f"Regenerated {len(artifacts)} local report artifact(s) from journal truth\n"
+            f"Normalized digest: {result.normalized_digest}"
+        ),
     )
 
 
-async def _execute_bundle(
-    config: ProjectConfig,
-    bundle: CompiledRunBundle,
+async def _regenerate_run_reports(
     run_directory: Path,
-    handles: dict[str, SecretHandle],
-) -> tuple[_AttemptProjection, ...]:
-    policy = parse_destination_policy(config.receiver)
-    executor = HttpAttemptExecutor(
-        dialer=PinnedDestinationDialer(
-            resolver=AnyIOResolver(),
-            connector=AnyIOConnector(),
-        ),
-        timeouts=HttpTimeouts(
-            connect_ns=config.receiver.timeouts.connect.nanoseconds,
-            write_ns=config.receiver.timeouts.write.nanoseconds,
-            read_ns=config.receiver.timeouts.read.nanoseconds,
-            pool_ns=config.receiver.timeouts.pool.nanoseconds,
-            total_ns=config.receiver.timeouts.total.nanoseconds,
-        ),
-        limits=HttpLimits(
-            max_request_bytes=config.limits.max_request_bytes,
-            response_capture_bytes=config.limits.max_response_capture_bytes,
-        ),
-    )
-    signers = _build_signers(config, handles)
-    projections: list[_AttemptProjection] = []
-    for sequence, recipe in enumerate(bundle.realized_execution, start=1):
-        blob = next(item for item in bundle.blobs if item.sha256 == recipe.request_blob)
-        base = HttpAttemptCommand(
-            policy=policy,
-            body=blob.path.read_bytes(),
-            headers=(HttpHeader("content-type", recipe.media_type, HeaderOwner.USER),),
-        )
-        signer = None if recipe.signer_name is None else signers[recipe.signer_name]
-        prepared = prepare_realized_attempt(base, recipe, signer=signer)
-        result = await executor.execute(prepared.command)
-        projections.append(
-            _AttemptProjection(
-                sequence=sequence,
-                scenario_id=recipe.scenario_id,
-                delivery_id=recipe.delivery_id,
-                event_id=recipe.event_id,
-                outcome=result.outcome.value,
-                status=None if result.response is None else result.response.status,
-                request_sha256=result.request.body_sha256,
-                response_sha256=(None if result.response is None else result.response.body_sha256),
-                error_code=None if result.error is None else result.error.code.value,
-            )
-        )
-    del run_directory
-    return tuple(projections)
+    formats: tuple[ReportFormat, ...] = (
+        ReportFormat.JSON,
+        ReportFormat.JUNIT,
+        ReportFormat.HTML,
+    ),
+) -> ReportRegenerationResult:
+    return await regenerate_run_reports(run_directory, formats=formats)
 
 
 def _build_signers(
@@ -790,6 +820,27 @@ def _build_signers(
     return result
 
 
+def _full_run_runner(
+    loaded: _LoadedProject,
+    secrets: _ResolvedSecrets,
+    *,
+    runtime_public_authorization: str | None,
+) -> FullRunRunner:
+    return FullRunRunner(
+        journal=JournalLifecycleRepository(),
+        observer_assertion_executor_factory=ProjectObserverAssertionExecutorFactory(
+            config=loaded.config,
+            project_root=loaded.project_root,
+            observer_secrets={
+                key: value
+                for key, value in secrets.handles.items()
+                if key.startswith("observer:")
+            },
+            runtime_public_authorization=runtime_public_authorization,
+        ),
+    )
+
+
 def _resolve_secrets(config: ProjectConfig, project_root: Path) -> _ResolvedSecrets:
     resolver = SecretResolver(
         project_root=project_root,
@@ -819,84 +870,17 @@ def _resolve_secrets(config: ProjectConfig, project_root: Path) -> _ResolvedSecr
     return _ResolvedSecrets(handles, fingerprints)
 
 
-def _verdict(projections: tuple[_AttemptProjection, ...]) -> ResultCategory:
-    if any(value.outcome == AttemptOutcome.UNKNOWN_OUTCOME.value for value in projections):
-        return ResultCategory.AMBIGUOUS
-    if any(value.outcome == AttemptOutcome.NOT_SENT.value for value in projections):
-        return ResultCategory.ENVIRONMENT_ERROR
-    if any(value.status is None or not 200 <= value.status < 300 for value in projections):
-        return ResultCategory.RECEIVER_FAILURE
-    return ResultCategory.PASS
-
-
-def _write_run_artifacts(
-    run_directory: Path,
-    *,
-    run_id: str,
-    bundle: CompiledRunBundle,
-    projections: tuple[_AttemptProjection, ...],
-    verdict: ResultCategory,
-    destination: str,
-) -> None:
-    run_directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-    delivery_bytes = b"".join(
-        (json.dumps(value.to_wire(), sort_keys=True, separators=(",", ":")) + "\n").encode()
-        for value in projections
-    )
-    summary = {
-        "schema_version": "1.0",
-        "run_id": run_id,
-        "manifest_id": bundle.manifest.manifest_id,
-        "verdict": verdict.value,
-        "exit_code": int(exit_for_result(verdict)[1]),
-        "counts": {
-            "scenarios": len(bundle.manifest.scenarios),
-            "attempts": len(projections),
-            "observations": 0,
-            "assertions": 0,
-        },
-    }
-    state = {
-        "run_id": run_id,
-        "manifest_id": bundle.manifest.manifest_id,
-        "verdict": verdict.value,
-        "destination": destination,
-        "resumable": verdict in {ResultCategory.AMBIGUOUS, ResultCategory.CANCELLED},
-    }
-    _atomic_bytes(run_directory / _DELIVERIES, delivery_bytes)
-    _atomic_bytes(run_directory / _OBSERVATIONS, b"")
-    _atomic_bytes(run_directory / _ASSERTIONS, b"")
-    _atomic_json(run_directory / _SUMMARY, summary)
-    _atomic_json(run_directory / _RUN_STATE, state)
-    junit = (
-        '<?xml version="1.0" encoding="utf-8"?>'
-        f'<testsuites tests="{len(projections)}" failures="'
-        f'{0 if verdict is ResultCategory.PASS else 1}"/>'
-        "\n"
-    ).encode()
-    _atomic_bytes(run_directory / _JUNIT, junit)
-    html_body = (
-        "<!doctype html><html><head>"
-        '<meta http-equiv="Content-Security-Policy" '
-        'content="default-src &#39;none&#39;; script-src &#39;none&#39;">'
-        "<title>Webhook conformance</title></head><body>"
-        f"<h1>{html.escape(verdict.value)}</h1>"
-        f"<p>Run {html.escape(run_id)}</p>"
-        f"<p>Attempts {len(projections)}</p>"
-        "</body></html>\n"
-    ).encode()
-    _atomic_bytes(run_directory / _HTML, html_body)
-
-
 def _load_config(
     config: Path,
     *,
     project_root: Path | None = None,
     output: Path | None = None,
+    allow_missing_fixture_sources: bool = False,
 ) -> ConfigLoadResult:
     return load_project_config(
         config,
         overrides=CliOverrides(project_root=project_root, output=output),
+        allow_missing_fixture_sources=allow_missing_fixture_sources,
     )
 
 
@@ -942,6 +926,18 @@ def _internal_or_input_failure(
     error: BaseException,
     code: str,
 ) -> NoReturn:
+    diagnostic = getattr(error, "diagnostic", None)
+    if type(diagnostic) is Diagnostic:
+        _stderr_diagnostic(diagnostic)
+        raise typer.Exit(int(exit_for_result(diagnostic.result_category)[1]))
+    classified_result = getattr(error, "result_category", None)
+    if type(classified_result) is ResultCategory:
+        classified_code = str(getattr(error, "code", code))
+        _fail(
+            classified_result,
+            classified_code,
+            _safe_text(str(error)) or "The requested operation failed.",
+        )
     if isinstance(error, (ValueError, TypeError, OSError)):
         _fail(
             ResultCategory.INVALID_INPUT,
@@ -1128,58 +1124,6 @@ def _atomic_bytes(path: Path, content: bytes) -> None:
         temporary.replace(path)
     finally:
         temporary.unlink(missing_ok=True)
-
-
-def _read_run_state(run_directory: Path) -> dict[str, object]:
-    path = run_directory.resolve() / _RUN_STATE
-    value: object = None
-    try:
-        value: object = json.loads(path.read_bytes())
-    except (OSError, ValueError):
-        _fail(
-            ResultCategory.INVALID_INPUT,
-            "CLI_RUN_STATE_INVALID",
-            "The local run state is missing or invalid.",
-        )
-    if not isinstance(value, dict):
-        _fail(
-            ResultCategory.INVALID_INPUT,
-            "CLI_RUN_STATE_INVALID",
-            "The local run state is not a JSON object.",
-        )
-    return cast("dict[str, object]", value)
-
-
-def _read_json_lines(path: Path) -> tuple[dict[str, object], ...]:
-    result: list[dict[str, object]] = []
-    try:
-        for line in path.read_bytes().splitlines():
-            value: object = json.loads(line)
-            result.append(_json_object(value))
-    except (OSError, TypeError, ValueError):
-        _fail(
-            ResultCategory.HARNESS_ERROR,
-            "CLI_SANITIZED_ARTIFACT_INVALID",
-            "A sanitized local report artifact is missing or invalid.",
-        )
-    return tuple(result)
-
-
-def _json_object(value: object) -> dict[str, object]:
-    if not isinstance(value, dict):
-        raise TypeError("JSON Lines records must be objects")
-    return cast("dict[str, object]", value)
-
-
-def _write_cancelled_state(run_directory: Path, run_id: str) -> None:
-    _atomic_json(
-        run_directory / _RUN_STATE,
-        {
-            "run_id": run_id,
-            "verdict": ResultCategory.CANCELLED.value,
-            "resumable": True,
-        },
-    )
 
 
 def run_cli() -> None:
