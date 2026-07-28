@@ -1,5 +1,5 @@
 """Selected-format offline report command contract and stable output views."""
-# ruff: noqa: B008, D105, EM101, FBT001, FBT003, INP001, TC003, TRY003
+# ruff: noqa: B008, D105, EM101, FBT001, FBT003, TC003, TRY003
 
 from __future__ import annotations
 

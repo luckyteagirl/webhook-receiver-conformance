@@ -1,5 +1,5 @@
 """Offline exact-ID causal inspection with privacy-safe human and JSON views."""
-# ruff: noqa: B008, D105, EM101, EM102, FBT001, FBT003, INP001, PLR0911, PLR2004, TRY003
+# ruff: noqa: B008, D105, EM101, EM102, FBT001, FBT003, PLR0911, PLR2004, TRY003
 
 from __future__ import annotations
 

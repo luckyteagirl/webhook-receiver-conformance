@@ -1,5 +1,5 @@
 """One stable exit-code contract shared by every CLI execution surface."""
-# ruff: noqa: D105, EM101, INP001, TRY003
+# ruff: noqa: D105, EM101, TRY003
 
 from __future__ import annotations
 
