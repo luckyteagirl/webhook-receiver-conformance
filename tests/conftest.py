@@ -11,6 +11,11 @@ PLUGIN_GROUP_DECLARED = "v0.1 must not declare plugin entry-point groups"
 SETUP_PY_PRESENT = "setup.py must not be a package metadata source"
 UNSUPPORTED_IMPLEMENTATION = "package metadata claims an unsupported Python implementation"
 INSTALLED_PLUGIN_ENTRY_POINT = "installed package must not expose plugin entry points"
+OWNED_CONSOLE_SCRIPT = (
+    "console_scripts",
+    "webhook-conformance",
+    "webhook_receiver_conformance.cli:run_cli",
+)
 
 
 def _project_metadata() -> dict[str, object]:
@@ -42,7 +47,12 @@ def pytest_configure() -> None:
         raise pytest.UsageError(UNSUPPORTED_IMPLEMENTATION)
 
     package = distribution("webhook-receiver-conformance")
-    if list(package.entry_points):
+    unexpected_entry_points = [
+        entry_point
+        for entry_point in package.entry_points
+        if (entry_point.group, entry_point.name, entry_point.value) != OWNED_CONSOLE_SCRIPT
+    ]
+    if unexpected_entry_points:
         raise pytest.UsageError(INSTALLED_PLUGIN_ENTRY_POINT)
 
 
