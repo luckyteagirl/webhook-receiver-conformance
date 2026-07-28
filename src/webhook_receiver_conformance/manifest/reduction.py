@@ -95,6 +95,55 @@ def export_reduced_replay_bundle(
     )
 
 
+def materialize_verified_replay_bundle(
+    source: LoadedRunBundle,
+    *,
+    destination: Path,
+) -> LoadedRunBundle:
+    """Copy verified replay inputs into an existing, otherwise fresh run directory."""
+    if type(source) is not LoadedRunBundle:
+        raise TypeError("source must be a verified LoadedRunBundle")
+    output_directory = _validate_existing_destination(source.directory, destination)
+    verified_source = load_replay_bundle(source.directory)
+    _require_unchanged_source(source, verified_source)
+    effective_bytes = _read_effective_configuration(verified_source.directory)
+    recipes = load_realized_execution(verified_source.manifest, effective_bytes)
+    preview_bytes = generate_preview(verified_source.manifest, effective_bytes)
+    output_store = BlobStore(output_directory)
+    output_blobs: list[BlobSnapshot] = []
+    for source_blob in verified_source.blobs:
+        body = _read_verified_blob(source_blob)
+        output_blob = output_store.snapshot(body, media_type=source_blob.media_type)
+        if (
+            output_blob.sha256 != source_blob.sha256
+            or output_blob.byte_length != source_blob.byte_length
+        ):
+            raise ValueError("source blob changed during replay materialization")
+        output_blobs.append(output_blob)
+    materialize_run_bundle(
+        CompiledRunBundle(
+            manifest=verified_source.manifest,
+            manifest_bytes=verified_source.manifest_bytes,
+            effective_configuration_bytes=effective_bytes,
+            preview_bytes=preview_bytes,
+            blobs=tuple(output_blobs),
+            realized_execution=recipes,
+        ),
+        output_directory,
+    )
+    loaded = load_replay_bundle(output_directory)
+    materialized_recipes = load_realized_execution(
+        loaded.manifest,
+        _read_effective_configuration(output_directory),
+    )
+    if (
+        loaded.manifest_bytes != verified_source.manifest_bytes
+        or materialized_recipes != recipes
+    ):
+        raise ValueError("materialized replay bundle differs from its verified source")
+    return loaded
+
+
 def _materialize_reduced_bundle(
     source: LoadedRunBundle,
     *,
@@ -264,6 +313,36 @@ def _validate_destination(source: Path, destination: Path) -> Path:
     return output
 
 
+def _validate_existing_destination(source: Path, destination: Path) -> Path:
+    if not isinstance(destination, Path):  # pyright: ignore[reportUnnecessaryIsInstance]
+        raise TypeError("destination must be a pathlib.Path")
+    output = destination.absolute()
+    source_root = source.resolve(strict=True)
+    try:
+        output_root = output.resolve(strict=True)
+        metadata = output.lstat()
+    except OSError:
+        raise ValueError("replay destination must be an existing local directory") from None
+    if (
+        output_root == source_root
+        or output_root.is_relative_to(source_root)
+        or source_root.is_relative_to(output_root)
+        or not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or _is_windows_reparse(metadata)
+    ):
+        raise ValueError("replay destination must be separate from its immutable source")
+    owned_paths = (
+        output / "run-manifest.json",
+        output / EFFECTIVE_CONFIG_FILENAME,
+        output / "plan-preview.json",
+        output / "blobs",
+    )
+    if any(path.exists() or path.is_symlink() for path in owned_paths):
+        raise FileExistsError("replay destination already contains bundle artifacts")
+    return output
+
+
 def _read_effective_configuration(directory: Path) -> bytes:
     path = directory / EFFECTIVE_CONFIG_FILENAME
     try:
@@ -344,4 +423,7 @@ def _is_windows_reparse(metadata: os.stat_result) -> bool:
     return bool(getattr(metadata, "st_file_attributes", 0) & _WINDOWS_REPARSE_ATTRIBUTE)
 
 
-__all__ = ["export_reduced_replay_bundle"]
+__all__ = [
+    "export_reduced_replay_bundle",
+    "materialize_verified_replay_bundle",
+]

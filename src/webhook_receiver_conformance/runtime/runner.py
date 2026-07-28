@@ -113,6 +113,9 @@ from webhook_receiver_conformance.manifest.compiler import (
 from webhook_receiver_conformance.manifest.loader import (
     LoadedRunBundle,
 )
+from webhook_receiver_conformance.manifest.reduction import (
+    materialize_verified_replay_bundle,
+)
 from webhook_receiver_conformance.network.dialer import PinnedDestinationDialer
 from webhook_receiver_conformance.network.policy import (
     DestinationPolicy,
@@ -694,11 +697,15 @@ class FullRunRunner:
             run_id=run.run_id,
             owner_epoch=request.owner_epoch,
         ):
+            materialized = materialize_verified_replay_bundle(
+                bundle,
+                destination=run.run_directory,
+            )
             return await self._run_prepared(
                 request,
                 run=run,
                 clock=clock,
-                bundle=_ExecutionBundle.replay(bundle, recipes),
+                bundle=_ExecutionBundle.replay(materialized, recipes),
             )
 
     async def _run_prepared(

@@ -20,6 +20,7 @@ from webhook_receiver_conformance.manifest.compiler import (
 from webhook_receiver_conformance.manifest.loader import load_replay_bundle
 from webhook_receiver_conformance.manifest.reduction import (
     export_reduced_replay_bundle,
+    materialize_verified_replay_bundle,
 )
 
 _CREATED_AT = "2026-07-27T20:00:00Z"
@@ -206,6 +207,37 @@ def test_reduction_preserves_target_config_and_secret_fingerprint_safeguards(
         load_realized_execution(
             reduced.manifest,
             json.dumps(tampered, sort_keys=True).encode(),
+        )
+
+
+def test_materialize_verified_replay_bundle_makes_an_existing_run_self_contained(
+    tmp_path: Path,
+) -> None:
+    _config_value, source_directory = _compiled_source(tmp_path)
+    source = load_replay_bundle(source_directory)
+    destination = tmp_path / "fresh-run"
+    destination.mkdir()
+    journal = destination / "journal.sqlite3"
+    journal.write_bytes(b"owned-by-the-run")
+
+    materialized = materialize_verified_replay_bundle(
+        source,
+        destination=destination,
+    )
+
+    assert materialized.manifest_bytes == source.manifest_bytes
+    assert (destination / EFFECTIVE_CONFIG_FILENAME).read_bytes() == (
+        source_directory / EFFECTIVE_CONFIG_FILENAME
+    ).read_bytes()
+    assert journal.read_bytes() == b"owned-by-the-run"
+    assert tuple(item.sha256 for item in materialized.blobs) == tuple(
+        item.sha256 for item in source.blobs
+    )
+    assert all(item.path.is_relative_to(destination) for item in materialized.blobs)
+    with pytest.raises(FileExistsError, match="already contains"):
+        materialize_verified_replay_bundle(
+            source,
+            destination=destination,
         )
 
 
