@@ -1,9 +1,14 @@
+import sys
 import tomllib
 from importlib.metadata import distribution
 from pathlib import Path
 from typing import cast
 
 import pytest
+from tests.helpers.leak_guard import (
+    LeakInspectionError,
+    SessionLeakGuard,
+)
 
 INVALID_PEP_621 = "pyproject.toml must contain a PEP 621 [project] table"
 INVALID_PYTHON_RANGE = "requires-python must support CPython 3.12 through 3.14"
@@ -16,6 +21,7 @@ OWNED_CONSOLE_SCRIPT = (
     "webhook-conformance",
     "webhook_receiver_conformance.cli:run_cli",
 )
+_LEAK_GUARD_KEY = pytest.StashKey[SessionLeakGuard]()
 
 
 def _project_metadata() -> dict[str, object]:
@@ -56,11 +62,44 @@ def pytest_configure() -> None:
         raise pytest.UsageError(INSTALLED_PLUGIN_ENTRY_POINT)
 
 
+@pytest.hookimpl(trylast=True)
+def pytest_sessionstart(session: pytest.Session) -> None:
+    try:
+        session.config.stash[_LEAK_GUARD_KEY] = SessionLeakGuard.start()
+    except LeakInspectionError as error:
+        message = f"test leak guard unavailable: {error}"
+        raise pytest.UsageError(message) from error
+
+
+@pytest.hookimpl(trylast=True)
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int | pytest.ExitCode) -> None:
     requested_paths = tuple(Path(str(argument)).name for argument in session.config.args)
     is_foundation_check = requested_paths == ("conftest.py",)
     if is_foundation_check and exitstatus == pytest.ExitCode.NO_TESTS_COLLECTED:
         session.exitstatus = pytest.ExitCode.OK
+
+    guard = session.config.stash.get(_LEAK_GUARD_KEY, None)
+    if guard is None:
+        return
+    try:
+        report = guard.finish()
+        diagnostics = report.lines()
+    except LeakInspectionError as error:
+        report = None
+        diagnostics = (f"leak inspection failed: {error}",)
+    if not diagnostics:
+        return
+
+    sys.stderr.write("\nTEST RESOURCE LEAKS\n")
+    for diagnostic in diagnostics:
+        sys.stderr.write(f"- {diagnostic}\n")
+    if report is not None:
+        guard.cleanup(report)
+    if session.exitstatus in {
+        pytest.ExitCode.OK,
+        pytest.ExitCode.NO_TESTS_COLLECTED,
+    }:
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
 
 @pytest.fixture(scope="session")

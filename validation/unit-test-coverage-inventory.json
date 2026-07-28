@@ -1,0 +1,296 @@
+{
+  "schema_version": 1,
+  "requirement_id": "TEST-001",
+  "component_granularity": "Python module",
+  "categories": [
+    "domain",
+    "parser",
+    "policy",
+    "serializer",
+    "state-transition"
+  ],
+  "components": [
+    {
+      "component": "webhook_receiver_conformance.assertions.composite",
+      "categories": ["policy"],
+      "source": "src/webhook_receiver_conformance/assertions/composite.py",
+      "unit_tests": ["tests/unit/assertions/test_temporal.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.assertions.state",
+      "categories": ["policy"],
+      "source": "src/webhook_receiver_conformance/assertions/state.py",
+      "unit_tests": ["tests/unit/assertions/test_state.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.assertions.temporal",
+      "categories": ["policy"],
+      "source": "src/webhook_receiver_conformance/assertions/temporal.py",
+      "unit_tests": ["tests/unit/assertions/test_temporal.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.assertions.transport",
+      "categories": ["policy"],
+      "source": "src/webhook_receiver_conformance/assertions/transport.py",
+      "unit_tests": ["tests/unit/assertions/test_transport.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.cli.exit_codes",
+      "categories": ["policy"],
+      "source": "src/webhook_receiver_conformance/cli/exit_codes.py",
+      "unit_tests": [
+        "tests/unit/reporting/test_json_reports.py",
+        "tests/unit/reporting/test_summary.py"
+      ]
+    },
+    {
+      "component": "webhook_receiver_conformance.config.diagnostics",
+      "categories": ["domain", "serializer"],
+      "source": "src/webhook_receiver_conformance/config/diagnostics.py",
+      "unit_tests": ["tests/unit/config/test_diagnostics.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.config.loader",
+      "categories": ["parser"],
+      "source": "src/webhook_receiver_conformance/config/loader.py",
+      "unit_tests": ["tests/unit/config/test_loader.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.config.models",
+      "categories": ["domain", "parser", "serializer"],
+      "source": "src/webhook_receiver_conformance/config/models.py",
+      "unit_tests": ["tests/unit/config/test_models.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.config.schema",
+      "categories": ["parser", "policy"],
+      "source": "src/webhook_receiver_conformance/config/schema.py",
+      "unit_tests": [
+        "tests/unit/config/test_loader.py",
+        "tests/unit/config/test_models.py"
+      ]
+    },
+    {
+      "component": "webhook_receiver_conformance.determinism.generator",
+      "categories": ["domain"],
+      "source": "src/webhook_receiver_conformance/determinism/generator.py",
+      "unit_tests": ["tests/unit/determinism/test_generator.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.domain.enums",
+      "categories": ["domain"],
+      "source": "src/webhook_receiver_conformance/domain/enums.py",
+      "unit_tests": ["tests/unit/domain/test_models.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.domain.hashing",
+      "categories": ["domain", "serializer"],
+      "source": "src/webhook_receiver_conformance/domain/hashing.py",
+      "unit_tests": ["tests/unit/domain/test_identifiers.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.domain.identifiers",
+      "categories": ["domain", "parser"],
+      "source": "src/webhook_receiver_conformance/domain/identifiers.py",
+      "unit_tests": ["tests/unit/domain/test_identifiers.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.domain.models",
+      "categories": ["domain"],
+      "source": "src/webhook_receiver_conformance/domain/models.py",
+      "unit_tests": ["tests/unit/domain/test_models.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.errors",
+      "categories": ["domain", "serializer"],
+      "source": "src/webhook_receiver_conformance/errors.py",
+      "unit_tests": ["tests/unit/test_errors.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.fixtures.blobs",
+      "categories": ["domain"],
+      "source": "src/webhook_receiver_conformance/fixtures/blobs.py",
+      "unit_tests": ["tests/unit/fixtures/test_blobs.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.fixtures.loader",
+      "categories": ["parser"],
+      "source": "src/webhook_receiver_conformance/fixtures/loader.py",
+      "unit_tests": ["tests/unit/fixtures/test_loader.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.http.evidence",
+      "categories": ["domain", "serializer"],
+      "source": "src/webhook_receiver_conformance/http/evidence.py",
+      "unit_tests": ["tests/unit/http/test_executor.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.journal.transitions",
+      "categories": ["domain", "parser", "serializer", "state-transition"],
+      "source": "src/webhook_receiver_conformance/journal/transitions.py",
+      "unit_tests": ["tests/unit/journal/test_transitions.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.manifest.compiler",
+      "categories": ["serializer"],
+      "source": "src/webhook_receiver_conformance/manifest/compiler.py",
+      "unit_tests": ["tests/unit/manifest/test_compiler.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.manifest.loader",
+      "categories": ["parser"],
+      "source": "src/webhook_receiver_conformance/manifest/loader.py",
+      "unit_tests": ["tests/unit/manifest/test_loader.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.manifest.models",
+      "categories": ["domain", "parser", "serializer"],
+      "source": "src/webhook_receiver_conformance/manifest/models.py",
+      "unit_tests": ["tests/unit/manifest/test_compiler.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.mutations.base",
+      "categories": ["domain", "state-transition"],
+      "source": "src/webhook_receiver_conformance/mutations/base.py",
+      "unit_tests": ["tests/unit/mutations/test_pipeline.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.mutations.json_ops",
+      "categories": ["state-transition"],
+      "source": "src/webhook_receiver_conformance/mutations/json_ops.py",
+      "unit_tests": ["tests/unit/mutations/test_json_ops.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.mutations.pipeline",
+      "categories": ["policy", "state-transition"],
+      "source": "src/webhook_receiver_conformance/mutations/pipeline.py",
+      "unit_tests": ["tests/unit/mutations/test_pipeline.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.mutations.raw_ops",
+      "categories": ["state-transition"],
+      "source": "src/webhook_receiver_conformance/mutations/raw_ops.py",
+      "unit_tests": ["tests/unit/mutations/test_raw_ops.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.mutations.signature_ops",
+      "categories": ["state-transition"],
+      "source": "src/webhook_receiver_conformance/mutations/signature_ops.py",
+      "unit_tests": ["tests/unit/mutations/test_raw_ops.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.mutations.structural",
+      "categories": ["state-transition"],
+      "source": "src/webhook_receiver_conformance/mutations/structural.py",
+      "unit_tests": ["tests/unit/mutations/test_structural.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.network.addresses",
+      "categories": ["parser", "policy"],
+      "source": "src/webhook_receiver_conformance/network/addresses.py",
+      "unit_tests": ["tests/unit/network/test_policy.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.network.policy",
+      "categories": ["parser", "policy"],
+      "source": "src/webhook_receiver_conformance/network/policy.py",
+      "unit_tests": ["tests/unit/network/test_policy.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.observers.protocol",
+      "categories": ["domain", "parser", "policy", "serializer"],
+      "source": "src/webhook_receiver_conformance/observers/protocol.py",
+      "unit_tests": ["tests/unit/observers/test_protocol.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.recovery.models",
+      "categories": ["domain", "state-transition"],
+      "source": "src/webhook_receiver_conformance/recovery/models.py",
+      "unit_tests": ["tests/unit/recovery/test_policy.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.recovery.policy",
+      "categories": ["policy", "state-transition"],
+      "source": "src/webhook_receiver_conformance/recovery/policy.py",
+      "unit_tests": ["tests/unit/recovery/test_policy.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.reporting.html",
+      "categories": ["serializer"],
+      "source": "src/webhook_receiver_conformance/reporting/html.py",
+      "unit_tests": ["tests/unit/reporting/test_html.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.reporting.json_reports",
+      "categories": ["serializer"],
+      "source": "src/webhook_receiver_conformance/reporting/json_reports.py",
+      "unit_tests": ["tests/unit/reporting/test_json_reports.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.reporting.junit",
+      "categories": ["serializer"],
+      "source": "src/webhook_receiver_conformance/reporting/junit.py",
+      "unit_tests": ["tests/unit/reporting/test_junit.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.reporting.summary",
+      "categories": ["domain", "policy", "serializer"],
+      "source": "src/webhook_receiver_conformance/reporting/summary.py",
+      "unit_tests": ["tests/unit/reporting/test_summary.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.runtime.verdicts",
+      "categories": ["policy"],
+      "source": "src/webhook_receiver_conformance/runtime/verdicts.py",
+      "unit_tests": ["tests/unit/runtime/test_verdicts.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.scenario.models",
+      "categories": ["domain", "parser"],
+      "source": "src/webhook_receiver_conformance/scenario/models.py",
+      "unit_tests": ["tests/unit/scenario/test_models.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.scenario.validate",
+      "categories": ["parser", "policy"],
+      "source": "src/webhook_receiver_conformance/scenario/validate.py",
+      "unit_tests": ["tests/unit/scenario/test_validate.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.scheduler.queue",
+      "categories": ["domain", "state-transition"],
+      "source": "src/webhook_receiver_conformance/scheduler/queue.py",
+      "unit_tests": ["tests/unit/scheduler/test_queue.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.scheduler.retries",
+      "categories": ["policy"],
+      "source": "src/webhook_receiver_conformance/scheduler/retries.py",
+      "unit_tests": ["tests/unit/scheduler/test_retries.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.signatures.base",
+      "categories": ["domain", "policy", "serializer"],
+      "source": "src/webhook_receiver_conformance/signatures/base.py",
+      "unit_tests": ["tests/unit/signatures/test_hmac_generic.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.signatures.hmac_generic",
+      "categories": ["parser", "policy", "serializer"],
+      "source": "src/webhook_receiver_conformance/signatures/hmac_generic.py",
+      "unit_tests": ["tests/unit/signatures/test_hmac_generic.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.signatures.standard_webhooks",
+      "categories": ["parser", "policy", "serializer"],
+      "source": "src/webhook_receiver_conformance/signatures/standard_webhooks.py",
+      "unit_tests": ["tests/unit/signatures/test_standard_webhooks.py"]
+    },
+    {
+      "component": "webhook_receiver_conformance.signatures.stripe",
+      "categories": ["parser", "policy", "serializer"],
+      "source": "src/webhook_receiver_conformance/signatures/stripe.py",
+      "unit_tests": ["tests/unit/signatures/test_stripe.py"]
+    }
+  ]
+}

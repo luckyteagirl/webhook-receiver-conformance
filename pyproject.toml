@@ -40,9 +40,11 @@ reference = ["fastapi>=0.115"]
 [dependency-groups]
 dev = [
   "hypothesis>=6.112",
+  "psutil>=7.0",
   "pyright>=1.1.390",
   "pytest>=8.3",
   "ruff>=0.12",
+  "types-psutil>=7.0",
 ]
 
 [tool.hatch.build.targets.wheel]
