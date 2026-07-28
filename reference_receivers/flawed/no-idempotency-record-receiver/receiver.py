@@ -5,8 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-import threading
-from collections import Counter
+import sqlite3
 
 from reference_receivers.correct import (
     CorrectReferenceReceiver,
@@ -24,8 +23,19 @@ class NoIdempotencyRecordReceiver(CorrectReferenceReceiver):
 
     def __init__(self, **configuration: object) -> None:
         super().__init__(**configuration)
-        self._physical_effects: Counter[str] = Counter()
-        self._physical_effects_lock = threading.Lock()
+        connection = sqlite3.connect(self.database_path)
+        try:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS flawed_physical_effects (
+                    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_id TEXT NOT NULL
+                )
+                """
+            )
+            connection.commit()
+        finally:
+            connection.close()
 
     def handle(self, request: ReferenceRequest) -> ReferenceResponse:
         """Create a business effect for every authenticated physical delivery."""
@@ -33,8 +43,15 @@ class NoIdempotencyRecordReceiver(CorrectReferenceReceiver):
         if response.outcome in {ReferenceOutcome.ACCEPTED, ReferenceOutcome.DUPLICATE}:
             event_id = response.event_id
             if event_id is not None:
-                with self._physical_effects_lock:
-                    self._physical_effects[event_id] += 1
+                connection = sqlite3.connect(self.database_path)
+                try:
+                    connection.execute(
+                        "INSERT INTO flawed_physical_effects (event_id) VALUES (?)",
+                        (event_id,),
+                    )
+                    connection.commit()
+                finally:
+                    connection.close()
         return response
 
     def probe(self, request: ReferenceProbeRequest) -> ReferenceProbeResponse:
@@ -42,12 +59,23 @@ class NoIdempotencyRecordReceiver(CorrectReferenceReceiver):
         response = super().probe(request)
         if ObserverEvidenceName.EFFECT_COUNT not in request.evidence_names:
             return response
-        with self._physical_effects_lock:
-            count = (
-                sum(self._physical_effects[event_id] for event_id in request.event_ids)
-                if request.event_ids
-                else sum(self._physical_effects.values())
-            )
+        connection = sqlite3.connect(self.database_path)
+        try:
+            if request.event_ids:
+                placeholders = ",".join("?" for _ in request.event_ids)
+                row = connection.execute(
+                    f"""
+                    SELECT COUNT(*)
+                    FROM flawed_physical_effects
+                    WHERE event_id IN ({placeholders})
+                    """,  # noqa: S608
+                    request.event_ids,
+                ).fetchone()
+            else:
+                row = connection.execute("SELECT COUNT(*) FROM flawed_physical_effects").fetchone()
+            count = 0 if row is None else int(row[0])
+        finally:
+            connection.close()
         evidence = {**response.evidence, ObserverEvidenceName.EFFECT_COUNT.value: count}
         canonical = json.dumps(
             {"capabilities": list(response.capabilities), "evidence": evidence},

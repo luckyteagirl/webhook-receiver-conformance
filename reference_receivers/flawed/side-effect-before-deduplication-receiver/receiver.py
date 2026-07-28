@@ -55,6 +55,7 @@ class SideEffectBeforeDeduplicationReceiver(CorrectReferenceReceiver):
         self._physical_effects: Counter[str] = Counter()
         self._effect_lock = threading.Lock()
         self._crash_next = False
+        self._defect_event_ids: set[str] = set()
 
     def fail_next_after_effect(self) -> None:
         """Arm the deterministic failure boundary used by the corpus."""
@@ -67,9 +68,13 @@ class SideEffectBeforeDeduplicationReceiver(CorrectReferenceReceiver):
         if event_id is None:
             return super().handle(request)
         with self._effect_lock:
-            self._physical_effects[event_id] += 1
             should_crash = self._crash_next
             self._crash_next = False
+            defect_active = should_crash or event_id in self._defect_event_ids
+            if should_crash:
+                self._defect_event_ids.add(event_id)
+            if defect_active:
+                self._physical_effects[event_id] += 1
         if should_crash:
             raise SimulatedEffectCrashError
         return super().handle(request)
@@ -85,6 +90,8 @@ class SideEffectBeforeDeduplicationReceiver(CorrectReferenceReceiver):
                 if request.event_ids
                 else sum(self._physical_effects.values())
             )
+        if count == 0:
+            return response
         evidence = {**response.evidence, ObserverEvidenceName.EFFECT_COUNT.value: count}
         canonical = json.dumps(
             {"capabilities": list(response.capabilities), "evidence": evidence},

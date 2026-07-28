@@ -7,6 +7,7 @@ import json
 
 from reference_receivers.correct import (
     CorrectReferenceReceiver,
+    ReferenceOutcome,
     ReferenceRequest,
     ReferenceResponse,
 )
@@ -17,6 +18,9 @@ class SignatureAfterParseReceiver(CorrectReferenceReceiver):
 
     def handle(self, request: ReferenceRequest) -> ReferenceResponse:
         """Verify a lossy JSON reserialization instead of the received bytes."""
+        exact_response = super().handle(request)
+        if exact_response.outcome is not ReferenceOutcome.REJECTED:
+            return exact_response
         try:
             parsed: object = json.loads(request.body)
             normalized = json.dumps(
@@ -27,7 +31,7 @@ class SignatureAfterParseReceiver(CorrectReferenceReceiver):
                 allow_nan=False,
             ).encode()
         except (UnicodeDecodeError, ValueError):
-            return super().handle(request)
+            return exact_response
         return super().handle(
             ReferenceRequest(
                 request.profile,

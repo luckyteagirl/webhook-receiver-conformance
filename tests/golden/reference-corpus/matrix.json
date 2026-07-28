@@ -1,0 +1,76 @@
+{
+  "schema_version": "1.0",
+  "result_categories": ["pass", "receiver_failure"],
+  "receivers": [
+    {
+      "receiver_id": "REF-CORRECT-001",
+      "module": "reference_receivers.correct",
+      "class_name": "CorrectReferenceReceiver",
+      "primary_violated_requirements": [],
+      "expected_failures": []
+    },
+    {
+      "receiver_id": "FLAW-001",
+      "module": "reference_receivers.flawed.no-idempotency-record-receiver.receiver",
+      "class_name": "NoIdempotencyRecordReceiver",
+      "primary_violated_requirements": ["STATE-004", "ASSERT-004", "REL-007"],
+      "expected_failures": ["SCN-002", "SCN-003", "SCN-005", "SCN-013", "SCN-015"]
+    },
+    {
+      "receiver_id": "FLAW-002",
+      "module": "reference_receivers.flawed.check-then-insert-race-receiver.receiver",
+      "class_name": "CheckThenInsertRaceReceiver",
+      "primary_violated_requirements": ["SCHED-012", "ASSERT-004", "REL-007"],
+      "expected_failures": ["SCN-003"]
+    },
+    {
+      "receiver_id": "FLAW-004",
+      "module": "reference_receivers.flawed.acknowledge-before-commit-receiver.receiver",
+      "class_name": "AcknowledgeBeforeCommitReceiver",
+      "primary_violated_requirements": ["REL-002", "STATE-008"],
+      "expected_failures": ["SCN-005"]
+    },
+    {
+      "receiver_id": "FLAW-005",
+      "module": "reference_receivers.flawed.signature-after-parse-receiver.receiver",
+      "class_name": "SignatureAfterParseReceiver",
+      "primary_violated_requirements": ["SIG-002", "MUT-006"],
+      "expected_failures": ["SCN-011"]
+    },
+    {
+      "receiver_id": "FLAW-006",
+      "module": "reference_receivers.flawed.stale-signature-accepting-receiver.receiver",
+      "class_name": "StaleSignatureAcceptingReceiver",
+      "primary_violated_requirements": ["SIG-003", "SIG-006"],
+      "expected_failures": ["SCN-010"]
+    },
+    {
+      "receiver_id": "FLAW-007",
+      "module": "reference_receivers.flawed.side-effect-before-deduplication-receiver.receiver",
+      "class_name": "SideEffectBeforeDeduplicationReceiver",
+      "primary_violated_requirements": ["ASSERT-006", "TEST-007"],
+      "expected_failures": ["SCN-015"]
+    },
+    {
+      "receiver_id": "FLAW-008",
+      "module": "reference_receivers.flawed.order-assuming-receiver.receiver",
+      "class_name": "OrderAssumingReceiver",
+      "primary_violated_requirements": ["STATE-005", "SCHED-007", "ASSERT-005"],
+      "expected_failures": ["SCN-004"]
+    },
+    {
+      "receiver_id": "FLAW-009",
+      "module": "reference_receivers.flawed.sensitive-logging-receiver.receiver",
+      "class_name": "SensitiveLoggingReceiver",
+      "primary_violated_requirements": ["PRIV-001", "PRIV-002", "PRIV-003", "SEC-011"],
+      "expected_failures": ["SCN-016"]
+    },
+    {
+      "receiver_id": "FLAW-010",
+      "module": "reference_receivers.flawed.crash-after-effect-before-ack-receiver.receiver",
+      "class_name": "CrashAfterEffectBeforeAckReceiver",
+      "primary_violated_requirements": ["REL-002", "REL-007", "ASSERT-004"],
+      "expected_failures": ["SCN-005", "SCN-015"]
+    }
+  ]
+}

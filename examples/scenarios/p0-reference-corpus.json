@@ -1,0 +1,110 @@
+{
+  "schema_version": "1.0",
+  "network_policy": {
+    "allowed_hosts": [
+      "127.0.0.1",
+      "::1",
+      "localhost"
+    ],
+    "proxy_environment": "ignored",
+    "hosted_control_plane": false
+  },
+  "scenarios": [
+    {
+      "id": "SCN-001",
+      "name": "single-valid-delivery",
+      "operation": "single",
+      "requirements": ["FR-002", "HTTP-001", "SIG-001", "ASSERT-001"]
+    },
+    {
+      "id": "SCN-002",
+      "name": "sequential-duplicate",
+      "operation": "sequential_duplicate",
+      "requirements": ["STATE-004", "ASSERT-004", "REL-007"]
+    },
+    {
+      "id": "SCN-003",
+      "name": "concurrent-duplicate",
+      "operation": "concurrent_duplicate",
+      "requirements": ["SCHED-012", "ASSERT-004", "REL-007"]
+    },
+    {
+      "id": "SCN-004",
+      "name": "dependency-order-reversal",
+      "operation": "dependency_reversal",
+      "requirements": ["STATE-005", "SCHED-007", "ASSERT-005"]
+    },
+    {
+      "id": "SCN-005",
+      "name": "timeout-then-retry",
+      "operation": "timeout_retry",
+      "requirements": ["HTTP-006", "REL-002", "REL-007", "ASSERT-004"]
+    },
+    {
+      "id": "SCN-006",
+      "name": "connection-failure-then-retry",
+      "operation": "connection_retry",
+      "requirements": ["HTTP-007", "REPORT-006"]
+    },
+    {
+      "id": "SCN-007",
+      "name": "missing-signature",
+      "operation": "missing_signature",
+      "requirements": ["SIG-006", "ASSERT-003"]
+    },
+    {
+      "id": "SCN-008",
+      "name": "malformed-signature",
+      "operation": "malformed_signature",
+      "requirements": ["SIG-006", "REPORT-006"]
+    },
+    {
+      "id": "SCN-009",
+      "name": "wrong-key-signature",
+      "operation": "wrong_key",
+      "requirements": ["SIG-004", "SIG-006"]
+    },
+    {
+      "id": "SCN-010",
+      "name": "stale-timestamp",
+      "operation": "stale_timestamp",
+      "requirements": ["SIG-003", "SIG-006"]
+    },
+    {
+      "id": "SCN-011",
+      "name": "alter-after-signing",
+      "operation": "alter_after_signing",
+      "requirements": ["MUT-006", "SIG-002"]
+    },
+    {
+      "id": "SCN-012",
+      "name": "malformed-body-and-content-type",
+      "operation": "malformed_body",
+      "requirements": ["MUT-005", "HTTP-002", "REPORT-006"]
+    },
+    {
+      "id": "SCN-013",
+      "name": "receiver-restart-between-attempts",
+      "operation": "receiver_restart",
+      "requirements": ["STATE-008", "REL-007"]
+    },
+    {
+      "id": "SCN-014",
+      "name": "harness-crash-after-send",
+      "operation": "harness_crash",
+      "requirements": ["REL-002", "REL-003", "REL-006"]
+    },
+    {
+      "id": "SCN-015",
+      "name": "partial-processing-reference-hook",
+      "operation": "partial_processing",
+      "requirements": ["ASSERT-006", "TEST-007"]
+    },
+    {
+      "id": "SCN-016",
+      "name": "redaction-canary",
+      "operation": "redaction_canary",
+      "requirements": ["PRIV-001", "PRIV-002", "PRIV-003", "SEC-011"]
+    }
+  ]
+}
