@@ -60,6 +60,11 @@ jobs:
           python scripts/release_check.py policy
           --version "${{ steps.version.outputs.value }}"
           --exceptions .release/security-exceptions.json
+      - name: Enforce offline locked-dependency license policy
+        run: >-
+          python scripts/release_check.py licenses
+          --policy validation/dependency-license-policy.json
+          --output .release/dependency-license-inventory.json
 
   lint:
     name: Lint and format

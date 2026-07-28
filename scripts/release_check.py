@@ -1,5 +1,5 @@
 """Deterministic, offline-capable release policy and provenance checks."""
-# ruff: noqa: C901, D102, EM101, EM102, INP001, PLR0911, PLR0912, PLR2004, T201, TRY003
+# ruff: noqa: C901, D102, EM101, EM102, INP001, PLR0911, PLR0912, PLR0915, PLR2004, T201, TRY003
 
 from __future__ import annotations
 
@@ -30,6 +30,26 @@ _DIGEST: Final = re.compile(r"^sha256:([0-9a-f]{64})$")
 _CHANGELOG_FIELDS: Final = ("compatibility", "migration", "security", "schema")
 _EXCEPTION_FIELDS: Final = frozenset({"vulnerability_id", "owner", "expires", "reason"})
 _HIGH_SEVERITIES: Final = frozenset({"HIGH", "CRITICAL"})
+_LICENSE_POLICY_FIELDS: Final = frozenset(
+    {
+        "allowed_license_expressions",
+        "build_requirements",
+        "denied_license_expressions",
+        "lockfile_sha256",
+        "packages",
+        "schema_version",
+        "unknown_license_action",
+    }
+)
+_LICENSE_PACKAGE_FIELDS: Final = frozenset(
+    {"evidence", "license_expression", "name", "scopes", "version"}
+)
+_LICENSE_BUILD_FIELDS: Final = frozenset(
+    {"evidence", "license_expression", "lock_status", "name", "requirement"}
+)
+_LICENSE_SCOPES: Final = frozenset({"build", "dev", "reference", "runtime"})
+_BUILD_LOCK_STATUSES: Final = frozenset({"absent-from-lock", "present-in-lock"})
+_REQUIREMENT_NAME: Final = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?")
 
 
 class MalformedInputError(ValueError):
@@ -180,6 +200,142 @@ def check_vulnerability_reports(
         "high_severity_finding_count": len(findings),
         "report_count": len(reports),
         "status": "pass",
+    }
+
+
+def check_license_policy(
+    *,
+    lockfile: Path,
+    project: Path,
+    policy: Path,
+) -> dict[str, object]:
+    """Validate the closed offline license inventory against the exact uv lock."""
+    document = _json_object(policy)
+    if set(document) != _LICENSE_POLICY_FIELDS:
+        raise MalformedInputError(
+            "license policy fields must be exactly allowed_license_expressions, "
+            "build_requirements, denied_license_expressions, lockfile_sha256, packages, "
+            "schema_version, and unknown_license_action"
+        )
+    if document["schema_version"] != 1:
+        raise MalformedInputError("license policy schema_version must be 1")
+    unknown_action = document["unknown_license_action"]
+    if unknown_action != "deny":
+        raise MalformedInputError("license policy unknown_license_action must be deny")
+    expected_lock_digest = _required_text(
+        document["lockfile_sha256"],
+        "license policy lockfile_sha256",
+    )
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_lock_digest):
+        raise MalformedInputError("license policy lockfile_sha256 must be lowercase SHA-256")
+    actual_lock_digest = _file_sha256(lockfile)
+    if expected_lock_digest != actual_lock_digest:
+        raise PolicyViolationError("license inventory does not identify the current uv.lock digest")
+
+    allowed = frozenset(
+        _sorted_unique_text_list(
+            document["allowed_license_expressions"],
+            "license policy allowed_license_expressions",
+        )
+    )
+    denied = frozenset(
+        _sorted_unique_text_list(
+            document["denied_license_expressions"],
+            "license policy denied_license_expressions",
+        )
+    )
+    overlap = sorted(allowed.intersection(denied))
+    if overlap:
+        raise MalformedInputError(f"license allowlist and denylist overlap: {', '.join(overlap)}")
+
+    locked_scopes, locked_names = _locked_dependency_scopes(
+        lockfile=lockfile,
+        project=project,
+    )
+    package_entries = _license_package_entries(document["packages"])
+    missing = sorted(set(locked_scopes).difference(package_entries))
+    extra = sorted(set(package_entries).difference(locked_scopes))
+    if missing or extra:
+        details: list[str] = []
+        if missing:
+            details.append(
+                "missing " + ", ".join(f"{name}=={version}" for name, version in missing)
+            )
+        if extra:
+            details.append(
+                "not locked " + ", ".join(f"{name}=={version}" for name, version in extra)
+            )
+        raise PolicyViolationError("license package inventory mismatch: " + "; ".join(details))
+
+    denied_packages: list[str] = []
+    unknown_packages: list[str] = []
+    inventory: list[dict[str, object]] = []
+    scope_counts = dict.fromkeys(sorted(_LICENSE_SCOPES), 0)
+    for key in sorted(locked_scopes):
+        entry = package_entries[key]
+        expression = cast("str", entry["license_expression"])
+        classification = _license_classification(expression, allowed=allowed, denied=denied)
+        label = f"{key[0]}=={key[1]} ({expression})"
+        if classification == "denied":
+            denied_packages.append(label)
+        elif classification == "unknown":
+            unknown_packages.append(label)
+        scopes = cast("tuple[str, ...]", entry["scopes"])
+        expected_scopes = locked_scopes[key]
+        if scopes != expected_scopes:
+            raise PolicyViolationError(
+                f"license scopes for {key[0]}=={key[1]} are {list(scopes)!r}; "
+                f"expected {list(expected_scopes)!r}"
+            )
+        for scope in scopes:
+            scope_counts[scope] += 1
+        inventory.append(
+            {
+                "evidence": entry["evidence"],
+                "license_expression": expression,
+                "name": key[0],
+                "scopes": list(scopes),
+                "status": classification,
+                "version": key[1],
+            }
+        )
+
+    build_inventory = _license_build_entries(
+        document["build_requirements"],
+        project=project,
+        locked_names=locked_names,
+    )
+    for entry in build_inventory:
+        expression = cast("str", entry["license_expression"])
+        classification = _license_classification(expression, allowed=allowed, denied=denied)
+        label = f"{entry['requirement']} ({expression})"
+        if classification == "denied":
+            denied_packages.append(label)
+        elif classification == "unknown":
+            unknown_packages.append(label)
+        entry["status"] = classification
+
+    if denied_packages:
+        raise PolicyViolationError(
+            "denied dependency licenses: " + ", ".join(sorted(denied_packages))
+        )
+    if unknown_packages:
+        raise PolicyViolationError(
+            "unknown dependency licenses are denied: " + ", ".join(sorted(unknown_packages))
+        )
+    return {
+        "allowed_license_expressions": sorted(allowed),
+        "build_requirements": build_inventory,
+        "denied_license_expressions": sorted(denied),
+        "lockfile_sha256": actual_lock_digest,
+        "package_count": len(inventory),
+        "packages": inventory,
+        "scope_counts": scope_counts,
+        "status": "pass",
+        "unknown_license_action": unknown_action,
+        "unlocked_build_requirement_count": sum(
+            entry["lock_status"] == "absent-from-lock" for entry in build_inventory
+        ),
     }
 
 
@@ -415,6 +571,321 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _locked_dependency_scopes(
+    *,
+    lockfile: Path,
+    project: Path,
+) -> tuple[dict[tuple[str, str], tuple[str, ...]], frozenset[str]]:
+    lock = _toml_object(lockfile)
+    raw_packages = lock.get("package")
+    if not isinstance(raw_packages, list):
+        raise MalformedInputError("uv.lock must contain [[package]] entries")
+    packages: dict[tuple[str, str], dict[object, object]] = {}
+    by_name: dict[str, list[tuple[str, str]]] = {}
+    root: dict[object, object] | None = None
+    for index, raw in enumerate(cast("list[object]", raw_packages)):
+        if not isinstance(raw, dict):
+            raise MalformedInputError(f"uv.lock package[{index}] must be a table")
+        package = cast("dict[object, object]", raw)
+        name = _normalized_package_name(
+            _required_text(package.get("name"), f"uv.lock package[{index}].name")
+        )
+        version = _required_text(package.get("version"), f"uv.lock package {name}.version")
+        key = (name, version)
+        if key in packages:
+            raise MalformedInputError(f"duplicate uv.lock package: {name}=={version}")
+        packages[key] = package
+        by_name.setdefault(name, []).append(key)
+        source = package.get("source")
+        if isinstance(source, dict) and cast("dict[object, object]", source).get("editable") == ".":
+            if root is not None:
+                raise MalformedInputError("uv.lock contains multiple editable root packages")
+            root = package
+    if root is None:
+        raise MalformedInputError("uv.lock is missing the editable project root package")
+    root_key = (
+        _normalized_package_name(_required_text(root.get("name"), "uv.lock root package.name")),
+        _required_text(root.get("version"), "uv.lock root package.version"),
+    )
+    external = set(packages).difference({root_key})
+    scopes: dict[tuple[str, str], set[str]] = {key: set() for key in external}
+
+    seeds: dict[str, list[dict[object, object]]] = {
+        "runtime": _dependency_tables(root.get("dependencies", []), "root dependencies"),
+        "reference": _group_dependency_tables(
+            root.get("optional-dependencies", {}),
+            "root optional-dependencies",
+        ),
+        "dev": _group_dependency_tables(
+            root.get("dev-dependencies", {}),
+            "root dev-dependencies",
+        ),
+        "build": [],
+    }
+    project_document = _toml_object(project)
+    build_system = project_document.get("build-system")
+    if not isinstance(build_system, dict):
+        raise MalformedInputError("pyproject.toml is missing [build-system]")
+    for requirement in _sorted_unique_text_list(
+        cast("dict[object, object]", build_system).get("requires"),
+        "build-system.requires",
+        require_sorted=False,
+    ):
+        name = _requirement_package_name(requirement)
+        candidates = by_name.get(name, [])
+        if len(candidates) == 1:
+            seeds["build"].append({"name": name, "version": candidates[0][1]})
+        elif len(candidates) > 1:
+            raise MalformedInputError(
+                f"build requirement {requirement} matches multiple locked versions"
+            )
+
+    for scope, dependencies in seeds.items():
+        pending = [_resolve_locked_dependency(item, by_name) for item in dependencies]
+        while pending:
+            key = pending.pop()
+            if key not in external:
+                raise MalformedInputError(
+                    f"uv.lock dependency resolves outside external package set: {key[0]}=={key[1]}"
+                )
+            if scope in scopes[key]:
+                continue
+            scopes[key].add(scope)
+            pending.extend(
+                _resolve_locked_dependency(item, by_name)
+                for item in _dependency_tables(
+                    packages[key].get("dependencies", []),
+                    f"uv.lock package {key[0]} dependencies",
+                )
+            )
+    unreachable = sorted(key for key, values in scopes.items() if not values)
+    if unreachable:
+        raise PolicyViolationError(
+            "uv.lock contains dependencies unreachable from runtime, reference, dev, or build "
+            "roots: " + ", ".join(f"{name}=={version}" for name, version in unreachable)
+        )
+    return (
+        {key: tuple(sorted(values)) for key, values in scopes.items()},
+        frozenset(by_name),
+    )
+
+
+def _dependency_tables(value: object, field: str) -> list[dict[object, object]]:
+    if not isinstance(value, list):
+        raise MalformedInputError(f"{field} must be an array")
+    result: list[dict[object, object]] = []
+    for index, raw in enumerate(cast("list[object]", value)):
+        if not isinstance(raw, dict):
+            raise MalformedInputError(f"{field}[{index}] must be a table")
+        result.append(cast("dict[object, object]", raw))
+    return result
+
+
+def _group_dependency_tables(value: object, field: str) -> list[dict[object, object]]:
+    if not isinstance(value, dict):
+        raise MalformedInputError(f"{field} must be a table")
+    dependencies: list[dict[object, object]] = []
+    for group, raw in cast("dict[object, object]", value).items():
+        if not isinstance(group, str):
+            raise MalformedInputError(f"{field} group names must be text")
+        dependencies.extend(_dependency_tables(raw, f"{field}.{group}"))
+    return dependencies
+
+
+def _resolve_locked_dependency(
+    dependency: Mapping[object, object],
+    by_name: Mapping[str, list[tuple[str, str]]],
+) -> tuple[str, str]:
+    name = _normalized_package_name(
+        _required_text(dependency.get("name"), "uv.lock dependency.name")
+    )
+    version = dependency.get("version")
+    if version is not None:
+        key = (name, _required_text(version, f"uv.lock dependency {name}.version"))
+        if key not in by_name.get(name, []):
+            raise MalformedInputError(f"uv.lock dependency does not resolve: {key[0]}=={key[1]}")
+        return key
+    candidates = by_name.get(name, [])
+    if len(candidates) != 1:
+        raise MalformedInputError(f"uv.lock dependency {name} requires an exact version to resolve")
+    return candidates[0]
+
+
+def _license_package_entries(
+    value: object,
+) -> dict[tuple[str, str], dict[str, object]]:
+    if not isinstance(value, list):
+        raise MalformedInputError("license policy packages must be an array")
+    entries: dict[tuple[str, str], dict[str, object]] = {}
+    for index, raw in enumerate(cast("list[object]", value)):
+        if not isinstance(raw, dict):
+            raise MalformedInputError(f"license policy packages[{index}] must be an object")
+        item = cast("dict[object, object]", raw)
+        if set(item) != _LICENSE_PACKAGE_FIELDS:
+            raise MalformedInputError(
+                f"license policy packages[{index}] fields must be exactly evidence, "
+                "license_expression, name, scopes, and version"
+            )
+        raw_name = _required_text(item["name"], f"license policy packages[{index}].name")
+        name = _normalized_package_name(raw_name)
+        if raw_name != name:
+            raise MalformedInputError(
+                f"license policy packages[{index}].name must use normalized package spelling"
+            )
+        version = _required_text(item["version"], f"license policy packages[{index}].version")
+        scopes = _sorted_unique_text_list(
+            item["scopes"],
+            f"license policy packages[{index}].scopes",
+        )
+        if not scopes or not set(scopes).issubset(_LICENSE_SCOPES):
+            raise MalformedInputError(
+                f"license policy packages[{index}].scopes contains an unsupported scope"
+            )
+        key = (name, version)
+        if key in entries:
+            raise MalformedInputError(f"duplicate license inventory package: {name}=={version}")
+        entries[key] = {
+            "evidence": _required_text(
+                item["evidence"],
+                f"license policy packages[{index}].evidence",
+            ),
+            "license_expression": _required_text(
+                item["license_expression"],
+                f"license policy packages[{index}].license_expression",
+            ),
+            "scopes": tuple(scopes),
+        }
+    sorted_keys = list(entries)
+    if sorted_keys != sorted(sorted_keys):
+        raise MalformedInputError("license policy packages must be sorted by name and version")
+    return entries
+
+
+def _license_build_entries(
+    value: object,
+    *,
+    project: Path,
+    locked_names: frozenset[str],
+) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        raise MalformedInputError("license policy build_requirements must be an array")
+    project_document = _toml_object(project)
+    build_system = project_document.get("build-system")
+    if not isinstance(build_system, dict):
+        raise MalformedInputError("pyproject.toml is missing [build-system]")
+    declared = _sorted_unique_text_list(
+        cast("dict[object, object]", build_system).get("requires"),
+        "build-system.requires",
+        require_sorted=False,
+    )
+    entries: list[dict[str, object]] = []
+    for index, raw in enumerate(cast("list[object]", value)):
+        if not isinstance(raw, dict):
+            raise MalformedInputError(
+                f"license policy build_requirements[{index}] must be an object"
+            )
+        item = cast("dict[object, object]", raw)
+        if set(item) != _LICENSE_BUILD_FIELDS:
+            raise MalformedInputError(
+                f"license policy build_requirements[{index}] fields must be exactly evidence, "
+                "license_expression, lock_status, name, and requirement"
+            )
+        requirement = _required_text(
+            item["requirement"],
+            f"license policy build_requirements[{index}].requirement",
+        )
+        name = _normalized_package_name(
+            _required_text(
+                item["name"],
+                f"license policy build_requirements[{index}].name",
+            )
+        )
+        if name != _requirement_package_name(requirement):
+            raise MalformedInputError(
+                f"license policy build requirement {requirement} has mismatched name {name}"
+            )
+        lock_status = _required_text(
+            item["lock_status"],
+            f"license policy build_requirements[{index}].lock_status",
+        )
+        if lock_status not in _BUILD_LOCK_STATUSES:
+            raise MalformedInputError(
+                f"license policy build_requirements[{index}].lock_status is unsupported"
+            )
+        actual_status = "present-in-lock" if name in locked_names else "absent-from-lock"
+        if lock_status != actual_status:
+            raise PolicyViolationError(
+                f"build requirement {requirement} lock status is {actual_status}, "
+                f"inventory records {lock_status}"
+            )
+        entries.append(
+            {
+                "evidence": _required_text(
+                    item["evidence"],
+                    f"license policy build_requirements[{index}].evidence",
+                ),
+                "license_expression": _required_text(
+                    item["license_expression"],
+                    f"license policy build_requirements[{index}].license_expression",
+                ),
+                "lock_status": lock_status,
+                "name": name,
+                "requirement": requirement,
+            }
+        )
+    requirements = [cast("str", entry["requirement"]) for entry in entries]
+    if requirements != sorted(requirements):
+        raise MalformedInputError("license policy build_requirements must be sorted by requirement")
+    if requirements != sorted(declared):
+        raise PolicyViolationError(
+            "license build requirement inventory does not match build-system.requires"
+        )
+    return entries
+
+
+def _license_classification(
+    expression: str,
+    *,
+    allowed: frozenset[str],
+    denied: frozenset[str],
+) -> str:
+    if expression in denied:
+        return "denied"
+    if expression in allowed:
+        return "allowed"
+    return "unknown"
+
+
+def _sorted_unique_text_list(
+    value: object,
+    field: str,
+    *,
+    require_sorted: bool = True,
+) -> list[str]:
+    if not isinstance(value, list):
+        raise MalformedInputError(f"{field} must be an array")
+    result = [
+        _required_text(item, f"{field}[{index}]")
+        for index, item in enumerate(cast("list[object]", value))
+    ]
+    if len(result) != len(set(result)):
+        raise MalformedInputError(f"{field} must not contain duplicates")
+    if require_sorted and result != sorted(result):
+        raise MalformedInputError(f"{field} must be sorted")
+    return result
+
+
+def _normalized_package_name(value: str) -> str:
+    return re.sub(r"[-_.]+", "-", value).casefold()
+
+
+def _requirement_package_name(requirement: str) -> str:
+    match = _REQUIREMENT_NAME.match(requirement)
+    if match is None:
+        raise MalformedInputError(f"cannot identify build requirement name: {requirement}")
+    return _normalized_package_name(match.group())
+
+
 def _required_text(value: object, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise MalformedInputError(f"{field} must be nonempty text")
@@ -502,6 +973,19 @@ def _parser() -> argparse.ArgumentParser:
         default=datetime.now(tz=UTC).date(),
     )
 
+    licenses = subparsers.add_parser(
+        "licenses",
+        help="enforce the offline locked-dependency license inventory",
+    )
+    licenses.add_argument("--lockfile", type=Path, default=Path("uv.lock"))
+    licenses.add_argument("--project", type=Path, default=Path("pyproject.toml"))
+    licenses.add_argument(
+        "--policy",
+        type=Path,
+        default=Path("validation/dependency-license-policy.json"),
+    )
+    licenses.add_argument("--output", type=Path)
+
     sbom = subparsers.add_parser("sbom", help="create an SPDX release SBOM")
     _add_subject_arguments(sbom)
     sbom.add_argument("--lockfile", type=Path, default=Path("uv.lock"))
@@ -535,6 +1019,15 @@ def _execute(options: argparse.Namespace) -> dict[str, object]:
             exceptions=options.exceptions,
             as_of=options.as_of,
         )
+    if options.command == "licenses":
+        result = check_license_policy(
+            lockfile=options.lockfile,
+            project=options.project,
+            policy=options.policy,
+        )
+        if options.output is not None:
+            _write_json(options.output, result)
+        return result
     subject = _subject_from_options(options)
     if options.command == "sbom":
         document = make_spdx(subject, lockfile=options.lockfile)

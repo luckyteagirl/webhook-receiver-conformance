@@ -1,5 +1,5 @@
 """Cross-platform GitHub Action adapter with sanitized artifact staging."""
-# ruff: noqa: C901, E501, EM101, EM102, INP001, PLR2004, S603, S607, SIM105, T201, TRY003, TRY004, TRY300
+# ruff: noqa: C901, EM101, EM102, INP001, PLR2004, S603, S607, SIM105, T201, TRY003, TRY004, TRY300
 
 from __future__ import annotations
 
@@ -30,11 +30,15 @@ _EXIT_CATEGORIES: Final = {
 }
 _SAFE_ARTIFACT_NAMES: Final = frozenset(
     {
+        "assertions.jsonl",
         "deliveries.jsonl",
         "effective-configuration.json",
         "junit.xml",
+        "observations.jsonl",
         "plan-preview.json",
         "report.html",
+        "result-summary.json",
+        "results.html",
         "run-manifest.json",
         "run-state.json",
         "summary.json",
@@ -77,9 +81,8 @@ def main(environ: Mapping[str, str] | None = None) -> int:
             document,
             include_raw=_boolean_input(source, "INCLUDE_RAW_ARTIFACTS"),
         )
-        category = (
-            _document_string(document, "verdict")
-            or _EXIT_CATEGORIES.get(completed.returncode, "harness_error")
+        category = _document_string(document, "verdict") or _EXIT_CATEGORIES.get(
+            completed.returncode, "harness_error"
         )
         outputs = {
             "run-id": _document_string(document, "run_id") or "",
@@ -239,7 +242,9 @@ def _write_summary(
 
 
 def _setup_failure(source: Mapping[str, str], message: str) -> int:
-    safe = "".join(character for character in message if ord(character) >= 32 and ord(character) != 127)
+    safe = "".join(
+        character for character in message if ord(character) >= 32 and ord(character) != 127
+    )
     print(f"::error title=Webhook conformance action setup::{safe}", file=sys.stderr)
     outputs = {
         "run-id": "",
