@@ -206,3 +206,22 @@ def test_release_publish_job_has_every_required_dag_prerequisite() -> None:
         "sbom",
         "provenance",
     }
+
+
+def test_stable_release_mutation_gate_is_explicit_and_v0_1_is_deferred() -> None:
+    checklist = " ".join(
+        ROOT.joinpath("checklists/release-readiness.md").read_text(encoding="utf-8").split()
+    )
+
+    assert "stable 1.0 release" in checklist
+    assert "90% killed-or-timeout mutants" in checklist
+    assert "journal/state transition" in checklist
+    assert "destination-policy and public-preflight" in checklist
+    assert "signature" in checklist
+    assert "report-redaction" in checklist
+    assert "equivalent" in checklist
+    assert "additional-test-required" in checklist
+    assert "accepted-low-impact" in checklist
+    assert "Unreviewed survivors fail the gate." in checklist
+    assert "Version 0.1.0 may record this stable-1.0 gate as deferred" in checklist
+    assert "may not mark it as executed" in checklist
