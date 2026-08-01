@@ -2079,10 +2079,14 @@ def test_full_integrity_check_rejects_physically_inconsistent_btree(
     )
     corruptor.execute("PRAGMA writable_schema = OFF")
     corruptor.execute(f"PRAGMA schema_version = {schema_version + 1}")
-    integrity_rows = tuple(
-        str(row[0]) for row in corruptor.execute("PRAGMA integrity_check").fetchall()
-    )
-    assert integrity_rows != ("ok",)
+    try:
+        integrity_rows = tuple(
+            str(row[0]) for row in corruptor.execute("PRAGMA integrity_check").fetchall()
+        )
+    except sqlite3.DatabaseError:
+        pass
+    else:
+        assert integrity_rows != ("ok",)
     with pytest.raises(JournalIntegrityError, match="integrity_check"):
         validate_migration_output(corruptor)
     corruptor.close()

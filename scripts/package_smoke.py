@@ -23,6 +23,8 @@ _DYNAMIC_MANIFEST_KEYS: Final = frozenset({"created_at", "environment", "manifes
 _DYNAMIC_TOOL_KEYS: Final = frozenset({"python"})
 _UNSUPPORTED_EXIT: Final = 6
 _SMOKE_PORT: Final = 38_765
+_DIAGNOSTIC_LIMIT: Final = 8_192
+_DIAGNOSTIC_HALF: Final = _DIAGNOSTIC_LIMIT // 2
 
 
 class _Receiver(BaseHTTPRequestHandler):
@@ -89,7 +91,7 @@ def smoke_artifact(
         raise RuntimeError("uv is required for package smoke tests")
     artifact = artifact.resolve(strict=True)
     artifact_digest = _file_digest(artifact)
-    with tempfile.TemporaryDirectory(prefix="webhook-package-smoke-") as temporary:
+    with tempfile.TemporaryDirectory(prefix=".smoke-package-", dir=Path.cwd()) as temporary:
         root = Path(temporary)
         environment = root / "environment"
         _run([uv, "venv", "--python", python, str(environment)])
@@ -141,33 +143,25 @@ def smoke_artifact(
             )
         if any(project.rglob("run.sqlite3")):
             raise RuntimeError("unsupported schema created a run database")
-        server = _SmokeServer(("127.0.0.1", _SMOKE_PORT), _Receiver)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        try:
-            project.joinpath(".webhook-conformance").mkdir(mode=0o700)
-            environment_variables = {
-                **os.environ,
-                "NO_COLOR": "1",
-                "WEBHOOK_TEST_SECRET": "package-smoke-local-secret",
-            }
-            result = _json_command(
-                [
-                    str(command),
-                    "--json",
-                    "run",
-                    "--config",
-                    str(config),
-                    "--output",
-                    ".webhook-conformance/package-smoke",
-                ],
-                cwd=project,
-                env=environment_variables,
-            )
-        finally:
-            server.shutdown()
-            server.server_close()
-            thread.join(timeout=5)
+        project.joinpath(".webhook-conformance").mkdir(mode=0o700)
+        environment_variables = {
+            **os.environ,
+            "NO_COLOR": "1",
+            "WEBHOOK_TEST_SECRET": "package-smoke-local-secret",
+        }
+        result = _json_command(
+            [
+                str(command),
+                "--json",
+                "run",
+                "--config",
+                str(config),
+                "--output",
+                ".webhook-conformance/package-smoke",
+            ],
+            cwd=project,
+            env=environment_variables,
+        )
         if result.get("verdict") != "pass":
             raise RuntimeError("minimal local package run did not pass")
         run_directory_value = result.get("run_directory")
@@ -247,7 +241,12 @@ def _run(
     )
     if completed.returncode != 0:
         diagnostic = completed.stderr.strip() or completed.stdout.strip()
-        raise RuntimeError(f"command failed with exit {completed.returncode}: {diagnostic[:4096]}")
+        if len(diagnostic) > _DIAGNOSTIC_LIMIT:
+            diagnostic = (
+                f"{diagnostic[:_DIAGNOSTIC_HALF]}\n... diagnostic truncated ...\n"
+                f"{diagnostic[-_DIAGNOSTIC_HALF:]}"
+            )
+        raise RuntimeError(f"command failed with exit {completed.returncode}: {diagnostic}")
     return completed
 
 
@@ -284,14 +283,22 @@ def _parser() -> argparse.ArgumentParser:
 def main(arguments: Sequence[str] | None = None) -> int:
     """Run requested smoke checks and emit one stable JSON document."""
     options = _parser().parse_args(arguments)
-    results = [
-        smoke_artifact(
-            artifact,
-            python=options.python,
-            exercise_runners=options.exercise_runners,
-        )
-        for artifact in options.artifact
-    ]
+    server = _SmokeServer(("127.0.0.1", _SMOKE_PORT), _Receiver)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        results = [
+            smoke_artifact(
+                artifact,
+                python=options.python,
+                exercise_runners=options.exercise_runners,
+            )
+            for artifact in options.artifact
+        ]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
     digests = {str(result["manifest_digest"]) for result in results}
     if len(digests) != 1:
         raise RuntimeError("wheel and sdist produced different normalized manifests")

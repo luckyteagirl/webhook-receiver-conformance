@@ -374,6 +374,7 @@ app = typer.Typer(
     help="Compile and run local webhook receiver conformance scenarios.",
     no_args_is_help=True,
     add_completion=False,
+    rich_markup_mode=None,
     pretty_exceptions_enable=False,
 )
 

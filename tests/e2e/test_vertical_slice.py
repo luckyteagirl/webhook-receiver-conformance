@@ -397,7 +397,7 @@ def _assert_journal(result: VerticalSliceRunResult) -> None:
 
 
 def test_run_help_describes_the_durable_local_job() -> None:
-    app = typer.Typer(add_completion=False)
+    app = typer.Typer(add_completion=False, rich_markup_mode=None)
 
     def should_not_execute(request: RunCommandRequest) -> NoReturn:
         del request
