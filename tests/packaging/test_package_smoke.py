@@ -40,11 +40,14 @@ def test_workflow_covers_every_supported_platform_and_python() -> None:
         ),
     )
     jobs = cast("Mapping[str, object]", workflow["jobs"])
+    triggers = cast("Mapping[str, object]", workflow["on"])
     job = cast("Mapping[str, object]", jobs["package-smoke"])
     strategy = cast("Mapping[str, object]", job["strategy"])
     matrix = cast("Mapping[str, list[str]]", strategy["matrix"])
     assert matrix["os"] == ["ubuntu-24.04", "macos-14", "windows-2025"]
     assert matrix["python"] == ["3.12", "3.13", "3.14"]
+    assert triggers["push"] == {"branches": ["main"]}
+    assert "pull_request" in triggers
     assert "continue-on-error" not in job
     text = ROOT.joinpath(".github/workflows/package-test.yml").read_text(encoding="utf-8")
     assert "pipx==1.7.1" in text
