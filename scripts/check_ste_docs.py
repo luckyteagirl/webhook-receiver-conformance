@@ -18,6 +18,8 @@ STE_DOCUMENTS: Final = (
     Path("docs/documentation-style.md"),
     Path("docs/github-action.md"),
     Path("docs/github-release-readiness.md"),
+    Path("validation/final-scorecard.md"),
+    Path("validation/unresolved-findings.md"),
 )
 _FENCE = re.compile(r"^\s*(```|~~~)")
 _HEADING = re.compile(r"^\s*#{1,6}\s+")

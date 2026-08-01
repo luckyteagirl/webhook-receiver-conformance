@@ -1,58 +1,61 @@
-# Final Scorecard
+# Final scorecard
 
 ## Verdict
 
-**LOCAL IMPLEMENTATION COMPLETE; PUBLIC RELEASE NOT CERTIFIED**
+**GITHUB REPOSITORY READY. PUBLIC PACKAGE RELEASE BLOCKED.**
 
-The complete local harness is implemented at commit
-`58fc1342ded1e2a568d96aca756333f14f2a87f3`. Its locked tests, crash matrix,
-security policy, package installation matrix, container contract, and local
-execution gates pass. No repository was published, no artifact was uploaded,
-and no public webhook target was contacted.
+The release candidate passes local and hosted repository gates. PyPI trusted-publisher configuration blocks the first public package release.
 
-## Implementation gates
+No release tag, PyPI distribution, or GHCR image exists.
+
+## Candidate identity
+
+| Subject | Value |
+| --- | --- |
+| Repository | `luckyteagirl/webhook-receiver-conformance` |
+| Implementation commit | `924ef205ff57fac5973713944b2f2783770ba42e` |
+| Package version | `0.1.0` |
+| Python versions | CPython 3.12, 3.13, and 3.14 |
+
+## Verification gates
 
 | Gate | Result | Evidence |
 | --- | --- | --- |
-| Windows full suite | PASS | CPython 3.12.13: 3,226 passed, 21 skipped, 0 failed in 536.96 s |
-| Native Linux full suite | PASS | Ubuntu 26.04 WSL2, CPython 3.12.13: 3,212 passed, 35 skipped, 0 failed in 333.49 s |
-| Static analysis | PASS | Ruff check, Ruff format, and Pyright (0 errors) |
+| Locked local suite | PASS | 3,233 passed, 26 skipped, 0 failed |
+| Static analysis | PASS | Ruff check, Ruff format, and Pyright report no error |
 | Artifact validation | PASS | `scripts/validate_artifacts.py` |
-| Crash consistency | PASS | 16/16 P0 boundaries, 20 evidence nodes, schema migrations 1-4 |
-| Security policy | PASS | 0 approved exceptions; 0 high-severity findings |
-| Dependency licenses | PASS | 38 locked packages allowed; unknown licenses denied |
-| Performance | PASS | All six authoritative P0 budgets and 13 performance tests |
-| TASK-0810 convergence | PASS | All 14 exact VT records generated and validated against the implementation commit |
+| Package build | PASS | `uv build` creates the wheel and source distribution |
+| Hosted CI | PASS | [CI run 30696252141](https://github.com/luckyteagirl/webhook-receiver-conformance/actions/runs/30696252141) |
+| Hosted package matrix | PASS | [Package run 30696252128](https://github.com/luckyteagirl/webhook-receiver-conformance/actions/runs/30696252128) |
+| Hosted release dry run | PASS | [Release run 30696255381](https://github.com/luckyteagirl/webhook-receiver-conformance/actions/runs/30696255381) |
+| Vulnerability policy | PASS | Trivy reports no unapproved high or critical finding |
+| Secret scan | PASS | Gitleaks 8.30.1 finds no unresolved secret in history or tracked files |
+| Repository controls | PASS | GitHub security controls operate, and the default-branch ruleset exists |
 
 ## Installable artifacts
 
 | Subject | Digest | Result |
 | --- | --- | --- |
-| Wheel | `sha256:384d9bd9816f6a03b7115a7eb45a366da03cd61486d39aab75d4657a1f4f89dd` | SBOM, local digest statement, and verification pass |
-| Source distribution | `sha256:64fd9a5c3851ae1e4a01f15977afd387536aadbc498d4dde93ea62597f65deff` | SBOM, local digest statement, and verification pass |
-| OCI image manifest | `sha256:e74e6b9a466c293222deae4214e9ca04a35b010fc7b55f4d8d9ef1e2001bcbc5` | Non-root/read-only execution, SBOM, local digest statement, and verification pass |
+| Wheel | `sha256:d8fb2805d580bd78d5d37762f85827c28badfe906b21cd42373db69905662f74` | Release dry-run build and package checks pass |
+| Source distribution | `sha256:ec93308527361a3ba090e1b97f21e566b3af78006176a516931fd9fd4215f447` | Release dry-run build and package checks pass |
+| Container archive | `sha256:e44e36d53e0cc20fe27cb6fc17a0f8f209ec72e4a7f5225b487cbfd09ef5e3ba` | Container contract, Trivy, SBOM, and digest checks pass |
+| Normalized manifest | `sha256:178dc7ee90d54e25ff4e8bd498126a95e7694e2f52644875dc3af9d313d35099` | Installed-artifact checks agree |
 
-Fresh wheel and source-distribution installations passed on CPython 3.12.13,
-3.13.9, and 3.14.6. Every installation executed the installed console script
-against a loopback receiver, returned a `pass` verdict, rejected an unsupported
-schema with exit code 6, and produced the same normalized manifest digest:
-`sha256:66c361e5c82d111575e14811d86e3ed7f03eb3a13018aa4d5d5c30ac26681e35`.
-Both `uvx` and `pipx` reported package version 0.1.0.
+## GitHub controls
 
-## Quality-attribute measurements
+The repository enables private vulnerability reports, secret scanning, push protection, and Dependabot security updates.
 
-| Metric | Observed | Authoritative budget | Result |
-| --- | ---: | ---: | --- |
-| Warm startup p95 | 247.3161 ms | 1,000 ms | PASS |
-| Plan 100 events / 1,000 attempts p95 | 811.5099 ms | 2,000 ms | PASS |
-| Peak planning RSS | 98.503906 MiB | 256 MiB | PASS |
-| Journal growth per terminal attempt | 784 bytes | 32,768 bytes | PASS |
-| All-format report regeneration p95 | 111.4152 ms | 5,000 ms | PASS |
-| Cancellation cleanup | 0.5576 ms | 5,000 ms | PASS |
+The default-branch ruleset requires pull requests, resolved conversations, linear history, and 19 CI checks.
 
-## Release boundary
+GitHub Actions use read-only default permissions. Workflows cannot approve pull requests.
 
-This scorecard certifies the local implementation and artifacts only. Hosted
-multi-OS CI, public registry scans, signed hosted attestations, OIDC publication,
-GitHub release verification, and public upload steps were intentionally not run.
-Those external gates remain prerequisites for any public release claim.
+## Publication boundary
+
+Configure this pending publisher in the PyPI project settings:
+
+- Owner: `luckyteagirl`
+- Repository: `webhook-receiver-conformance`
+- Workflow: `release.yml`
+- Environment: `pypi`
+
+After this configuration, create the `v0.1.0` GitHub release. The release workflow will publish and verify PyPI, GHCR, SBOM, and provenance subjects.
