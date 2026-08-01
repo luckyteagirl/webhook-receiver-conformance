@@ -45,4 +45,4 @@ jobs:
           --artifact dist/webhook_receiver_conformance-0.1.0.tar.gz
           --python "${{ matrix.python }}"
           --exercise-runners
-          --expected-digest sha256:66c361e5c82d111575e14811d86e3ed7f03eb3a13018aa4d5d5c30ac26681e35
+          --expected-digest sha256:178dc7ee90d54e25ff4e8bd498126a95e7694e2f52644875dc3af9d313d35099

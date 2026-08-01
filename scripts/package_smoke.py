@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 _DYNAMIC_MANIFEST_KEYS: Final = frozenset({"created_at", "environment", "manifest_id"})
 _DYNAMIC_TOOL_KEYS: Final = frozenset({"python"})
 _UNSUPPORTED_EXIT: Final = 6
+_SMOKE_PORT: Final = 38_765
 
 
 class _Receiver(BaseHTTPRequestHandler):
@@ -100,11 +101,24 @@ def smoke_artifact(
             raise RuntimeError("installed package reported an unexpected version")
         project = root / "project"
         _run([str(command), "init", str(project)])
+        config = project / "webhook-conformance.yaml"
+        config.write_text(
+            config.read_text(encoding="utf-8")
+            .replace(
+                "http://127.0.0.1:8000",
+                f"http://127.0.0.1:{_SMOKE_PORT}",
+            )
+            .replace("allowed_ports: [8000]", f"allowed_ports: [{_SMOKE_PORT}]"),
+            encoding="utf-8",
+            newline="\n",
+        )
         unsupported = project / "unsupported.yaml"
         unsupported.write_text(
-            project.joinpath("webhook-conformance.yaml")
-            .read_text(encoding="utf-8")
-            .replace("schema_version: 1", "schema_version: 2", 1),
+            config.read_text(encoding="utf-8").replace(
+                "schema_version: 1",
+                "schema_version: 2",
+                1,
+            ),
             encoding="utf-8",
             newline="\n",
         )
@@ -119,14 +133,18 @@ def smoke_artifact(
             timeout=60,
         )
         if unsupported_result.returncode != _UNSUPPORTED_EXIT:
-            raise RuntimeError("unsupported schema did not exit 6")
+            diagnostic = unsupported_result.stderr.strip() or unsupported_result.stdout.strip()
+            raise RuntimeError(
+                "unsupported schema exited "
+                f"{unsupported_result.returncode}, expected {_UNSUPPORTED_EXIT}: "
+                f"{diagnostic[:4096]}"
+            )
         if any(project.rglob("run.sqlite3")):
             raise RuntimeError("unsupported schema created a run database")
-        server = _SmokeServer(("127.0.0.1", 8000), _Receiver)
+        server = _SmokeServer(("127.0.0.1", _SMOKE_PORT), _Receiver)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
-            config = project / "webhook-conformance.yaml"
             project.joinpath(".webhook-conformance").mkdir(mode=0o700)
             environment_variables = {
                 **os.environ,

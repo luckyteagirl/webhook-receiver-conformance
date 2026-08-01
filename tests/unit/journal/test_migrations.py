@@ -570,6 +570,17 @@ def _install_path_replacement_race(
     return state
 
 
+def _hide_descriptor_namespaces(monkeypatch: pytest.MonkeyPatch) -> None:
+    original_exists = Path.exists
+
+    def exists_without_descriptor_namespace(path: Path) -> bool:
+        if path.parent in {Path("/proc/self/fd"), Path("/dev/fd")}:
+            return False
+        return original_exists(path)
+
+    monkeypatch.setattr(Path, "exists", exists_without_descriptor_namespace)
+
+
 def test_golden_empty_database_migrates_through_frozen_v1_to_v4(tmp_path: Path) -> None:
     database = tmp_path / JOURNAL_FILENAME
     assert len(GOLDEN_V0_IMAGE) == 4096
@@ -1702,6 +1713,47 @@ def test_two_executions_create_distinct_run_directories_and_databases(
     second_connection = open_journal_database(second.database_path)
     first_connection.close()
     second_connection.close()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX path fallback only")
+def test_posix_path_fallback_creates_and_opens_exact_database(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _hide_descriptor_namespaces(monkeypatch)
+    database = tmp_path / JOURNAL_FILENAME
+    connection = create_journal_database(database, clock=lambda: FIXED_CLOCK)
+    connection.close()
+    reopened = open_journal_database(database)
+    try:
+        assert reopened.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    finally:
+        reopened.close()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX path fallback only")
+def test_posix_path_fallback_rejects_path_replacement_race(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _hide_descriptor_namespaces(monkeypatch)
+    database = tmp_path / JOURNAL_FILENAME
+    displaced = tmp_path / "guarded-original.sqlite3"
+    victim = tmp_path / "victim.sqlite3"
+    victim_bytes = b"do-not-overwrite-victim"
+    victim.write_bytes(victim_bytes)
+    race = _install_path_replacement_race(
+        monkeypatch,
+        target=database,
+        displaced=displaced,
+        victim=victim,
+    )
+
+    with pytest.raises(JournalPathError):
+        create_journal_database(database, clock=lambda: FIXED_CLOCK)
+    assert race == {"attempted": True, "blocked": False}
+    assert database.read_bytes() == victim_bytes
+    assert displaced.is_file()
 
 
 def test_explicit_run_id_cannot_reuse_existing_database(tmp_path: Path) -> None:

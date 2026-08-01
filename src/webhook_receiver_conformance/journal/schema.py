@@ -411,7 +411,7 @@ class _FileGuard:
 
 
 class _BoundConnection(sqlite3.Connection):
-    """SQLite connection whose database file identity cannot be path-reopened."""
+    """SQLite connection that retains and verifies one database file identity."""
 
     _journal_guard: _FileGuard | None = None
     _journal_path: Path | None = None
@@ -1289,8 +1289,7 @@ def _posix_file_guard(path: Path, descriptor: int) -> _FileGuard:
         except OSError:
             continue
     if connect_target is None:
-        message = "this POSIX platform has no verified descriptor-bound SQLite path"
-        raise JournalPathError(message)
+        connect_target = intended_path
     return _FileGuard(
         path=Path(intended_path),
         connect_target=connect_target,

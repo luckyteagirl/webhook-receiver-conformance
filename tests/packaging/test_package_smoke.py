@@ -53,7 +53,7 @@ def test_workflow_covers_every_supported_platform_and_python() -> None:
     assert "pipx==1.7.1" in text
     assert "--exercise-runners" in text
     assert (
-        "--expected-digest sha256:66c361e5c82d111575e14811d86e3ed7f03eb3a13018aa4d5d5c30ac26681e35"
+        "--expected-digest sha256:178dc7ee90d54e25ff4e8bd498126a95e7694e2f52644875dc3af9d313d35099"
     ) in text
     assert "@11bd71901bbe5b1630ceea73d27597364c9af683" in text
     assert "@42375524e23c412d93fb67b49958b491fce71c38" in text
