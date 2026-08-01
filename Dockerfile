@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM python:3.12.11-slim-bookworm@sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7 AS build
+FROM python:3.12.13-alpine3.23@sha256:601d3d3797e90e2534782e69c85fafb7971b43f24c7b1b079b7e48dd435e458d AS build
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -11,7 +11,7 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 RUN python -m pip wheel --wheel-dir /wheels .
 
-FROM python:3.12.11-slim-bookworm@sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7 AS runtime
+FROM python:3.12.13-alpine3.23@sha256:601d3d3797e90e2534782e69c85fafb7971b43f24c7b1b079b7e48dd435e458d AS runtime
 
 ARG OCI_CREATED="1970-01-01T00:00:00Z"
 ARG OCI_REVISION="local"
@@ -33,8 +33,8 @@ ENV HOME=/home/webhook \
     PYTHONUNBUFFERED=1 \
     WEBHOOK_CONFORMANCE_ARTIFACT_ROOT=/artifacts
 
-RUN groupadd --gid 65532 webhook \
-    && useradd --uid 65532 --gid 65532 --create-home --home-dir /home/webhook webhook \
+RUN addgroup -g 65532 -S webhook \
+    && adduser -u 65532 -S -D -H -h /home/webhook -G webhook webhook \
     && install -d -o 65532 -g 65532 /artifacts /project
 
 COPY --from=build /wheels /wheels
