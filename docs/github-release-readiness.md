@@ -69,4 +69,4 @@ Run these commands for each local release candidate:
 4. Run Gitleaks against all Git history.
 5. Inspect each built distribution for `LICENSE`.
 
-Gitleaks 8.30.1 reports no unresolved secrets in 137 commits or tracked files.
+Gitleaks 8.30.1 reports no unresolved secrets in all Git history or tracked files.
