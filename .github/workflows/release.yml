@@ -243,7 +243,7 @@ jobs:
         id: image
         shell: bash
         run: printf 'name=ghcr.io/%s/webhook-receiver-conformance\n' "${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
-      - name: Build reproducible OCI archive without publishing
+      - name: Build reproducible Docker archive without publishing
         id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
@@ -253,7 +253,7 @@ jobs:
           provenance: false
           sbom: false
           tags: ${{ steps.image.outputs.name }}:${{ needs.release-policy.outputs.version }}
-          outputs: type=oci,dest=/tmp/release-image.tar
+          outputs: type=docker,dest=/tmp/release-image.tar
           build-args: |
             OCI_REVISION=${{ github.sha }}
             OCI_SOURCE=${{ github.server_url }}/${{ github.repository }}
@@ -291,7 +291,7 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: false
           exit-code: "0"
-      - name: Scan OCI archive
+      - name: Scan container image archive
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
         with:
           input: .release/image/release-image.tar
@@ -401,7 +401,7 @@ jobs:
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: .release/dist/*
-      - name: Attest OCI archive
+      - name: Attest container image archive
         if: github.event_name == 'release'
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
