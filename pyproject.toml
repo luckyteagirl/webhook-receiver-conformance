@@ -44,7 +44,7 @@ Source = "https://github.com/luckyteagirl/webhook-receiver-conformance"
 Changelog = "https://github.com/luckyteagirl/webhook-receiver-conformance/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
-reference = ["fastapi>=0.115"]
+reference = ["fastapi>=0.141.1"]
 
 [dependency-groups]
 dev = [
