@@ -771,13 +771,13 @@ async def test_total_timeout_after_committed_checkpoint_reloads_durable_sending(
     delay = _DelayOnOccurrence(
         AttemptMutationPhase.AFTER_PHASE_EVIDENCE,
         occurrence=3,
-        delay=0.25,
+        delay=2.5,
     )
     async with JournalService.open(run.database_path) as service:
         await _seed(service)
         lifecycle = AttemptLifecycle(
             repository=TransitionRepository(service, crash_hook=delay),
-            executor=_executor(connector, total_ns=100_000_000),
+            executor=_executor(connector, total_ns=2 * SECOND),
             clock=clock,
         )
         await lifecycle.claim(_claim(attempt_id, clock))
