@@ -1970,6 +1970,35 @@ def test_invalid_connection_policy_refuses_migration_without_side_effect(
         connection.close()
 
 
+def test_load_extension_control_is_disabled_when_available() -> None:
+    observed: list[bool] = []
+
+    class ConnectionWithControl:
+        def enable_load_extension(self, enabled: bool) -> None:  # noqa: FBT001
+            observed.append(enabled)
+
+    journal_schema._disable_load_extension(  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+        ConnectionWithControl()
+    )
+    assert observed == [False]
+
+
+def test_missing_load_extension_control_is_already_safe() -> None:
+    journal_schema._disable_load_extension(  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+        object()
+    )
+
+
+def test_malformed_load_extension_control_fails_closed() -> None:
+    class ConnectionWithMalformedControl:
+        enable_load_extension = False
+
+    with pytest.raises(JournalSchemaError, match="malformed"):
+        journal_schema._disable_load_extension(  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+            ConnectionWithMalformedControl()
+        )
+
+
 def test_unbounded_busy_timeout_refuses_migration_without_side_effect(
     tmp_path: Path,
 ) -> None:

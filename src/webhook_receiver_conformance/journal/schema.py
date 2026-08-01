@@ -343,6 +343,10 @@ class _CloseHandle(Protocol):
     def __call__(self, handle: ctypes.c_void_p) -> int: ...
 
 
+class _EnableLoadExtension(Protocol):
+    def __call__(self, enabled: bool, /) -> None: ...  # noqa: FBT001
+
+
 class _GetDriveTypeW(Protocol):
     argtypes: object
     restype: object
@@ -1028,7 +1032,7 @@ def _connect(
         _verify_sqlite_opened_bound_path(connection, retained_guard)
         retained_guard.verify()
         connection.row_factory = sqlite3.Row
-        connection.enable_load_extension(False)  # noqa: FBT003
+        _disable_load_extension(connection)
         configure_connection(connection, busy_timeout_ms=busy_timeout_ms)
         retained_guard.verify()
     except (OSError, sqlite3.Error, JournalSchemaError) as error:
@@ -1041,6 +1045,16 @@ def _connect(
         message = "journal database could not be opened securely"
         raise JournalPathError(message) from error
     return connection
+
+
+def _disable_load_extension(connection: object) -> None:
+    candidate = getattr(connection, "enable_load_extension", None)
+    if candidate is None:
+        return
+    if not callable(candidate):
+        message = "SQLite load-extension control is malformed"
+        raise JournalSchemaError(message)
+    cast("_EnableLoadExtension", candidate)(False)  # noqa: FBT003
 
 
 def _verify_connection_binding(
