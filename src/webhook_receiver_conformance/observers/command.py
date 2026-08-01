@@ -50,7 +50,12 @@ _CORRELATION_SAMPLE_ID = "WEBHOOK_CONFORMANCE_SAMPLE_ID"
 _CORRELATION_PROTOCOL_VERSION = "WEBHOOK_CONFORMANCE_PROTOCOL_VERSION"
 _WINDOWS_REPARSE_ATTRIBUTE = 0x400
 _MACOS_FD_TRAMPOLINE = (
-    "import os,sys;os.fchdir(int(sys.argv[1]));os.execve(int(sys.argv[2]),sys.argv[3:],os.environ)"
+    "import os,stat,sys;"
+    "os.fchdir(int(sys.argv[1]));fd_stat=os.fstat(int(sys.argv[2]));argv=sys.argv[3:];"
+    "path_stat=os.stat(argv[0],follow_symlinks=False);"
+    "assert stat.S_ISREG(path_stat.st_mode) and "
+    "(path_stat.st_dev,path_stat.st_ino)==(fd_stat.st_dev,fd_stat.st_ino);"
+    "os.execve(argv[0],argv,os.environ)"
 )
 
 
@@ -405,7 +410,9 @@ def _bound_launch(prepared: _PreparedCommand) -> Generator[_LaunchBinding]:
                 # replaces itself with the retained observer executable. macOS
                 # also rejects a Mach-O launch through /dev/fd, so launch the
                 # installation-owned canonical interpreter path after pinning
-                # and verifying its file identity.
+                # and verifying its file identity. The child also compares the
+                # retained observer descriptor with the canonical path directly
+                # before exec because macOS does not provide fexecve to Python.
                 trampoline_path, trampoline_fd = _open_macos_trampoline(flags)
                 yield _LaunchBinding(
                     argv=(

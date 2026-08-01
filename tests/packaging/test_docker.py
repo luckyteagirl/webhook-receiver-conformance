@@ -35,7 +35,7 @@ def image() -> str:
     available = _docker("info", "--format", "{{.OSType}}", check=False)
     if available.returncode != 0 or available.stdout.strip() != "linux":
         pytest.skip("A Linux Docker daemon is unavailable")
-    _docker(
+    built = _docker(
         "build",
         "--pull=false",
         "--tag",
@@ -43,6 +43,11 @@ def image() -> str:
         "--build-arg",
         "OCI_REVISION=contract-test",
         ".",
+        check=False,
+    )
+    assert built.returncode == 0, (
+        f"Docker image build failed\nstdout:\n{built.stdout[-4000:]}\n"
+        f"stderr:\n{built.stderr[-4000:]}"
     )
     return IMAGE
 
