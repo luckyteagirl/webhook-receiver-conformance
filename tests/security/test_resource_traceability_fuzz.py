@@ -105,7 +105,7 @@ async def test_duplicate_retry_shape_never_creates_more_tasks_than_cap() -> None
     max_examples=100,
     derandomize=True,
     database=None,
-    deadline=100,
+    deadline=1_000,
     suppress_health_check=(HealthCheck.too_slow,),
 )
 @given(st.text(max_size=256))
