@@ -72,8 +72,27 @@ def _exception_surfaces(exception: BaseException) -> bytes:
 def _write_protected_secret(path: Path, value: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(value)
-    if os.name != "nt":
-        path.chmod(0o600)
+    if os.name == "nt":
+        domain = os.environ.get("USERDOMAIN", "")
+        username = os.environ.get("USERNAME", "")
+        principal = f"{domain}\\{username}" if domain and username else username
+        assert principal
+        completed = subprocess.run(  # noqa: S603
+            [  # noqa: S607
+                "icacls",
+                str(path),
+                "/inheritance:r",
+                "/grant:r",
+                f"{principal}:(F)",
+            ],
+            check=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        assert completed.returncode == 0
+        return
+    path.chmod(0o600)
 
 
 def _file_resolver(project_root: Path) -> SecretResolver:

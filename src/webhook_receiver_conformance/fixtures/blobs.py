@@ -670,6 +670,8 @@ def _try_open_existing_windows(
         return _open_existing_windows(tree, name)
     except FileNotFoundError:
         return None
+    except OSError:
+        raise _integrity_error() from None
 
 
 def _open_existing_windows(tree: _PinnedWindowsBlobTree, name: str) -> int:

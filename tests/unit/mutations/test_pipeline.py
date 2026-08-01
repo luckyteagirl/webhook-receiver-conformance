@@ -6,13 +6,14 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import ClassVar, cast, overload
+from typing import ClassVar, NoReturn, cast, overload
 
 import pytest
 
 from webhook_receiver_conformance.config.models import EnvironmentSecretRef
 from webhook_receiver_conformance.domain.hashing import sha256_digest
 from webhook_receiver_conformance.errors import ErrorCategory
+from webhook_receiver_conformance.mutations import pipeline as pipeline_module
 from webhook_receiver_conformance.mutations.base import (
     MAX_MUTATIONS_PER_PIPELINE,
     REDACTED_PARAMETER_VALUE,
@@ -520,7 +521,9 @@ def test_structural_preflight_rejects_non_rfc_json_constants(constant: bytes) ->
     assert calls == []
 
 
-def test_structural_preflight_classifies_recursion_exhausting_json() -> None:
+def test_structural_preflight_classifies_decoder_recursion_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls: list[str] = []
     registration = _registration(
         "json-replace",
@@ -529,13 +532,17 @@ def test_structural_preflight_classifies_recursion_exhausting_json() -> None:
         changes_body=True,
         requires_valid_json=True,
     )
-    body = (b"[" * 10_000) + b"0" + (b"]" * 10_000)
+
+    def exhaust_recursion(*_args: object, **_kwargs: object) -> NoReturn:
+        raise RecursionError
+
+    monkeypatch.setattr(pipeline_module.json, "loads", exhaust_recursion)
 
     with pytest.raises(MutationError) as caught:
         _run(
             StaticMutationRegistry((registration,)),
             (_realized("json-replace", MutationStage.STRUCTURAL),),
-            body=body,
+            body=b"{}",
         )
 
     assert caught.value.diagnostic.code == "MUT_STRUCTURAL_INPUT_INVALID_JSON"

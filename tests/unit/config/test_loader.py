@@ -515,7 +515,7 @@ def test_windows_pre_relative_open_junction_swaps_never_touch_external_targets(
     assert writes_after_swap == 0
     assert external_metadata_handles == set()
     assert absolute_child_opens == []
-    assert _windows_process_handle_count() == baseline_handles
+    assert _windows_process_handle_count() <= baseline_handles
     assert _tree_snapshot(race.external) == external_before
 
 

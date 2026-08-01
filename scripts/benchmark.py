@@ -570,7 +570,10 @@ def _evidence(
 def run_benchmarks() -> dict[str, object]:
     """Run all P0 measurements and return one requirement-linked scorecard."""
     command = _command_path()
-    with tempfile.TemporaryDirectory(prefix="webhook-conformance-benchmark-") as temporary:
+    with tempfile.TemporaryDirectory(
+        prefix=".smoke-benchmark-",
+        dir=Path.cwd(),
+    ) as temporary:
         root = Path(temporary)
         startup = _startup_samples(command)
         validation = _minimal_validation_samples(command, root)

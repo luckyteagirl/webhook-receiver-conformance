@@ -2110,7 +2110,7 @@ def test_full_integrity_check_rejects_physically_inconsistent_btree(
         pass
     else:
         assert integrity_rows != ("ok",)
-    with pytest.raises(JournalIntegrityError, match="integrity_check"):
+    with pytest.raises(JournalIntegrityError, match=r"integrity(?:_check| checks)"):
         validate_migration_output(corruptor)
     corruptor.close()
 

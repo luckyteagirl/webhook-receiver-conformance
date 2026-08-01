@@ -49,6 +49,9 @@ _CORRELATION_REQUEST_ID = "WEBHOOK_CONFORMANCE_REQUEST_ID"
 _CORRELATION_SAMPLE_ID = "WEBHOOK_CONFORMANCE_SAMPLE_ID"
 _CORRELATION_PROTOCOL_VERSION = "WEBHOOK_CONFORMANCE_PROTOCOL_VERSION"
 _WINDOWS_REPARSE_ATTRIBUTE = 0x400
+_MACOS_FD_TRAMPOLINE = (
+    "import os,sys;os.fchdir(int(sys.argv[1]));os.execve(int(sys.argv[2]),sys.argv[3:],os.environ)"
+)
 
 
 def _pin_current_interpreter() -> tuple[Path, Path, int, int] | None:
@@ -97,7 +100,7 @@ class _PreparedCommand:
 @dataclass(frozen=True, slots=True)
 class _LaunchBinding:
     argv: tuple[str, ...]
-    cwd: Path
+    cwd: Path | None
     pass_fds: tuple[int, ...] = ()
     creationflags: int = 0
     windows_job: int | None = None
@@ -388,6 +391,7 @@ def _bound_launch(prepared: _PreparedCommand) -> Generator[_LaunchBinding]:
         directory_flags = flags | getattr(os, "O_DIRECTORY", 0)
         executable_fd = os.open(prepared.argv[0], flags)
         directory_fd = os.open(prepared.working_directory, directory_flags)
+        trampoline_fd: int | None = None
         try:
             executable_stat = os.fstat(executable_fd)
             directory_stat = os.fstat(directory_fd)
@@ -395,12 +399,33 @@ def _bound_launch(prepared: _PreparedCommand) -> Generator[_LaunchBinding]:
                 directory_stat.st_mode
             ):
                 raise _configuration_error("OBSERVER_LAUNCH_IDENTITY_INVALID")
-            yield _LaunchBinding(
-                argv=(str(fd_namespace / str(executable_fd)), *prepared.argv[1:]),
-                cwd=fd_namespace / str(directory_fd),
-                pass_fds=(executable_fd, directory_fd),
-            )
+            if sys.platform == "darwin":
+                # macOS rejects /dev/fd/<directory> as cwd. A pinned Python
+                # trampoline enters the retained directory descriptor and then
+                # replaces itself with the retained observer executable.
+                trampoline_fd = _open_macos_trampoline(flags)
+                yield _LaunchBinding(
+                    argv=(
+                        str(fd_namespace / str(trampoline_fd)),
+                        "-I",
+                        "-c",
+                        _MACOS_FD_TRAMPOLINE,
+                        str(directory_fd),
+                        str(executable_fd),
+                        *prepared.argv,
+                    ),
+                    cwd=None,
+                    pass_fds=(trampoline_fd, executable_fd, directory_fd),
+                )
+            else:
+                yield _LaunchBinding(
+                    argv=(str(fd_namespace / str(executable_fd)), *prepared.argv[1:]),
+                    cwd=fd_namespace / str(directory_fd),
+                    pass_fds=(executable_fd, directory_fd),
+                )
         finally:
+            if trampoline_fd is not None:
+                os.close(trampoline_fd)
             os.close(directory_fd)
             os.close(executable_fd)
         return
@@ -446,6 +471,23 @@ def _select_fd_namespace() -> Path:
         if candidate.is_dir():
             return candidate
     raise _configuration_error("OBSERVER_FD_LAUNCH_UNSUPPORTED")
+
+
+def _open_macos_trampoline(flags: int) -> int:
+    binding = _CURRENT_INTERPRETER
+    if binding is None:
+        raise _configuration_error("OBSERVER_FD_LAUNCH_UNSUPPORTED")
+    _launcher, target, expected_device, expected_inode = binding
+    descriptor = os.open(target, flags)
+    metadata = os.fstat(descriptor)
+    if (
+        metadata.st_dev != expected_device
+        or metadata.st_ino != expected_inode
+        or not stat.S_ISREG(metadata.st_mode)
+    ):
+        os.close(descriptor)
+        raise _configuration_error("OBSERVER_LAUNCH_IDENTITY_INVALID")
+    return descriptor
 
 
 def _find_command_error(

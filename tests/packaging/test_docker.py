@@ -32,9 +32,9 @@ def _docker(*arguments: str, check: bool = True) -> subprocess.CompletedProcess[
 def image() -> str:
     if shutil.which("docker") is None:
         pytest.skip("Docker is unavailable")
-    available = _docker("info", check=False)
-    if available.returncode != 0:
-        pytest.skip("Docker daemon is unavailable")
+    available = _docker("info", "--format", "{{.OSType}}", check=False)
+    if available.returncode != 0 or available.stdout.strip() != "linux":
+        pytest.skip("A Linux Docker daemon is unavailable")
     _docker(
         "build",
         "--pull=false",
