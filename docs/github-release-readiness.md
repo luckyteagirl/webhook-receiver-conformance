@@ -27,7 +27,7 @@ The inventory separates repository readiness from package publication readiness.
 | GH-008 | Add repository hygiene rules. | `COMPLETE` | Git and build tools ignore local output and use stable line endings. |
 | GH-009 | Add an ASD-STE100 document check. | `COMPLETE` | The check covers all release-readiness evidence documents. |
 | GH-010 | Add a GitHub Action example. | `COMPLETE` | The example uses read-only permissions and no write permission. |
-| GH-011 | Run a dedicated secret scan on Git history. | `COMPLETE` | Gitleaks reports no unresolved secret. |
+| GH-011 | Run a dedicated secret scan on Git history. | `COMPLETE` | A manual history scan and the required CI check report no unresolved secret. |
 | GH-012 | Refresh local release evidence. | `COMPLETE` | The final scorecard records current tests, artifacts, and digests. |
 
 ## Maintainer decisions
@@ -46,7 +46,7 @@ The inventory separates repository readiness from package publication readiness.
 | --- | --- | --- | --- |
 | GH-201 | Create the public remote repository. | `COMPLETE` | GitHub hosts the repository at the approved owner and name. |
 | GH-202 | Enable repository security controls. | `COMPLETE` | Private reports, secret scanning, push protection, and Dependabot security updates operate. |
-| GH-203 | Protect the default branch. | `COMPLETE` | Ruleset `20178218` requires pull requests, linear history, and all 19 hosted checks. |
+| GH-203 | Protect the default branch. | `COMPLETE` | Ruleset `20178218` requires pull requests, linear history, and all 20 hosted checks. |
 | GH-204 | Run the hosted CI matrix. | `COMPLETE` | Linux, macOS, and Windows pass on CPython 3.12, 3.13, and 3.14. |
 | GH-205 | Run the release workflow without publication. | `COMPLETE` | [Run 30696255381](https://github.com/luckyteagirl/webhook-receiver-conformance/actions/runs/30696255381) passes all non-publication jobs. |
 | GH-206 | Configure PyPI trusted publication. | `BLOCKED` | A PyPI owner must create the pending OIDC publisher. |
@@ -69,4 +69,6 @@ Run these commands for each local release candidate:
 4. Run Gitleaks against all Git history.
 5. Inspect each built distribution for `LICENSE`.
 
-Gitleaks 8.30.1 reports no unresolved secrets in all Git history or tracked files.
+Gitleaks 8.30.1 covers history through commit `c6a8629b9855aa1d0c2874f73def2101f9fb3f63`.
+
+The required `Secret scan` check protects each later pull request and default-branch update.

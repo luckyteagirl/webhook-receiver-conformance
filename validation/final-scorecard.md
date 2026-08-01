@@ -29,7 +29,7 @@ No release tag, PyPI distribution, or GHCR image exists.
 | Hosted package matrix | PASS | [Package run 30696252128](https://github.com/luckyteagirl/webhook-receiver-conformance/actions/runs/30696252128) |
 | Hosted release dry run | PASS | [Release run 30696255381](https://github.com/luckyteagirl/webhook-receiver-conformance/actions/runs/30696255381) |
 | Vulnerability policy | PASS | Trivy reports no unapproved high or critical finding |
-| Secret scan | PASS | Gitleaks 8.30.1 finds no unresolved secret in history or tracked files |
+| Secret scan | PASS | Gitleaks 8.30.1 covers `c6a8629`, and required CI scans later changes |
 | Repository controls | PASS | GitHub security controls operate, and the default-branch ruleset exists |
 
 ## Installable artifacts
@@ -45,7 +45,7 @@ No release tag, PyPI distribution, or GHCR image exists.
 
 The repository enables private vulnerability reports, secret scanning, push protection, and Dependabot security updates.
 
-The default-branch ruleset requires pull requests, resolved conversations, linear history, and 19 CI checks.
+The default-branch ruleset requires pull requests, resolved conversations, linear history, and 20 CI checks.
 
 GitHub Actions use read-only default permissions. Workflows cannot approve pull requests.
 
