@@ -1032,7 +1032,7 @@ def _connect(
         _verify_sqlite_opened_bound_path(connection, retained_guard)
         retained_guard.verify()
         connection.row_factory = sqlite3.Row
-        _disable_load_extension(connection)
+        disable_load_extensions(connection)
         configure_connection(connection, busy_timeout_ms=busy_timeout_ms)
         retained_guard.verify()
     except (OSError, sqlite3.Error, JournalSchemaError) as error:
@@ -1047,7 +1047,8 @@ def _connect(
     return connection
 
 
-def _disable_load_extension(connection: object) -> None:
+def disable_load_extensions(connection: object) -> None:
+    """Disable SQLite extension loading when the linked runtime exposes it."""
     candidate = getattr(connection, "enable_load_extension", None)
     if candidate is None:
         return

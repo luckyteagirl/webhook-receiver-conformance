@@ -25,7 +25,7 @@ from .connection import (
     require_supported_sqlite_runtime,
     validate_writer_connection,
 )
-from .schema import DEFAULT_BUSY_TIMEOUT_MS
+from .schema import DEFAULT_BUSY_TIMEOUT_MS, disable_load_extensions
 
 if TYPE_CHECKING:
     import os
@@ -422,7 +422,7 @@ class JournalService:
                 create=create,
                 busy_timeout_ms=busy_timeout_ms,
             )
-            connection.enable_load_extension(False)  # noqa: FBT003
+            disable_load_extensions(connection)
             policy = validate_writer_connection(
                 connection,
                 expected_busy_timeout_ms=busy_timeout_ms,

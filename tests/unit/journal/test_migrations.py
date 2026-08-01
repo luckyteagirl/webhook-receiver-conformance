@@ -1977,16 +1977,12 @@ def test_load_extension_control_is_disabled_when_available() -> None:
         def enable_load_extension(self, enabled: bool) -> None:  # noqa: FBT001
             observed.append(enabled)
 
-    journal_schema._disable_load_extension(  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
-        ConnectionWithControl()
-    )
+    journal_schema.disable_load_extensions(ConnectionWithControl())
     assert observed == [False]
 
 
 def test_missing_load_extension_control_is_already_safe() -> None:
-    journal_schema._disable_load_extension(  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
-        object()
-    )
+    journal_schema.disable_load_extensions(object())
 
 
 def test_malformed_load_extension_control_fails_closed() -> None:
@@ -1994,9 +1990,7 @@ def test_malformed_load_extension_control_fails_closed() -> None:
         enable_load_extension = False
 
     with pytest.raises(JournalSchemaError, match="malformed"):
-        journal_schema._disable_load_extension(  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
-            ConnectionWithMalformedControl()
-        )
+        journal_schema.disable_load_extensions(ConnectionWithMalformedControl())
 
 
 def test_unbounded_busy_timeout_refuses_migration_without_side_effect(
