@@ -48,9 +48,9 @@ from webhook_receiver_conformance.signatures.stripe import (
     StripeV1Signer,
 )
 
-PRIMARY_KEY = "whsec_test_primary_32_byte_key_material"
-ROTATION_KEY = "whsec_test_rotation_32_byte_key_material"
-WRONG_KEY = "whsec_test_wrong_32_byte_key_material"
+PRIMARY_KEY = "whsec_test_primary_32_byte_key_material"  # gitleaks:allow
+ROTATION_KEY = "whsec_test_rotation_32_byte_key_material"  # gitleaks:allow
+WRONG_KEY = "whsec_test_wrong_32_byte_key_material"  # gitleaks:allow
 SECRET_CANARY = b"stripe-secret-canary-32-bytes!!!"
 LOGICAL_TIME_NS = 1_700_000_000_123_456_789
 BODY = b'{"id":"evt_1","ok":true}'

@@ -1,0 +1,41 @@
+name: Change request
+description: Propose one scoped product or documentation change.
+title: "[Change] "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the current problem. Do not give a solution.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Required outcome
+      description: Describe the result that the change must produce.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: List included and excluded behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: contracts
+    attributes:
+      label: Contract effects
+      description: List each CLI, schema, evidence, observer, security, and compatibility effect.
+    validations:
+      required: true
+  - type: checkboxes
+    id: non_goals
+    attributes:
+      label: Project boundary
+      options:
+        - label: This request does not add a hosted service, tunnel, gateway, or load-test mode.
+          required: true

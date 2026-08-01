@@ -14,6 +14,12 @@ Initial local-first release of the webhook receiver conformance harness.
   replay export, and interrupted-run recovery.
 - A real `webhook-conformance` command with `run`, `replay`, `inspect`, `report`, and
   `resume` workflows.
+- Apache License 2.0 text and package license metadata.
+- Public contribution, support, conduct, GitHub Action, and release-readiness documents.
+- ASD-STE100 checks for new public technical documents.
+- GitHub issue forms and a pull request template.
+- A minimal source distribution without local validation or planning records.
+- Public project URLs and repository ownership rules.
 
 ### Compatibility
 
@@ -31,9 +37,14 @@ recover its exact terminal classification without resending the request. Legacy
 
 ### Security
 
-Receiver secrets remain external to replay bundles, path traversal is rejected, bundle
-digests are verified before use, subprocess assertions use explicit safe aliases, and
-network targets are re-authorized for each invocation.
+- Receiver secrets remain external to replay bundles.
+- The harness rejects path traversal.
+- The harness verifies bundle digests before use.
+- Subprocess assertions use explicit safe aliases.
+- The harness authorizes network targets for each invocation.
+- Tracked Windows JUnit evidence uses public host and workspace values.
+- Reachable Git history does not contain the private host or workspace path.
+- Gitleaks exceptions identify four reviewed false positives in fixed test data.
 
 ### Schema
 

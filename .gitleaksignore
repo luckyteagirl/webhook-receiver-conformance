@@ -1,0 +1,4 @@
+9256aa7ef406ea55297c9ae114660f14ea5ce001:src/webhook_receiver_conformance/config/loader.py:generic-api-key:2478
+9256aa7ef406ea55297c9ae114660f14ea5ce001:tests/unit/config/test_loader.py:generic-api-key:1118
+df22365a90c1c1517d41b0f740b454aa7c48d221:tests/unit/signatures/test_stripe.py:generic-api-key:52
+df22365a90c1c1517d41b0f740b454aa7c48d221:tests/unit/signatures/test_stripe.py:generic-api-key:53

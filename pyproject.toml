@@ -9,11 +9,13 @@ description = "Local-first webhook receiver conformance harness"
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
 license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Webhook Receiver Conformance contributors" }]
+keywords = ["conformance", "testing", "webhook", "webhook-receiver"]
 classifiers = [
   "Development Status :: 2 - Pre-Alpha",
   "Environment :: Console",
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: Apache Software License",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.12",
@@ -34,6 +36,13 @@ dependencies = [
 [project.scripts]
 webhook-conformance = "webhook_receiver_conformance.cli:run_cli"
 
+[project.urls]
+Homepage = "https://github.com/luckyteagirl/webhook-receiver-conformance"
+Documentation = "https://github.com/luckyteagirl/webhook-receiver-conformance#readme"
+Issues = "https://github.com/luckyteagirl/webhook-receiver-conformance/issues"
+Source = "https://github.com/luckyteagirl/webhook-receiver-conformance"
+Changelog = "https://github.com/luckyteagirl/webhook-receiver-conformance/blob/main/CHANGELOG.md"
+
 [project.optional-dependencies]
 reference = ["fastapi>=0.115"]
 
@@ -49,6 +58,16 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/webhook_receiver_conformance"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/CHANGELOG.md",
+  "/LICENSE",
+  "/README.md",
+  "/SECURITY.md",
+  "/pyproject.toml",
+  "/src/webhook_receiver_conformance",
+]
 
 [tool.pyright]
 include = ["src", "tests"]

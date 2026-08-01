@@ -15,3 +15,6 @@ The current record set is bound to implementation commit
 evidence, the P0 crash matrix, quality-attribute measurements, dependency
 security and license results, wheel/source/OCI digest records, and fresh
 installed-artifact runs across CPython 3.12 through 3.14.
+
+The tracked Windows JUnit file uses `local-host` and `WORKSPACE` values.
+The file does not publish the local hostname or user path.

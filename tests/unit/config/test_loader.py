@@ -1115,7 +1115,10 @@ def test_unsupported_schema_is_classified_before_model_validation(tmp_path: Path
     ) == SCHEMA_VERSION_LOCATION
 
 
-@pytest.mark.parametrize("mutation_type", ["duplicate-json-key-v1", "invalid-utf8-v1"])
+@pytest.mark.parametrize(
+    "mutation_type",
+    ["duplicate-json-key-v1", "invalid-utf8-v1"],  # gitleaks:allow
+)
 def test_deferred_mutation_selectors_are_classified_as_unsupported(
     tmp_path: Path,
     mutation_type: str,

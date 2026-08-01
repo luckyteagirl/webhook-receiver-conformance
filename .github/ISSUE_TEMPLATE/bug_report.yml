@@ -1,0 +1,55 @@
+name: Bug report
+description: Report a repeatable defect in the harness or its documentation.
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: Do not report a suspected vulnerability here. Use the private process in SECURITY.md.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Defect summary
+      description: Describe one defect and its effect.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Give the minimum steps that reproduce the defect.
+      placeholder: |
+        1. Run ...
+        2. Open ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+      description: Describe the correct result.
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed result
+      description: Describe the actual result and give the sanitized exit code.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Give the package, CPython, and operating-system versions.
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Data check
+      options:
+        - label: I removed secrets, tokens, private fixture data, hostnames, and private user paths.
+          required: true

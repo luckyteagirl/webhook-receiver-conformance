@@ -10,6 +10,14 @@ processing and observable business effects. It explicitly rejects an exactly-onc
 network-delivery claim because an unresolved send cannot prove whether the receiver
 committed an external effect.
 
+## Use cases
+
+Use this harness to test how a webhook receiver handles duplicates, delays, invalid signatures, ordering changes, and interrupted requests.
+
+Use observer evidence when an HTTP response does not prove that the receiver made a durable business change.
+
+Use replay bundles to reproduce a failure without a hosted control plane or public tunnel.
+
 ## Five-minute local path
 
 Prerequisites are Git, [uv](https://docs.astral.sh/uv/), and a supported CPython.
@@ -149,6 +157,16 @@ surfaces do not define separate runtime semantics. Package smoke tests run wheel
 source-distribution installs and exercise `uvx` and `pipx` where those tools are
 available.
 
+## GitHub Action
+
+The composite action uses the locked project environment. Install uv on the runner before you run the action.
+
+The action uses read-only repository permission. It stages sanitized reports and does not upload them.
+
+Read [GitHub Action](docs/github-action.md) for all inputs, outputs, and artifact rules.
+
+Use [the example workflow](examples/github-action-workflow.yml) as the local reference.
+
 Supported runtime combinations are CPython 3.12, 3.13, and 3.14 on the current
 GitHub-hosted Ubuntu, macOS, and Windows runner families. See the exact tested matrix in
 [Compatibility and releases](docs/compatibility-and-releases.md).
@@ -176,3 +194,14 @@ older.
 
 The broader specification index remains available in [`specification/`](specification/),
 but it cannot override the sources above.
+
+## Project policies
+
+- [Contributing](CONTRIBUTING.md)
+- [Support](SUPPORT.md)
+- [Security](SECURITY.md)
+- [Code of conduct](CODE_OF_CONDUCT.md)
+- [License](LICENSE)
+- [Changelog](CHANGELOG.md)
+- [GitHub release-readiness inventory](docs/github-release-readiness.md)
+- [Documentation language standard](docs/documentation-style.md)

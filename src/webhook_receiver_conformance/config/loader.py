@@ -2475,7 +2475,9 @@ def _deferred_mutation_diagnostic(
     scenarios = document.get("scenarios")
     if not isinstance(scenarios, list):
         return None
-    deferred_types = frozenset({"duplicate-json-key-v1", "invalid-utf8-v1"})
+    deferred_types = frozenset(
+        {"duplicate-json-key-v1", "invalid-utf8-v1"}  # gitleaks:allow
+    )
     for scenario_index, scenario in enumerate(scenarios):
         if not isinstance(scenario, dict):
             continue

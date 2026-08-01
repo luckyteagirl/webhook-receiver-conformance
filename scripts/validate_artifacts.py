@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+from scripts.check_ste_docs import validate_documents  # noqa: E402
 from tests.helpers.schema_validation import (  # noqa: E402
     COMPATIBILITY_BEHAVIOR_MATRIX,
     EXECUTABLE_TRANSITIONS,
@@ -133,6 +134,7 @@ def validate_pack(root: Path = ROOT) -> list[str]:  # noqa: C901, PLR0912
     errors.extend(_state_table_diagram_parity(root))
     errors.extend(_compatibility_matrix_contract(root))
     errors.extend(_volatility_document_contract(root))
+    errors.extend(validate_documents(root))
     return sorted(set(errors))
 
 

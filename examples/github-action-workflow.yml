@@ -1,0 +1,61 @@
+name: Webhook receiver conformance example
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  conformance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install uv and CPython
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.24"
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Start the loopback reference receiver
+        shell: bash
+        env:
+          WEBHOOK_OBSERVER_TOKEN: local-observer-token-32-bytes
+          WEBHOOK_TEST_SECRET: local-test-secret-32-bytes-long
+        run: |
+          uv sync --locked --all-groups
+          uv run python examples/reference_receiver.py > receiver.log 2>&1 &
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8000/health > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          exit 1
+      - name: Run webhook receiver conformance
+        id: conformance
+        uses: ./
+        env:
+          WEBHOOK_TEST_SECRET: local-test-secret-32-bytes-long
+        with:
+          command: run
+          config: examples/project-config.quickstart.yaml
+          artifact-directory: .webhook-conformance/action
+          formats: json,junit,html
+          retention-days: "7"
+          noninteractive: "true"
+          include-raw-artifacts: "false"
+          version: "0.1.0"
+      - name: Upload sanitized reports
+        if: always() && steps.conformance.outputs.report-directory != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: webhook-conformance-reports
+          path: ${{ steps.conformance.outputs.report-directory }}
+          if-no-files-found: error
+          retention-days: 7

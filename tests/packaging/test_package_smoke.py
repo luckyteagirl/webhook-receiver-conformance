@@ -111,9 +111,15 @@ def test_wheel_and_sdist_include_cli_and_runtime_assets(
     with tarfile.open(source, "r:gz") as archive:
         source_names = set(archive.getnames())
     assert any(name.endswith(".dist-info/entry_points.txt") for name in wheel_names)
+    assert any(name.endswith(".dist-info/licenses/LICENSE") for name in wheel_names)
     assert any(name.endswith("/cli/main.py") for name in wheel_names)
     assert any(name.endswith("/reporting/templates/report.html") for name in wheel_names)
     assert any(name.endswith("/cli/main.py") for name in source_names)
+    assert any(name.endswith("/LICENSE") for name in source_names)
+    assert not any("/validation/" in name for name in source_names)
+    assert not any("/machine/" in name for name in source_names)
+    assert not any("/specification/" in name for name in source_names)
+    assert not any("/tasks/" in name for name in source_names)
 
 
 def test_built_wheel_installs_and_runs_minimal_local_example(
