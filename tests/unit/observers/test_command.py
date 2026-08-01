@@ -428,6 +428,30 @@ def test_fd_namespace_supports_dev_fallback_and_fails_closed(
     assert str(captured.value.diagnostic.code) == "OBSERVER_FD_LAUNCH_UNSUPPORTED"
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX descriptor launch binding")
+def test_macos_trampoline_uses_pinned_canonical_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if command_module._CURRENT_INTERPRETER is None:  # pyright: ignore[reportPrivateUsage]
+        pytest.skip("the active interpreter cannot be pinned")
+    prepared = command_module._PreparedCommand(  # pyright: ignore[reportPrivateUsage]
+        argv=(str(Path(sys.executable).resolve(strict=True)), "-c", "pass"),
+        project_root=tmp_path,
+        working_directory=tmp_path,
+        environment_names=(),
+    )
+    monkeypatch.setattr(sys, "platform", "darwin")
+
+    with command_module._bound_launch(prepared) as binding:  # pyright: ignore[reportPrivateUsage]
+        _launcher, canonical_target, _device, _inode = command_module._CURRENT_INTERPRETER  # pyright: ignore[reportPrivateUsage]
+        assert binding.argv[0] == str(canonical_target)
+        assert not binding.argv[0].startswith("/dev/fd/")
+        assert binding.cwd is None
+        trampoline_fd, executable_fd, directory_fd = binding.pass_fds
+        assert len({trampoline_fd, executable_fd, directory_fd}) == len(binding.pass_fds)
+
+
 @pytest.mark.anyio
 async def test_nonzero_stderr_is_never_retained_in_error(tmp_path: Path) -> None:
     code = f"import sys;sys.stderr.write({CANARY!r});sys.exit(7)"

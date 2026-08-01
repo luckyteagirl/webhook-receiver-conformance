@@ -273,21 +273,40 @@ def _planning_samples(
 
 def _peak_rss_bytes() -> int:
     if os.name == "nt":
-        command = (
-            f"$value=(Get-Process -Id {os.getpid()}).PeakWorkingSet64; [Console]::Out.Write($value)"
-        )
-        powershell = shutil.which("powershell")
-        if powershell is None:
-            raise RuntimeError("PowerShell is required for Windows RSS measurement")
-        completed = subprocess.run(
-            (powershell, "-NoProfile", "-NonInteractive", "-Command", command),
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            check=True,
-            timeout=10,
-            text=True,
-        )
-        return int(completed.stdout)
+        import ctypes  # noqa: PLC0415
+        from ctypes import wintypes  # noqa: PLC0415
+
+        class ProcessMemoryCounters(ctypes.Structure):
+            _fields_ = [
+                ("cb", wintypes.DWORD),
+                ("page_fault_count", wintypes.DWORD),
+                ("peak_working_set_size", ctypes.c_size_t),
+                ("working_set_size", ctypes.c_size_t),
+                ("quota_peak_paged_pool_usage", ctypes.c_size_t),
+                ("quota_paged_pool_usage", ctypes.c_size_t),
+                ("quota_peak_non_paged_pool_usage", ctypes.c_size_t),
+                ("quota_non_paged_pool_usage", ctypes.c_size_t),
+                ("pagefile_usage", ctypes.c_size_t),
+                ("peak_pagefile_usage", ctypes.c_size_t),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        psapi = ctypes.WinDLL("psapi", use_last_error=True)
+        get_current_process = kernel32.GetCurrentProcess
+        get_current_process.argtypes = []
+        get_current_process.restype = wintypes.HANDLE
+        get_process_memory_info = psapi.GetProcessMemoryInfo
+        get_process_memory_info.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(ProcessMemoryCounters),
+            wintypes.DWORD,
+        ]
+        get_process_memory_info.restype = wintypes.BOOL
+        counters = ProcessMemoryCounters()
+        counters.cb = ctypes.sizeof(counters)
+        if not get_process_memory_info(get_current_process(), ctypes.byref(counters), counters.cb):
+            raise ctypes.WinError(ctypes.get_last_error())
+        return int(counters.peak_working_set_size)
     status = Path("/proc/self/status")
     if status.is_file():
         for line in status.read_text(encoding="ascii").splitlines():

@@ -77,6 +77,14 @@ def _write_protected_secret(path: Path, value: bytes) -> None:
         username = os.environ.get("USERNAME", "")
         principal = f"{domain}\\{username}" if domain and username else username
         assert principal
+        owner = subprocess.run(  # noqa: S603
+            ["icacls", str(path), "/setowner", principal],  # noqa: S607
+            check=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        assert owner.returncode == 0
         completed = subprocess.run(  # noqa: S603
             [  # noqa: S607
                 "icacls",

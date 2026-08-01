@@ -402,11 +402,14 @@ def _bound_launch(prepared: _PreparedCommand) -> Generator[_LaunchBinding]:
             if sys.platform == "darwin":
                 # macOS rejects /dev/fd/<directory> as cwd. A pinned Python
                 # trampoline enters the retained directory descriptor and then
-                # replaces itself with the retained observer executable.
-                trampoline_fd = _open_macos_trampoline(flags)
+                # replaces itself with the retained observer executable. macOS
+                # also rejects a Mach-O launch through /dev/fd, so launch the
+                # installation-owned canonical interpreter path after pinning
+                # and verifying its file identity.
+                trampoline_path, trampoline_fd = _open_macos_trampoline(flags)
                 yield _LaunchBinding(
                     argv=(
-                        str(fd_namespace / str(trampoline_fd)),
+                        str(trampoline_path),
                         "-I",
                         "-c",
                         _MACOS_FD_TRAMPOLINE,
@@ -473,7 +476,7 @@ def _select_fd_namespace() -> Path:
     raise _configuration_error("OBSERVER_FD_LAUNCH_UNSUPPORTED")
 
 
-def _open_macos_trampoline(flags: int) -> int:
+def _open_macos_trampoline(flags: int) -> tuple[Path, int]:
     binding = _CURRENT_INTERPRETER
     if binding is None:
         raise _configuration_error("OBSERVER_FD_LAUNCH_UNSUPPORTED")
@@ -487,7 +490,7 @@ def _open_macos_trampoline(flags: int) -> int:
     ):
         os.close(descriptor)
         raise _configuration_error("OBSERVER_LAUNCH_IDENTITY_INVALID")
-    return descriptor
+    return target, descriptor
 
 
 def _find_command_error(
