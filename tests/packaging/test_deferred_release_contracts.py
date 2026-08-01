@@ -184,7 +184,14 @@ def test_release_publish_job_has_every_required_dag_prerequisite() -> None:
     jobs = cast("Mapping[str, Mapping[str, object]]", workflow["jobs"])
     needs = {name: set(cast("list[str]", job.get("needs", []))) for name, job in jobs.items()}
 
-    assert needs["package-smoke"] == {"release-policy", "lint", "typing", "tests", "schema"}
+    assert needs["package-smoke"] == {
+        "release-policy",
+        "lint",
+        "typing",
+        "tests",
+        "docker-contract",
+        "schema",
+    }
     assert needs["security-scan"] == {"release-policy", "package-smoke", "image"}
     assert needs["sbom"] == {"release-policy", "package-smoke", "image"}
     assert needs["provenance"] == {
@@ -199,6 +206,7 @@ def test_release_publish_job_has_every_required_dag_prerequisite() -> None:
         "lint",
         "typing",
         "tests",
+        "docker-contract",
         "schema",
         "package-smoke",
         "image",
