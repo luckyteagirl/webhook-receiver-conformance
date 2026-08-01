@@ -139,7 +139,29 @@ jobs:
           uv lock --check
           uv sync --locked --all-groups
       - name: Run test suite
-        run: uv run pytest -q tests
+        run: uv run pytest -q tests --ignore=tests/packaging/test_docker.py
+
+  docker-contract:
+    name: Docker image contract
+    needs: [release-policy]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install locked uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Synchronize locked environment
+        run: uv sync --locked --all-groups
+      - name: Test the fixed Python 3.12 OCI image
+        run: uv run pytest -q tests/packaging/test_docker.py
 
   schema:
     name: Schema and artifact validation
@@ -165,7 +187,7 @@ jobs:
 
   package-smoke:
     name: Build and smoke-test distributions
-    needs: [release-policy, lint, typing, tests, schema]
+    needs: [release-policy, lint, typing, tests, docker-contract, schema]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -402,6 +424,7 @@ jobs:
       - lint
       - typing
       - tests
+      - docker-contract
       - schema
       - package-smoke
       - image
