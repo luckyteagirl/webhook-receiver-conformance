@@ -32,6 +32,8 @@ jobs:
         run: uv build --no-sources
       - name: Install and run both distributions
         shell: bash
+        env:
+          WEBHOOK_CONFORMANCE_DEBUG: "1"
         run: >-
           python scripts/package_smoke.py
           --artifact dist/webhook_receiver_conformance-0.1.0-py3-none-any.whl
