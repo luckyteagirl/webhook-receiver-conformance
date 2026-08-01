@@ -55,8 +55,8 @@ def test_workflow_covers_every_supported_platform_and_python() -> None:
     assert (
         "--expected-digest sha256:178dc7ee90d54e25ff4e8bd498126a95e7694e2f52644875dc3af9d313d35099"
     ) in text
-    assert "@11bd71901bbe5b1630ceea73d27597364c9af683" in text
-    assert "@42375524e23c412d93fb67b49958b491fce71c38" in text
+    assert "@3d3c42e5aac5ba805825da76410c181273ba90b1" in text
+    assert "@5fda3b95a4ea91299a34e894583c3862153e4b97" in text
 
 
 def test_normalized_digest_ignores_only_declared_platform_fields() -> None:
